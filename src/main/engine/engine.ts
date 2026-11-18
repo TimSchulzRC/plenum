@@ -2,6 +2,7 @@ import { BrowserWindow, session, shell, type Session, type WebContents } from 'e
 import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
 import { TokenStore, type Family } from './tokens'
+import { mayReceiveTokens } from './hosts'
 import type { AccountStatus, BridgeMessage, CallState, IncomingCall, MediaStreamInfo } from '@shared/types'
 import { log } from '../log'
 
@@ -20,6 +21,10 @@ const LOGIN_HOSTS = [
   /^sts\./,
   /^sso\./
 ]
+
+// Markiert Aufrufe aus request(), der Header selbst geht nicht ins Netz.
+const OWN_REQUEST_HEADER = 'x-te-own-request'
+const TOKEN_HEADERS = new Set(['authorization', 'authentication', 'x-skypetoken'])
 
 const MS_HOSTS = [
   /(^|\.)microsoft\.com$/,
@@ -87,7 +92,16 @@ export class Engine extends EventEmitter<EngineEvents> {
     const ses = this.ses
     ses.setUserAgent(chromeUserAgent(), 'de-DE,de,en-US,en')
 
-    ses.webRequest.onBeforeSendHeaders({ urls: ['https://*/*', 'wss://*/*'] }, (details, cb) => {
+    ses.webRequest.onBeforeSendHeaders({ urls: ['https://*/*', 'wss://*/*', 'http://*/*'] }, (details, cb) => {
+      // Eigene Aufrufe (request()) folgen Redirects, und Electron gibt dabei alle Header weiter, auch
+      // Authorization. Tokens gehen deshalb bei jedem Ziel, auch nach einem Redirect, nur an Microsoft-Hosts.
+      const own = Object.keys(details.requestHeaders).find((k) => k.toLowerCase() === OWN_REQUEST_HEADER)
+      if (own) {
+        delete details.requestHeaders[own]
+        if (!mayReceiveTokens(details.url)) {
+          for (const k of Object.keys(details.requestHeaders)) if (TOKEN_HEADERS.has(k.toLowerCase())) delete details.requestHeaders[k]
+        }
+      }
       try {
         this.tokens.capture(details.url, details.method, details.requestHeaders as Record<string, string>)
       } catch (e) {
@@ -353,6 +367,8 @@ export class Engine extends EventEmitter<EngineEvents> {
   }
 
   reload(): void {
+    // Verzögerte Neuladeversuche nach destroy() dürfen kein neues Fenster öffnen
+    if (this.quitting) return
     if (!this.win || this.win.isDestroyed()) return this.start()
     this.setStatus('starting')
     void this.win.loadURL(TEAMS_START_URL)
@@ -395,6 +411,7 @@ export class Engine extends EventEmitter<EngineEvents> {
     const origin = this.webOrigin()
     headers['origin'] = origin
     headers['referer'] = origin + '/'
+    headers[OWN_REQUEST_HEADER] = '1'
     return this.ses.fetch(url, { method: init.method ?? 'GET', headers, body, credentials: 'include' } as RequestInit)
   }
 
@@ -423,6 +440,8 @@ export class Engine extends EventEmitter<EngineEvents> {
   destroy(): void {
     this.quitting = true
     clearTimeout(this.readyTimer)
+    clearTimeout(this.readyFallback)
+    this.readyFallback = undefined
     if (this.debuggerAttached) {
       try {
         this.win?.webContents.debugger.detach()

@@ -1,11 +1,18 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { BrowserWindow, desktopCapturer, dialog, ipcMain, screen, webContents, type DesktopCapturerSource } from 'electron'
+import { BrowserWindow, desktopCapturer, dialog, ipcMain, screen, shell, webContents, type DesktopCapturerSource } from 'electron'
 import type { AccountService } from './account'
 import type { BackgroundList, BridgeMessage, CallAction, CallDevices, CallState, IncomingCall, MediaStreamInfo } from '@shared/types'
 import { createCallWindow, createIncomingWindow, createPopoutWindow, uiWindows } from './windows'
 import { log } from './log'
+import { isTeamsUrl } from './engine/hosts'
 
 type Broadcast = (event: string, payload: unknown) => void
+
+// Electron 45 wirft bei cb({}) "Video was requested, but no video stream was provided".
+// Mit null lehnt es die Anfrage ab, und getDisplayMedia() in der Web-App scheitert sauber.
+function denyDisplay(cb: (s: any) => void): void {
+  cb(null)
+}
 
 export class CallManager {
   state: CallState | null = null
@@ -27,7 +34,8 @@ export class CallManager {
 
   constructor(
     private readonly accounts: () => AccountService[],
-    private readonly broadcast: Broadcast
+    private readonly broadcast: Broadcast,
+    private readonly isQuitting: () => boolean = () => false
   ) {
     ipcMain.on('engine:msg', (e, msg) => this.onEngineMessage(e.sender.id, msg))
     ipcMain.on('bridge:send', (e, msg: BridgeMessage) => this.onReceiverMessage(e.sender.id, msg))
@@ -37,7 +45,15 @@ export class CallManager {
     acct.engine.ses.setDisplayMediaRequestHandler(
       (_req, cb) => {
         void (async () => {
-          const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
+          let sources: DesktopCapturerSource[]
+          try {
+            sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
+          } catch (e) {
+            // z.B. ohne Berechtigung zur Bildschirmaufnahme. Ohne Antwort hinge die Freigabe in der Web-App.
+            log.warn('desktopCapturer.getSources failed', (e as Error).message)
+            denyDisplay(cb)
+            return
+          }
           this.pendingDisplay = { cb, sources }
           const target = this.callWindow && !this.callWindow.isDestroyed() ? this.callWindow : BrowserWindow.getFocusedWindow()
           if (target) {
@@ -61,7 +77,7 @@ export class CallManager {
     if (!p) return
     const src = id ? p.sources.find((s) => s.id === id) : undefined
     if (!src) {
-      p.cb({})
+      denyDisplay(p.cb)
       return
     }
     p.cb({ video: src, audio: src.id.startsWith('screen') ? 'loopback' : undefined })
@@ -203,6 +219,11 @@ export class CallManager {
   }
 
   joinMeeting(acct: AccountService, joinUrl: string): void {
+    // Zoom- oder Webex-Links aus dem Kalender gehören in den Browser, nicht in die Teams-Web-App
+    if (!isTeamsUrl(joinUrl)) {
+      if (/^https:/.test(joinUrl)) void shell.openExternal(joinUrl)
+      return
+    }
     if (this.state && this.activeAccountId) {
       this.openCallWindow()
       return
@@ -285,6 +306,9 @@ export class CallManager {
     win.on('close', (e) => {
       const phase = this.state?.phase
       if (!phase || phase === 'idle' || phase === 'ended') return
+      // Beim Beenden der App nicht nachfragen: preventDefault würde das Beenden abbrechen,
+      // nachdem die Konten schon gestoppt sind.
+      if (this.isQuitting()) return
       if (phase === 'prejoin' || phase === 'connecting') {
         this.action('cancelJoin')
         this.resetCall()
@@ -318,7 +342,7 @@ export class CallManager {
 
   setCompact(on: boolean): void {
     const win = this.callWindow
-    if (!win || win.isDestroyed()) return
+    if (!win || win.isDestroyed() || on === this.compact) return
     this.compact = on
     if (on) {
       this.normalBounds = win.getBounds()

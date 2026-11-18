@@ -235,28 +235,31 @@ function Post({
   onChanged: () => void
 }): JSX.Element {
   const [expanded, setExpanded] = useState(false)
-  const [allReplies, setAllReplies] = useState<Message[] | null>(null)
+  // Nachgeladene und selbst gesendete Antworten. Sie ergänzen die Vorschau aus dem Server-Stand,
+  // statt sie zu ersetzen, sonst kämen neue Antworten anderer nicht mehr an.
+  const [extra, setExtra] = useState<Message[]>([])
+  const [loadedAll, setLoadedAll] = useState(false)
   const [replying, setReplying] = useState(false)
-  // Beim Rendern vereinigen: ein älterer Stand aus Cache oder Anfrage verliert so keine sichtbare Antwort
   const replies = useMemo(() => {
-    if (!allReplies) return thread.replies
-    const ids = new Set(allReplies.map((m) => m.id))
-    return [...allReplies, ...thread.replies.filter((m) => !ids.has(m.id))].sort((a, b) => a.time - b.time)
-  }, [allReplies, thread.replies])
+    const byId = new Map<string, Message>()
+    for (const m of [...extra, ...thread.replies]) byId.set(m.id, m)
+    return [...byId.values()].sort((a, b) => a.time - b.time)
+  }, [extra, thread.replies])
   const visible = expanded ? replies : replies.slice(-2)
-  const hiddenCount = Math.max(0, (allReplies ? replies.length : thread.replyCount) - visible.length)
+  const hiddenCount = Math.max(0, (loadedAll ? replies.length : Math.max(thread.replyCount, replies.length)) - visible.length)
   const root = thread.root
   const hoverMore = useHoverPrefetch(() => prefetchReplies(accountId, channelId, thread.id))
 
   const expand = async () => {
     setExpanded(true)
-    if (!allReplies) {
+    if (!loadedAll) {
       // Vorgeladene Antworten sofort zeigen, dann auffrischen
       const cached = replyCache.peek(cacheKey(accountId, `${channelId};${thread.id}`))
-      if (cached) setAllReplies(cached.filter((m) => m.id !== thread.id))
+      if (cached) setExtra((prev) => [...prev, ...cached.filter((m) => m.id !== thread.id)])
       try {
         const r = await fetchReplies(accountId, channelId, thread.id)
-        setAllReplies(r.filter((m) => m.id !== thread.id))
+        setExtra((prev) => [...prev, ...r.filter((m) => m.id !== thread.id)])
+        setLoadedAll(true)
       } catch {
         /* Fallback: vorhandene Antworten */
       }
@@ -313,7 +316,7 @@ function Post({
               placeholder="Antworten"
               onSend={async (p) => {
                 const msg = await api.sendMessage(accountId, channelId, p.html, { replyToId: thread.id, importance: p.importance })
-                setAllReplies([...(allReplies ?? thread.replies), msg])
+                setExtra((prev) => [...prev, msg])
                 setReplying(false)
                 setTimeout(onChanged, 1000)
               }}

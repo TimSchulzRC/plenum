@@ -35,6 +35,7 @@ import type {
   Team
 } from '@shared/types'
 import { log } from './log'
+import { OlderCursors } from './older-cursors'
 
 export interface AccountRecord {
   id: string
@@ -93,7 +94,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
   private realtimeTimer?: NodeJS.Timeout
   private fullSyncAt = 0
   private syncing = false
-  private olderLinks = new Map<string, string>()
+  private deltaQueue: Promise<void> = Promise.resolve()
+  private olderLinks = new OlderCursors()
   private peopleQueue = new Set<string>()
   private unresolvable = new Set<string>()
   private peopleTimer?: NodeJS.Timeout
@@ -136,6 +138,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
     clearInterval(this.presenceTimer)
     clearTimeout(this.snapshotTimer)
     clearTimeout(this.peopleTimer)
+    clearTimeout(this.realtimeTimer)
     this.engine.destroy()
     this.started = false
   }
@@ -182,11 +185,12 @@ export class AccountService extends EventEmitter<AccountEvents> {
   }
 
   async fullSync(): Promise<void> {
-    if (this.syncing) return
+    if (this.syncing || !this.started) return
     this.syncing = true
     try {
       if (this.engine.tokens.has('csa')) {
         const data = await this.api.teamsAndChats()
+        if (!this.started) return
         this.applyCsa(data)
       } else {
         log.warn(`[${this.id}] csa noch nicht verfügbar, neuer Versuch in 5 s`)
@@ -195,6 +199,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
       this.fullSyncAt = Date.now()
       // Basis für inkrementelle Abfragen holen
       await this.deltaSync(true)
+      if (!this.started) return
       this.initialSyncDone = true
       void this.refreshPresence()
       void this.refreshActivityCount()
@@ -202,8 +207,10 @@ export class AccountService extends EventEmitter<AccountEvents> {
       log.warn(`[${this.id}] fullSync failed`, (e as Error).message)
     } finally {
       this.syncing = false
-      this.scheduleSnapshot()
-      this.emit('changed')
+      if (this.started) {
+        this.scheduleSnapshot()
+        this.emit('changed')
+      }
     }
   }
 
@@ -435,8 +442,17 @@ export class AccountService extends EventEmitter<AccountEvents> {
     }
   }
 
-  async deltaSync(initial = false): Promise<void> {
-    if (!this.engine.tokens.has('chatsvc')) return
+  // Abfragen nacheinander: Überholt eine ältere Antwort eine neuere, setzt sie lastMessage und
+  // syncStateUrl zurück, und die nächste Abfrage meldet dieselbe Nachricht noch einmal.
+  deltaSync(initial = false): Promise<void> {
+    const run = this.deltaQueue.then(() => this.runDeltaSync(initial))
+    this.deltaQueue = run.catch(() => undefined)
+    return run
+  }
+
+  private async runDeltaSync(initial: boolean): Promise<void> {
+    // Nach stop() (Konto entfernt) keine Abfragen und Benachrichtigungen mehr
+    if (!this.started || !this.engine.tokens.has('chatsvc')) return
     let data: any
     try {
       if (this.syncStateUrl && !initial) {
@@ -450,6 +466,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
       log.warn(`[${this.id}] deltaSync failed`, (e as Error).message)
       return
     }
+    // Konto während der Abfrage entfernt
+    if (!this.started) return
     this.lastDeltaAt = Date.now()
     if (data?._metadata?.syncState) this.syncStateUrl = data._metadata.syncState
     const changed: string[] = []
@@ -860,21 +878,22 @@ export class AccountService extends EventEmitter<AccountEvents> {
   private names = (mri: string): string | undefined => this.people.get(mri)?.displayName
 
   async getMessages(conversationId: string, before?: number): Promise<Message[]> {
+    const myMri = this.record.mri ?? ''
+    const toMessages = (r: any): Message[] =>
+      (r?.messages ?? []).filter((m: any) => !/^Control\//.test(m.messagetype || '')).map((m: any) => mapChatsvcMessage(m, myMri, this.names))
     let res: any
+    let msgs: Message[]
     if (before) {
-      const link = this.olderLinks.get(conversationId)
+      const link = this.olderLinks.get(conversationId, before)
       if (!link) return []
       res = await this.api.messagesByUrl(link)
+      msgs = toMessages(res)
     } else {
       res = await this.api.messages(conversationId, 60)
+      msgs = toMessages(res)
     }
     const back = res?._metadata?.backwardLink
-    if (back) this.olderLinks.set(conversationId, back)
-    else if (before) this.olderLinks.delete(conversationId)
-    const myMri = this.record.mri ?? ''
-    const msgs: Message[] = (res?.messages ?? [])
-      .filter((m: any) => !/^Control\//.test(m.messagetype || ''))
-      .map((m: any) => mapChatsvcMessage(m, myMri, this.names))
+    if (back && msgs.length) this.olderLinks.set(conversationId, Math.min(...msgs.map((m) => m.time)), back)
     const unknown = [...new Set(msgs.map((m) => m.from).filter((f) => f && !this.people.has(f)))]
     if (unknown.length) this.queuePeople(unknown)
     for (const m of msgs) {
@@ -1136,6 +1155,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
   private async notifyActivity(): Promise<void> {
     try {
       const items = await this.getActivity()
+      if (!this.started) return
       const newest = items[0]
       if (!newest || newest.read || newest.type !== 'mention') return
       if (this.channelIndex.has(newest.conversationId ?? '') || this.chats.has(newest.conversationId ?? '')) {
