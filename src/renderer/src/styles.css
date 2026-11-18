@@ -1406,13 +1406,17 @@ button {
   padding: 28px 40px;
   background: var(--content);
 }
+.settings > * {
+  max-width: 760px;
+  margin-left: auto;
+  margin-right: auto;
+}
 .settings h1 {
   font-size: 24px;
   letter-spacing: -0.02em;
-  margin: 0 0 22px;
+  margin: 0 auto 22px;
 }
 .settings section {
-  max-width: 760px;
   margin-bottom: 24px;
   padding: 6px 18px 10px;
   border-radius: var(--radius-lg);
