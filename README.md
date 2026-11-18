@@ -26,7 +26,9 @@ Fertige Builds liegen unter [Releases](https://github.com/TimSchulzRC/teams-ever
    xattr -dr com.apple.quarantine "/Applications/Teams Everywhere.app"
    ```
 
-Eine automatische Update-Funktion gibt es noch nicht. Neue Versionen installierst du genauso.
+Danach sucht die App selbst nach Updates, 15 Sekunden nach dem Start und dann alle vier Stunden. Gibt es eine neue Version, erscheint unten in der linken Leiste der Knopf „Update“. Ein Klick lädt sie und prüft ihre SHA256-Summe, ein Klick auf „Neustart“ tauscht die App aus und startet sie neu. Unter Einstellungen → Updates siehst du Version und Kanal und kannst die Suche auch von Hand anstoßen. Nightly-Installationen bekommen Nightlies und Stable-Releases, Stable-Installationen nur Stable-Releases.
+
+Das Update braucht Schreibrechte auf die App und ihren Ordner und klappt nicht, solange die App direkt aus der DMG läuft. Zieh sie in dem Fall wie in Schritt 2 in den Ordner Programme und starte sie von dort.
 
 ## Funktionen
 
