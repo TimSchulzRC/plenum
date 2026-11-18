@@ -17,11 +17,11 @@ export function displayName(variant: AppVariant): string {
   return variant === 'stable' ? BASE_NAME : `${BASE_NAME} (${variant})`
 }
 
-// Interner Name, an dem Datenordner und Keychain-Eintrag hängen. Electron bildet aus
-// app.name den Keychain-Eintrag „<Name> Safe Storage“, mit dem Chromium die Cookies
-// verschlüsselt. Stable und Nightly teilen sich deshalb Name und Daten, sonst wären
-// nach einem Kanalwechsel alle Anmeldungen weg. Dev bekommt eigene Daten, die über
-// alle Checkouts und Versionen hinweg dieselben bleiben.
+// Interner Name (app.name), an dem der Datenordner hängt. Electron bildet daraus auch den
+// Keychain-Eintrag „<Name> Safe Storage“ für safeStorage und Cookie-Verschlüsselung (beides
+// ist derzeit aus). Stable und Nightly teilen sich Name und Daten, damit ein Kanalwechsel
+// per Update die Anmeldungen behält. Dev bekommt eigene Daten, die über alle Checkouts
+// und Versionen hinweg dieselben bleiben.
 export function dataName(variant: AppVariant): string {
   return variant === 'dev' ? `${BASE_NAME} (dev)` : BASE_NAME
 }

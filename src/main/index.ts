@@ -24,8 +24,8 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 if (process.env.TM_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.TM_DEBUG_PORT)
 
 // Dev läuft mit eigenem Namen und eigenem Datenordner neben der installierten App:
-// eigene Konten, Einstellungen, Anmeldungen, Logs, Instanzsperre und Keychain-Eintrag.
-// app.setName muss vor app.ready laufen, Electron leitet daraus den Keychain-Eintrag ab.
+// eigene Konten, Einstellungen, Anmeldungen, Logs und Instanzsperre.
+// app.setName muss vor app.ready laufen, Electron leitet daraus auch den Keychain-Eintrag ab.
 const variant = appVariant(app.isPackaged, channelOf(app.getVersion()))
 const appName = displayName(variant)
 app.setName(dataName(variant))
