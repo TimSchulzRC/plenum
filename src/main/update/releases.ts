@@ -21,6 +21,8 @@ export interface UpdateCandidate {
   version: string
   releaseUrl: string
   zip: GithubAsset
+  // App ohne Electron-Frameworks. Der Updater ergänzt sie aus der installierten App.
+  patch: GithubAsset | null
   checksums: GithubAsset | null
 }
 
@@ -80,6 +82,10 @@ export function zipAssetName(version: string, arch: string): string {
   return `Teams-Everywhere-${version}-mac-${arch}.zip`
 }
 
+export function patchAssetName(version: string, arch: string): string {
+  return `Teams-Everywhere-${version}-mac-${arch}-patch.zip`
+}
+
 export function pickUpdate(releases: GithubRelease[], currentVersion: string, arch: string): UpdateCandidate | null {
   const channel = channelOf(currentVersion)
   let best: UpdateCandidate | null = null
@@ -92,7 +98,8 @@ export function pickUpdate(releases: GithubRelease[], currentVersion: string, ar
     if (best && compareVersions(version, best.version) <= 0) continue
     const zip = r.assets.find((a) => a.name === zipAssetName(version, arch))
     if (!zip) continue
-    best = { version, releaseUrl: r.html_url, zip, checksums: r.assets.find((a) => a.name === 'SHA256SUMS.txt') ?? null }
+    const patch = r.assets.find((a) => a.name === patchAssetName(version, arch)) ?? null
+    best = { version, releaseUrl: r.html_url, zip, patch, checksums: r.assets.find((a) => a.name === 'SHA256SUMS.txt') ?? null }
   }
   return best
 }

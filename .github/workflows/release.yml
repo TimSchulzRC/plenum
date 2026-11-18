@@ -155,6 +155,15 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npm run dist:release
 
+      # Kleine Update-Pakete ohne Electron-Frameworks, siehe scripts/patch-zip.sh.
+      - name: Patch-ZIPs
+        run: |
+          set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          scripts/patch-zip.sh "release/mac-arm64/Teams Everywhere.app" "release/Teams-Everywhere-$version-mac-arm64-patch.zip"
+          scripts/patch-zip.sh "release/mac/Teams Everywhere.app" "release/Teams-Everywhere-$version-mac-x64-patch.zip"
+          ls -la release/*-patch.zip
+
       - name: Prüfsummen
         working-directory: release
         run: shasum -a 256 -- *.dmg *.zip | tee SHA256SUMS.txt

@@ -1,10 +1,11 @@
 // Updates aus den GitHub-Releases. electron-updater setzt auf macOS eine Apple-Signatur
 // voraus, die Builds sind aber nur ad hoc signiert. Deshalb lädt der Updater die ZIP selbst,
 // prüft die SHA256-Summe und tauscht das App-Bundle nach dem Beenden per Shell-Skript aus.
+// Bleibt die Electron-Version gleich, reicht das Patch-ZIP ohne Frameworks (wenige MB statt >100).
 import { app, net } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { accessSync, constants, createWriteStream, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { accessSync, constants, createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -12,7 +13,7 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web'
 import { promisify } from 'node:util'
 import type { UpdateState } from '@shared/types'
 import { log } from './log'
-import { channelOf, checksumFor, pickUpdate, type GithubRelease, type UpdateCandidate } from './update/releases'
+import { channelOf, checksumFor, pickUpdate, type GithubAsset, type GithubRelease, type UpdateCandidate } from './update/releases'
 
 const execFileAsync = promisify(execFile)
 
@@ -153,25 +154,31 @@ export class Updater {
       this.cleanup()
       const dir = mkdtempSync(join(app.getPath('temp'), WORKDIR_PREFIX))
       this.workdir = dir
-      const zipPath = join(dir, c.zip.name)
-      const hash = await this.fetchToFile(c.zip.browser_download_url, zipPath, c.zip.size)
 
       if (!c.checksums) throw new Error('Der Release enthält keine SHA256SUMS.txt')
       const sumsRes = await net.fetch(c.checksums.browser_download_url, { headers: { 'User-Agent': HEADERS['User-Agent'] }, signal: AbortSignal.timeout(CHECK_TIMEOUT) })
       if (!sumsRes.ok) throw new Error(`Prüfsummen nicht ladbar (${sumsRes.status})`)
-      const expected = checksumFor(await sumsRes.text(), c.zip.name)
-      if (!expected) throw new Error(`Keine Prüfsumme für ${c.zip.name}`)
-      if (expected !== hash) throw new Error('Prüfsumme stimmt nicht, Download verworfen')
+      const sums = await sumsRes.text()
 
-      const extracted = join(dir, 'app')
-      await execFileAsync('/usr/bin/ditto', ['-x', '-k', zipPath, extracted])
-      rmSync(zipPath, { force: true })
-      const bundle = readdirSync(extracted).find((n) => n.endsWith('.app'))
-      if (!bundle) throw new Error('Kein App-Bundle in der ZIP')
-      const staged = join(extracted, bundle)
-      const [ownId, newId] = await Promise.all([bundleId(currentBundlePath()), bundleId(staged)])
-      if (ownId !== newId) throw new Error(`Falsche App im Download (${newId})`)
-      await execFileAsync('/usr/bin/codesign', ['--verify', '--deep', '--strict', staged])
+      // Erst das kleine Patch-ZIP mit den Frameworks der installierten App. Passen die nicht
+      // mehr (neue Electron-Version), scheitert die Signaturprüfung und es kommt die volle ZIP.
+      let staged: string | null = null
+      if (c.patch) {
+        try {
+          staged = await this.stage(c.patch, sums, join(dir, 'patch'))
+          await addFrameworks(currentBundlePath(), staged)
+          await verifyBundle(staged)
+        } catch (err) {
+          log.info(`Patch-Update nicht nutzbar, lade die ganze App: ${(err as Error).message}`)
+          rmSync(join(dir, 'patch'), { recursive: true, force: true })
+          staged = null
+          this.set({ downloadPercent: 0 })
+        }
+      }
+      if (!staged) {
+        staged = await this.stage(c.zip, sums, join(dir, 'full'))
+        await verifyBundle(staged)
+      }
 
       this.stagedApp = staged
       log.info(`Update ${c.version} geladen und geprüft: ${staged}`)
@@ -181,6 +188,22 @@ export class Updater {
       this.cleanup()
       this.set({ status: 'error', errorContext: 'download', downloadPercent: null, message: `Download fehlgeschlagen: ${(err as Error).message}` })
     }
+  }
+
+  // Lädt ein ZIP, gleicht es mit SHA256SUMS.txt ab, entpackt es und liefert den Pfad zum App-Bundle.
+  private async stage(asset: GithubAsset, sums: string, into: string): Promise<string> {
+    const expected = checksumFor(sums, asset.name)
+    if (!expected) throw new Error(`Keine Prüfsumme für ${asset.name}`)
+    mkdirSync(into)
+    const zipPath = join(into, asset.name)
+    const hash = await this.fetchToFile(asset.browser_download_url, zipPath, asset.size)
+    if (expected !== hash) throw new Error('Prüfsumme stimmt nicht, Download verworfen')
+    const extracted = join(into, 'app')
+    await execFileAsync('/usr/bin/ditto', ['-x', '-k', zipPath, extracted])
+    rmSync(zipPath, { force: true })
+    const bundle = readdirSync(extracted).find((n) => n.endsWith('.app'))
+    if (!bundle) throw new Error('Kein App-Bundle in der ZIP')
+    return join(extracted, bundle)
   }
 
   install(): void {
@@ -289,6 +312,21 @@ function removeStaleDownloads(): void {
 // /Applications/Teams Everywhere.app/Contents/MacOS/Teams Everywhere -> /Applications/Teams Everywhere.app
 function currentBundlePath(): string {
   return resolve(app.getPath('exe'), '../../..')
+}
+
+// Gleiche Bundle-ID und eine gültige Signatur über das ganze Bundle, auch die Frameworks.
+async function verifyBundle(staged: string): Promise<void> {
+  const [ownId, newId] = await Promise.all([bundleId(currentBundlePath()), bundleId(staged)])
+  if (ownId !== newId) throw new Error(`Falsche App im Download (${newId})`)
+  await execFileAsync('/usr/bin/codesign', ['--verify', '--deep', '--strict', staged])
+}
+
+// Kopiert die Electron-Frameworks der installierten App in ein Bundle aus dem Patch-ZIP.
+async function addFrameworks(from: string, to: string): Promise<void> {
+  const frameworks = join(from, 'Contents', 'Frameworks')
+  for (const name of readdirSync(frameworks).filter((n) => n.endsWith('.framework'))) {
+    await execFileAsync('/usr/bin/ditto', ['--norsrc', '--noextattr', '--noacl', join(frameworks, name), join(to, 'Contents', 'Frameworks', name)])
+  }
 }
 
 async function bundleId(bundle: string): Promise<string> {
