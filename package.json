@@ -23,6 +23,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "node --test \"test/**/*.test.ts\"",
     "dist": "electron-vite build && electron-builder --mac --dir",
     "dist:dmg": "electron-vite build && electron-builder --mac dmg",
     "dist:release": "electron-vite build && electron-builder --mac dmg zip --arm64 --x64 --publish never"

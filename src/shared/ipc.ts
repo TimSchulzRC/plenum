@@ -17,7 +17,8 @@ import type {
   Presence,
   Availability,
   BackgroundList,
-  CallDevices
+  CallDevices,
+  UpdateState
 } from './types'
 
 // Methoden, die die Oberfläche über ipcRenderer.invoke('api', name, ...args) aufruft.
@@ -87,6 +88,11 @@ export interface ApiMethods {
   setBadge(count: number): void
   closeWindow(): void
   setAlwaysOnTop(on: boolean): void
+
+  getUpdateState(): UpdateState
+  checkForUpdates(): UpdateState
+  downloadUpdate(): void
+  installUpdate(): void
 }
 
 export type ApiName = keyof ApiMethods
@@ -105,6 +111,7 @@ export interface EventMap {
   'display-sources': { id: string; name: string; thumbnail: string; kind: 'screen' | 'window' }[]
   typing: { accountId: string; conversationId: string; mri: string; name: string }
   'activity-updated': { accountId: string }
+  'update-state': UpdateState
 }
 
 export type EventName = keyof EventMap

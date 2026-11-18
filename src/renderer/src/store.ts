@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AccountInfo, AccountSnapshot, AppSettings, CallState, Presence } from '@shared/types'
+import type { AccountInfo, AccountSnapshot, AppSettings, CallState, Presence, UpdateState } from '@shared/types'
 import { api, onEvent } from './api'
 
 export type View = 'activity' | 'chat' | 'teams' | 'calendar' | 'calls' | 'settings'
@@ -27,6 +27,7 @@ interface MainState {
   selection: Record<string, Selection>
   callState: CallState | null
   settings?: AppSettings
+  update: UpdateState | null
   typing: Record<string, { name: string; until: number }>
   back: NavEntry[]
   forward: NavEntry[]
@@ -47,6 +48,7 @@ export const useStore = create<MainState>((set, get) => ({
   view: 'chat',
   selection: {},
   callState: null,
+  update: null,
   typing: {},
   back: [],
   forward: [],
@@ -142,6 +144,8 @@ export function initStore(): void {
       return { snapshots: { ...s.snapshots, [accountId]: { ...snap, presence: { ...snap.presence, ...presence } } } }
     })
   )
+  void api.getUpdateState().then((update) => useStore.setState({ update }))
+  onEvent('update-state', (update) => useStore.setState({ update }))
   onEvent('settings', (settings) => useStore.setState({ settings }))
   onEvent('call-state', (callState) => useStore.setState({ callState }))
   onEvent('typing', (t) => {
