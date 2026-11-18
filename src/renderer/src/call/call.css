@@ -2,7 +2,7 @@
 
 body[data-route='call'],
 body[data-route='popout'] {
-  background: #141416;
+  background: #141414;
   color: #ffffff;
 }
 
@@ -10,12 +10,12 @@ body[data-route='popout'] {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #141416;
+  background: #141414;
   color: #ffffff;
 }
 
 .cw-muted {
-  color: #9898a3;
+  color: #adadad;
 }
 
 /* ---------- Kopfleiste ---------- */
@@ -26,8 +26,8 @@ body[data-route='popout'] {
   align-items: center;
   gap: 4px;
   padding: 0 10px 0 84px;
-  background: #1d1d21;
-  border-bottom: 1px solid #2c2c33;
+  background: #1f1f1f;
+  border-bottom: 1px solid #333333;
   -webkit-app-region: drag;
 }
 .cw-bar-title {
@@ -46,7 +46,7 @@ body[data-route='popout'] {
 }
 .cw-timer {
   font-size: 13px;
-  color: #cfcfd6;
+  color: #d6d6d6;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -58,7 +58,7 @@ body[data-route='popout'] {
 .cw-bar-sep {
   width: 1px;
   height: 32px;
-  background: #383840;
+  background: #3d3d3d;
   margin: 0 6px;
 }
 .cw-bar-btn {
@@ -78,17 +78,17 @@ body[data-route='popout'] {
   cursor: pointer;
 }
 .cw-bar-btn:hover:not(:disabled) {
-  background: #2c2c33;
+  background: #333333;
 }
 .cw-bar-btn:disabled {
   opacity: 0.38;
   cursor: default;
 }
 .cw-bar-btn.active {
-  color: #a6a9ff;
+  color: #7f85f5;
 }
 .cw-bar-btn.off .cw-bar-icon {
-  color: #cfcfd6;
+  color: #d6d6d6;
 }
 .cw-bar-icon {
   position: relative;
@@ -108,7 +108,7 @@ body[data-route='popout'] {
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: #383840;
+  background: #3d3d3d;
   color: #ffffff;
   font-size: 10px;
   font-weight: 600;
@@ -123,7 +123,7 @@ body[data-route='popout'] {
   padding: 0 14px 0 10px;
   border: 0;
   border-radius: 4px;
-  background: #e0435c;
+  background: #c4314b;
   color: #ffffff;
   font: inherit;
   font-size: 14px;
@@ -134,7 +134,7 @@ body[data-route='popout'] {
   cursor: pointer;
 }
 .cw-leave:hover:not(:disabled) {
-  background: #c8354d;
+  background: #a72037;
 }
 .cw-leave:disabled {
   opacity: 0.45;
@@ -167,7 +167,7 @@ body[data-route='popout'] {
   justify-content: center;
   gap: 10px;
   padding: 6px 12px;
-  background: #2d2f5c;
+  background: #2f2f4a;
   font-size: 13px;
 }
 
@@ -257,13 +257,13 @@ body[data-route='popout'] {
   min-height: 0;
   border-radius: 8px;
   overflow: hidden;
-  background: #242429;
+  background: #292929;
   outline: 2px solid transparent;
   outline-offset: -2px;
   transition: outline-color 0.15s;
 }
 .cw-tile.speaking {
-  outline-color: #a6a9ff;
+  outline-color: #7f85f5;
 }
 .cw-tile.screen {
   background: #000000;
@@ -281,7 +281,7 @@ body[data-route='popout'] {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #242429;
+  background: #292929;
 }
 .cw-tile-label {
   position: absolute;
@@ -338,15 +338,15 @@ body[data-route='popout'] {
 }
 .cw-tile-btn:hover {
   background: rgba(40, 40, 40, 0.9);
-  color: #a6a9ff;
+  color: #7f85f5;
 }
 
 /* ---------- Personen-Bereich ---------- */
 .cw-panel {
   width: 300px;
   flex-shrink: 0;
-  background: #1d1d21;
-  border-left: 1px solid #2c2c33;
+  background: #1f1f1f;
+  border-left: 1px solid #333333;
   display: flex;
   flex-direction: column;
 }
@@ -379,7 +379,7 @@ body[data-route='popout'] {
   border-radius: 10px;
 }
 .cw-person:hover {
-  background: #2c2c33;
+  background: #333333;
 }
 .cw-person-name {
   flex: 1;
@@ -406,7 +406,7 @@ body[data-route='popout'] {
   background: rgba(255, 255, 255, 0.1);
 }
 .cw-icon-btn.active {
-  color: #a6a9ff;
+  color: #7f85f5;
 }
 
 /* ---------- Vor dem Beitritt ---------- */
@@ -432,7 +432,7 @@ body[data-route='popout'] {
   aspect-ratio: 16 / 9;
   border-radius: 8px;
   overflow: hidden;
-  background: #242429;
+  background: #292929;
 }
 .cw-prejoin-off {
   position: absolute;
@@ -442,7 +442,7 @@ body[data-route='popout'] {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #9898a3;
+  color: #adadad;
   font-size: 13px;
 }
 .cw-prejoin-toggles {
@@ -454,7 +454,7 @@ body[data-route='popout'] {
   padding: 0 14px;
   border-radius: 18px;
   border: 1px solid #4d4d4d;
-  background: #242429;
+  background: #292929;
   color: #ffffff;
   font: inherit;
   font-size: 13px;
@@ -464,8 +464,8 @@ body[data-route='popout'] {
   cursor: pointer;
 }
 .cw-toggle.on {
-  border-color: #8a8dff;
-  background: #2d2f5c;
+  border-color: #7f85f5;
+  background: #2f2f4a;
 }
 .cw-toggle:disabled {
   opacity: 0.45;
@@ -492,7 +492,7 @@ body[data-route='popout'] {
   max-height: calc(100% - 48px);
   display: flex;
   flex-direction: column;
-  background: #242429;
+  background: #292929;
   border-radius: 8px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
 }
@@ -515,7 +515,7 @@ body[data-route='popout'] {
 .cw-modal-body h3 {
   font-size: 13px;
   font-weight: 600;
-  color: #cfcfd6;
+  color: #d6d6d6;
   margin: 12px 0 8px;
 }
 .cw-modal-foot {
@@ -536,7 +536,7 @@ body[data-route='popout'] {
   padding: 6px;
   border: 2px solid transparent;
   border-radius: 8px;
-  background: #1d1d21;
+  background: #1f1f1f;
   color: #ffffff;
   font: inherit;
   font-size: 12px;
@@ -547,7 +547,7 @@ body[data-route='popout'] {
   width: 100%;
   aspect-ratio: 16 / 10;
   object-fit: contain;
-  background: #141416;
+  background: #141414;
   border-radius: 4px;
 }
 .cw-picker-item span {
@@ -556,10 +556,10 @@ body[data-route='popout'] {
   text-overflow: ellipsis;
 }
 .cw-picker-item:hover {
-  background: #2c2c33;
+  background: #333333;
 }
 .cw-picker-item.selected {
-  border-color: #8a8dff;
+  border-color: #7f85f5;
 }
 
 /* ---------- Kompaktansicht ---------- */
@@ -567,7 +567,7 @@ body[data-route='popout'] {
   position: relative;
   height: 100%;
   display: flex;
-  background: #141416;
+  background: #141414;
   -webkit-app-region: drag;
   overflow: hidden;
 }
@@ -640,10 +640,10 @@ body[data-route='popout'] {
   color: #242424;
 }
 .cw-round.danger {
-  background: #e0435c;
+  background: #c4314b;
 }
 .cw-round.danger:hover {
-  background: #c8354d;
+  background: #a72037;
 }
 
 /* ---------- Pop-out ---------- */
@@ -661,7 +661,7 @@ body[data-route='popout'] {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #9898a3;
+  color: #adadad;
   font-size: 13px;
 }
 .cw-popout-bar {
@@ -705,7 +705,7 @@ body[data-route='popout'] {
   justify-content: space-between;
   padding: 16px 16px 14px;
   border-radius: 12px;
-  background: #242429;
+  background: #292929;
   color: #ffffff;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 1px rgba(255, 255, 255, 0.2);
   -webkit-app-region: drag;
@@ -743,11 +743,11 @@ body[data-route='popout'] {
 }
 .cw-incoming-sub {
   font-size: 13px;
-  color: #cfcfd6;
+  color: #d6d6d6;
 }
 .cw-incoming-detail {
   font-size: 12px;
-  color: #9898a3;
+  color: #adadad;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -778,7 +778,7 @@ body[data-route='popout'] {
   background: #13a10e;
 }
 .cw-answer.decline {
-  background: #e0435c;
+  background: #c4314b;
 }
 
 /* ---------- Geräte-Pfeil und Hintergrundeffekte ---------- */
@@ -791,14 +791,14 @@ body[data-route='popout'] {
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: #cfcfd6;
+  color: #d6d6d6;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
 }
 .cw-chevron:hover:not(:disabled) {
-  background: #2c2c33;
+  background: #333333;
 }
 .cw-chevron:disabled {
   opacity: 0.35;
@@ -824,7 +824,7 @@ body[data-route='popout'] {
   cursor: pointer;
 }
 .cw-add-bg:hover:not(:disabled) {
-  background: #2c2c33;
+  background: #333333;
 }
 .cw-bg-grid {
   display: grid;
@@ -837,7 +837,7 @@ body[data-route='popout'] {
   aspect-ratio: 16 / 9;
   border-radius: 10px;
   border: 2px solid transparent;
-  background: #2c2c33;
+  background: #333333;
   padding: 0;
   overflow: hidden;
   cursor: pointer;
@@ -847,7 +847,7 @@ body[data-route='popout'] {
   border-color: #6b6b6b;
 }
 .cw-bg.selected {
-  border-color: #8a8dff;
+  border-color: #7f85f5;
 }
 .cw-bg img {
   width: 100%;
@@ -889,7 +889,7 @@ body[data-route='popout'] {
   width: 20px;
   height: 20px;
   border-radius: 10px;
-  background: #8a8dff;
+  background: #7f85f5;
   display: flex;
   align-items: center;
   justify-content: center;

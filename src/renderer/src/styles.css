@@ -4,48 +4,54 @@
    ========================================================= */
 
 :root {
+  /* Farben aus dem Teams-Theme von Fluent UI (teamsLightTheme/teamsDarkTheme),
+     Dunkel abgeglichen mit einem Screenshot der offiziellen Teams-App */
   --brand: #5b5fc7;
   --brand-hover: #4f52b2;
   --brand-pressed: #444791;
-  --brand-fg: #5257c7;
-  --brand-soft: #eceefe;
-  --brand-ring: rgba(91, 95, 199, 0.28);
+  --brand-fg: #5b5fc7;
+  --brand-soft: #e8ebfa;
+  --brand-ring: rgba(91, 95, 199, 0.32);
 
   --frame: transparent;
-  --frame-solid: #ececf0;
-  --pane: #f7f7f9;
-  --content: #ffffff;
+  --frame-solid: #ebebeb;
+  --pane: #f0f0f0;
+  --content: #f5f5f5;
   --surface: #ffffff;
-  --surface-2: #f4f4f7;
+  --surface-2: #ffffff;
   --elevated: #ffffff;
 
-  --hover: rgba(20, 20, 40, 0.06);
-  --hover-soft: rgba(20, 20, 40, 0.045);
+  --hover: rgba(0, 0, 0, 0.06);
+  --hover-soft: rgba(0, 0, 0, 0.04);
   --selected: rgba(91, 95, 199, 0.12);
-  --selected-strong: rgba(91, 95, 199, 0.18);
+  --selected-strong: rgba(91, 95, 199, 0.2);
+  --item-selected: #ffffff;
+  --search-bg: #ffffff;
 
-  --border: rgba(20, 20, 40, 0.08);
-  --border-strong: rgba(20, 20, 40, 0.14);
+  --border: #e0e0e0;
+  --border-strong: #d1d1d1;
 
-  --fg: #1d1d22;
-  --fg-2: #3d3d46;
-  --fg-3: #6b6b76;
-  --fg-4: #9696a1;
+  --fg: #242424;
+  --fg-2: #424242;
+  --fg-3: #616161;
+  --fg-4: #707070;
 
-  --bubble-other: #f1f1f5;
-  --bubble-mine: #e6e7fd;
-  --bubble-mine-fg: #1d1d22;
+  --bubble-other: #ffffff;
+  --bubble-mine: #e8ebfa;
+  --bubble-mine-fg: #242424;
   --quote-mine: rgba(255, 255, 255, 0.55);
   --quote-mine-hover: rgba(255, 255, 255, 0.8);
 
-  --danger: #d13a52;
-  --danger-hover: #b72d44;
+  --danger: #c4314b;
+  --danger-hover: #a72037;
+  --danger-fg: #c4314b;
+  --badge: #c4314b;
   --success: #13a10e;
   --unread-dot: #5b5fc7;
 
-  --shadow-sm: 0 1px 2px rgba(15, 15, 30, 0.06);
-  --shadow: 0 1px 3px rgba(15, 15, 30, 0.08), 0 0 0 1px rgba(15, 15, 30, 0.04);
-  --shadow-lg: 0 12px 32px rgba(15, 15, 30, 0.16), 0 0 0 1px rgba(15, 15, 30, 0.06);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.06);
 
   --radius-sm: 6px;
   --radius: 8px;
@@ -54,42 +60,46 @@
 }
 
 [data-theme='dark'] {
-  --brand: #6366e0;
-  --brand-hover: #7275ea;
-  --brand-pressed: #5558cc;
-  --brand-fg: #a6a9ff;
-  --brand-soft: rgba(124, 128, 255, 0.14);
-  --brand-ring: rgba(140, 144, 255, 0.32);
+  --brand: #4f52b2;
+  --brand-hover: #5b5fc7;
+  --brand-pressed: #383966;
+  --brand-fg: #7f85f5;
+  --brand-soft: #2f2f4a;
+  --brand-ring: rgba(127, 133, 245, 0.4);
 
-  --frame-solid: #141416;
-  --pane: #18181b;
-  --content: #1d1d21;
-  --surface: #242429;
-  --surface-2: #26262c;
-  --elevated: #2a2a30;
+  --frame-solid: #141414;
+  --pane: #333333;
+  --content: #1f1f1f;
+  --surface: #292929;
+  --surface-2: #292929;
+  --elevated: #292929;
 
   --hover: rgba(255, 255, 255, 0.06);
   --hover-soft: rgba(255, 255, 255, 0.04);
-  --selected: rgba(140, 144, 255, 0.14);
-  --selected-strong: rgba(140, 144, 255, 0.22);
+  --selected: rgba(127, 133, 245, 0.16);
+  --selected-strong: rgba(127, 133, 245, 0.26);
+  --item-selected: #242424;
+  --search-bg: #242424;
 
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.12);
+  --border: rgba(0, 0, 0, 0.5);
+  --border-strong: rgba(255, 255, 255, 0.16);
 
-  --fg: #f1f1f4;
-  --fg-2: #cfcfd6;
-  --fg-3: #9898a3;
-  --fg-4: #6c6c77;
+  --fg: #ffffff;
+  --fg-2: #d6d6d6;
+  --fg-3: #adadad;
+  --fg-4: #999999;
 
-  --bubble-other: #2a2a30;
-  --bubble-mine: #3b3e8c;
-  --bubble-mine-fg: #f4f4ff;
+  --bubble-other: #292929;
+  --bubble-mine: #2b2b40;
+  --bubble-mine-fg: #ffffff;
   --quote-mine: rgba(0, 0, 0, 0.2);
   --quote-mine-hover: rgba(0, 0, 0, 0.3);
 
-  --danger: #ef5b72;
-  --danger-hover: #d9435a;
-  --unread-dot: #a6a9ff;
+  --danger: #c4314b;
+  --danger-hover: #a72037;
+  --danger-fg: #e37d80;
+  --badge: #da3b01;
+  --unread-dot: #4f52b2;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04);
@@ -199,7 +209,7 @@ button {
   gap: 8px;
   padding: 0 12px;
   border-radius: 10px;
-  background: rgba(127, 127, 145, 0.14);
+  background: var(--search-bg);
   border: 1px solid transparent;
   color: var(--fg-3);
   transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
@@ -305,7 +315,7 @@ button {
   height: 17px;
   padding: 0 5px;
   border-radius: 9px;
-  background: var(--danger);
+  background: var(--badge);
   color: #fff;
   font-size: 10px;
   font-weight: 700;
@@ -333,7 +343,7 @@ button {
   background: linear-gradient(to right, var(--selected-strong) var(--update-progress, 100%), var(--brand-soft) var(--update-progress, 100%));
 }
 .rail-update.failed {
-  color: var(--danger);
+  color: var(--danger-fg);
 }
 
 /* ---------- Inhaltsbereich als Karte ---------- */
@@ -409,7 +419,7 @@ button {
   background: var(--hover-soft);
 }
 .list-item.selected {
-  background: var(--selected);
+  background: var(--item-selected);
 }
 .list-item.selected .name {
   color: var(--fg);
@@ -852,7 +862,7 @@ button {
   /* --brand-soft ist im Dark Mode halbtransparent: auf deckendem Grund
      auftragen, sonst scheint die Nachricht darunter durch */
   background: linear-gradient(var(--brand-soft), var(--brand-soft)), var(--content);
-  color: var(--brand-fg);
+  color: var(--fg);
 }
 /* Reaktionen überlappen die Unterkante der Nachricht */
 .msg-col .reactions {
@@ -1179,7 +1189,7 @@ button {
   background: var(--hover-soft);
 }
 .channel-row.selected {
-  background: var(--selected);
+  background: var(--item-selected);
   color: var(--fg);
   font-weight: 600;
 }
@@ -1475,7 +1485,7 @@ button {
   background: var(--hover-soft);
 }
 .activity-item.selected {
-  background: var(--selected);
+  background: var(--item-selected);
 }
 .activity-item .a-body {
   flex: 1;

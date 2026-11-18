@@ -36,7 +36,7 @@ export const MessageBody = memo(function MessageBody({ msg, accountId, myName }:
     <>
       {msg.subject && <div className="subject">{msg.subject}</div>}
       {msg.importance && (
-        <div style={{ color: 'var(--danger)', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+        <div style={{ color: 'var(--danger-fg)', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
           <Important16Filled /> {msg.importance === 'urgent' ? 'DRINGEND' : 'WICHTIG'}
         </div>
       )}
@@ -185,7 +185,7 @@ export const MessageItem = memo(function MessageItem({ msg, accountId, myMri, my
             {!mine && <b>{msg.fromName || names(msg.from)}</b>}
             <span title={new Date(msg.time).toLocaleString('de-DE')}>{messageTime(msg.time)}</span>
             {msg.pending && <span>Wird gesendet …</span>}
-            {msg.failed && <span style={{ color: 'var(--danger)' }}>Fehler beim Senden</span>}
+            {msg.failed && <span style={{ color: 'var(--danger-fg)' }}>Fehler beim Senden</span>}
           </div>
         )}
         <div className={`bubble ${msg.importance ? 'important' : ''} ${msg.reactions.length ? 'has-reactions' : ''} ${isEmojiOnly(msg) ? 'emoji-only' : ''}`} style={msg.pending ? { opacity: 0.6 } : undefined}>

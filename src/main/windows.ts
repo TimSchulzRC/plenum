@@ -74,7 +74,7 @@ export function createCallWindow(): BrowserWindow {
     title: 'Besprechung',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 18 },
-    backgroundColor: '#141416'
+    backgroundColor: '#141414'
   })
 }
 
