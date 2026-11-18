@@ -1,12 +1,13 @@
 import { Button, Spinner } from '@fluentui/react-components'
 import { ChevronDown16Regular, ChevronRight16Regular, Compose20Regular, LockClosed12Regular, ArrowReply16Regular } from '@fluentui/react-icons'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Channel, ChannelThread, Message, Team } from '@shared/types'
 import { api, onEvent } from '../api'
 import { PersonAvatar, TeamAvatar } from '../components/Avatars'
 import { Composer } from '../components/Composer'
 import { MessageBody, Reactions } from '../components/MessageItem'
 import { messageTime } from '../lib/format'
+import { cacheKey, channelCache, fetchChannel, fetchReplies, prefetchChannel, replyCache, prefetchReplies, useHoverPrefetch } from '../lib/prefetch'
 import { personName, useActive, useStore } from '../store'
 
 export function TeamsView(): JSX.Element {
@@ -17,7 +18,7 @@ export function TeamsView(): JSX.Element {
     <>
       <TeamsList />
       {team && channel ? (
-        <ChannelView key={channel.id} team={team} channel={channel} />
+        <ChannelView key={`${snapshot?.accountId}|${channel.id}`} team={team} channel={channel} />
       ) : (
         <div className="main-pane">
           <div className="empty-state">
@@ -53,14 +54,7 @@ function TeamsList(): JSX.Element {
           t.channels
             .filter((c) => c.isFavorite || c.id === selection.channelId || c.isGeneral)
             .map((c) => (
-              <div
-                key={c.id}
-                className={`channel-row ${c.id === selection.channelId ? 'selected' : ''} ${c.unread ? 'unread' : ''}`}
-                onClick={() => useStore.getState().select({ teamId: t.id, channelId: c.id })}
-              >
-                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.displayName}</span>
-                {c.membershipType === 'private' && <LockClosed12Regular />}
-              </div>
+              <TeamChannelRow key={c.id} team={t} channel={c} selected={c.id === selection.channelId} />
             ))}
         {isOpen && t.channels.some((c) => !c.isFavorite && !c.isGeneral && c.id !== selection.channelId) && (
           <HiddenChannels team={t} selected={selection.channelId} />
@@ -97,12 +91,24 @@ function HiddenChannels({ team, selected }: { team: Team; selected?: string }): 
   return (
     <>
       {hidden.map((c) => (
-        <div key={c.id} className={`channel-row ${c.unread ? 'unread' : ''}`} onClick={() => useStore.getState().select({ teamId: team.id, channelId: c.id })}>
-          <span style={{ flex: 1, opacity: 0.8 }}>{c.displayName}</span>
-          {c.membershipType === 'private' && <LockClosed12Regular />}
-        </div>
+        <TeamChannelRow key={c.id} team={team} channel={c} dim />
       ))}
     </>
+  )
+}
+
+function TeamChannelRow({ team, channel, selected, dim }: { team: Team; channel: Channel; selected?: boolean; dim?: boolean }): JSX.Element {
+  const accountId = useStore((s) => s.activeAccountId ?? '')
+  const hover = useHoverPrefetch(() => prefetchChannel(accountId, team.id, channel.id))
+  return (
+    <div
+      className={`channel-row ${selected ? 'selected' : ''} ${channel.unread ? 'unread' : ''}`}
+      onClick={() => useStore.getState().select({ teamId: team.id, channelId: channel.id })}
+      {...hover}
+    >
+      <span style={dim ? { flex: 1, opacity: 0.8 } : { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{channel.displayName}</span>
+      {channel.membershipType === 'private' && <LockClosed12Regular />}
+    </div>
   )
 }
 
@@ -110,8 +116,8 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
   const accountId = useStore((s) => s.activeAccountId ?? '')
   const snapshot = useStore((s) => s.snapshots[accountId])
   const me = snapshot?.me
-  const [threads, setThreads] = useState<ChannelThread[]>([])
-  const [loading, setLoading] = useState(true)
+  const [threads, setThreads] = useState<ChannelThread[]>(() => channelCache.peek(cacheKey(accountId, channel.id)) ?? [])
+  const [loading, setLoading] = useState(() => !channelCache.peek(cacheKey(accountId, channel.id)))
   const [error, setError] = useState<string>()
   const [newPost, setNewPost] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
@@ -120,7 +126,8 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
 
   const load = useCallback(async () => {
     try {
-      const t = await api.getChannelThreads(accountId, team.id, channel.id)
+      // Teilt sich eine laufende Vorab-Anfrage vom Hover
+      const t = await fetchChannel(accountId, team.id, channel.id)
       setThreads(t)
       setError(undefined)
       const last = t[t.length - 1]
@@ -134,7 +141,7 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
   }, [accountId, team.id, channel.id])
 
   useEffect(() => {
-    setLoading(true)
+    setLoading(!channelCache.peek(cacheKey(accountId, channel.id)))
     stick.current = true
     void load()
     window.teams.setFocusContext({ accountId, conversationId: channel.id })
@@ -230,16 +237,25 @@ function Post({
   const [expanded, setExpanded] = useState(false)
   const [allReplies, setAllReplies] = useState<Message[] | null>(null)
   const [replying, setReplying] = useState(false)
-  const replies = allReplies ?? thread.replies
+  // Beim Rendern vereinigen: ein älterer Stand aus Cache oder Anfrage verliert so keine sichtbare Antwort
+  const replies = useMemo(() => {
+    if (!allReplies) return thread.replies
+    const ids = new Set(allReplies.map((m) => m.id))
+    return [...allReplies, ...thread.replies.filter((m) => !ids.has(m.id))].sort((a, b) => a.time - b.time)
+  }, [allReplies, thread.replies])
   const visible = expanded ? replies : replies.slice(-2)
-  const hiddenCount = Math.max(0, (allReplies ? allReplies.length : thread.replyCount) - visible.length)
+  const hiddenCount = Math.max(0, (allReplies ? replies.length : thread.replyCount) - visible.length)
   const root = thread.root
+  const hoverMore = useHoverPrefetch(() => prefetchReplies(accountId, channelId, thread.id))
 
   const expand = async () => {
     setExpanded(true)
     if (!allReplies) {
+      // Vorgeladene Antworten sofort zeigen, dann auffrischen
+      const cached = replyCache.peek(cacheKey(accountId, `${channelId};${thread.id}`))
+      if (cached) setAllReplies(cached.filter((m) => m.id !== thread.id))
       try {
-        const r = await api.getThreadReplies(accountId, channelId, thread.id)
+        const r = await fetchReplies(accountId, channelId, thread.id)
         setAllReplies(r.filter((m) => m.id !== thread.id))
       } catch {
         /* Fallback: vorhandene Antworten */
@@ -266,7 +282,7 @@ function Post({
           <div className="post-replies">
             {hiddenCount > 0 && !expanded && (
               <div style={{ padding: '6px 16px 0 60px' }}>
-                <button className="link-btn" onClick={() => void expand()}>
+                <button className="link-btn" onClick={() => void expand()} {...hoverMore}>
                   {hiddenCount} {hiddenCount === 1 ? 'weitere Antwort' : 'weitere Antworten'}
                 </button>
               </div>
