@@ -1,5 +1,5 @@
 // Versionsvergleich und Auswahl des passenden GitHub-Releases für den Updater.
-// Ohne Electron-Abhängigkeiten, damit `npm test` die Logik direkt prüfen kann.
+// Ohne Electron-Abhängigkeiten, damit `pnpm test` die Logik direkt prüfen kann.
 
 export type UpdateChannel = 'nightly' | 'stable'
 

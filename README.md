@@ -48,14 +48,14 @@ Das Update braucht Schreibrechte auf die App und ihren Ordner und klappt nicht, 
 
 ## Entwickeln und bauen
 
-Voraussetzung ist Node.js 24 (siehe `.nvmrc`).
+Voraussetzung sind Node.js 24 (siehe `.nvmrc`) und pnpm in der Version aus `packageManager` in `package.json`.
 
 ```sh
-npm install
-npm run dev          # Entwicklung mit Hot Reload
-npm run typecheck
-npm run dist         # baut release/mac-arm64/Teams Everywhere.app (ad hoc signiert)
-npm run dist:release # baut DMG und ZIP für arm64 und x64 wie die Release-Pipeline
+pnpm install
+pnpm run dev          # Entwicklung mit Hot Reload
+pnpm run typecheck
+pnpm run dist         # baut release/mac-arm64/Teams Everywhere.app (ad hoc signiert)
+pnpm run dist:release # baut DMG und ZIP für arm64 und x64 wie die Release-Pipeline
 ```
 
 Mit `TM_DEBUG_PORT=9339` startet die App mit Remote-Debugging. Nur dann ist die Diagnose-Schnittstelle `debugRaw` aktiv.

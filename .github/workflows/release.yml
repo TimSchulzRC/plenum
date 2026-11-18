@@ -136,24 +136,26 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
       - name: Version setzen
-        run: npm pkg set version="${{ needs.prepare.outputs.version }}"
+        run: pnpm pkg set version="${{ needs.prepare.outputs.version }}"
 
-      - run: npm run typecheck
-      - run: npm test
+      - run: pnpm run typecheck
+      - run: pnpm test
 
       - name: App bauen (arm64 und x64)
         env:
           # Ohne Apple-Zertifikat signiert electron-builder ad hoc (mac.identity "-").
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npm run dist:release
+        run: pnpm run dist:release
 
       # Kleine Update-Pakete ohne Electron-Frameworks, siehe scripts/patch-zip.sh.
       - name: Patch-ZIPs
