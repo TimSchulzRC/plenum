@@ -12,6 +12,7 @@ import {
 } from '@fluentui/react-icons'
 import type { ComponentType } from 'react'
 import { useActive, useStore, type View } from '../store'
+import { UpdateButton } from './UpdateButton'
 
 interface Item {
   view: View
@@ -49,6 +50,7 @@ export function Rail(): JSX.Element {
         )
       })}
       <div className="rail-spacer" />
+      <UpdateButton />
       <button className={`rail-item ${view === 'settings' ? 'active' : ''}`} onClick={() => useStore.getState().setView('settings')} style={{ marginBottom: 8 }}>
         {view === 'settings' ? <Settings24Filled /> : <Settings24Regular />}
         <span>Einstellungen</span>

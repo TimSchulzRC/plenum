@@ -4,11 +4,14 @@ import type { AppSettings, DebugInfo } from '@shared/types'
 import { api } from '../api'
 import { PersonAvatar } from '../components/Avatars'
 import { statusText } from '../components/TitleBar'
+import { confirmInstall, resolveUpdateAction, updateLastChecked, updateStatusText } from '../update'
 import { useStore } from '../store'
 
 export function SettingsView(): JSX.Element {
   const settings = useStore((s) => s.settings)
   const accounts = useStore((s) => s.accounts)
+  const update = useStore((s) => s.update)
+  const inCall = useStore((s) => s.callState !== null)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [debug, setDebug] = useState<DebugInfo | null>(null)
 
@@ -135,6 +138,45 @@ export function SettingsView(): JSX.Element {
         {deviceSelect('Mikrofon', 'audioinput', 'preferredMic')}
         {deviceSelect('Lautsprecher', 'audiooutput', 'preferredSpeaker')}
       </section>
+
+      {update && (
+        <section>
+          <h2>Updates</h2>
+          <div className="row">
+            <div className="grow">
+              <div>
+                Version {update.currentVersion} · {update.channel === 'nightly' ? 'Nightly' : 'Stable'}
+              </div>
+              <div className="hint">
+                {updateStatusText(update)}
+                {updateLastChecked(update) ? ` · ${updateLastChecked(update)}` : ''}
+              </div>
+            </div>
+            {update.releaseUrl && (
+              <Button size="small" appearance="transparent" onClick={() => void api.openExternal(update.releaseUrl!)}>
+                Release-Notes
+              </Button>
+            )}
+            {resolveUpdateAction(update) === 'download' && (
+              <Button size="small" appearance="primary" onClick={() => void api.downloadUpdate()}>
+                Herunterladen
+              </Button>
+            )}
+            {resolveUpdateAction(update) === 'install' && (
+              <Button size="small" appearance="primary" onClick={() => confirmInstall(update, inCall) && void api.installUpdate()}>
+                Neu starten und installieren
+              </Button>
+            )}
+            <Button
+              size="small"
+              disabled={['disabled', 'checking', 'downloading', 'downloaded', 'installing'].includes(update.status)}
+              onClick={() => void api.checkForUpdates()}
+            >
+              Nach Updates suchen
+            </Button>
+          </div>
+        </section>
+      )}
 
       <section>
         <h2>Diagnose</h2>

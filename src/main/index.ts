@@ -1,13 +1,14 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeTheme, Notification, powerMonitor, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, powerMonitor, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { existsSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { AccountService, type AccountRecord, type NotifyPayload } from './account'
 import { CallManager } from './calls'
 import { handleMediaProtocol, registerMediaScheme } from './media-protocol'
 import { store } from './store'
 import { createMainWindow, uiWindows } from './windows'
+import { Updater } from './updater'
 import { log } from './log'
+import { migrateLegacyUserData } from './legacy-data'
 import type { ApiMethods } from '@shared/ipc'
 import type { AppSettings, DebugInfo, NavigateRequest } from '@shared/types'
 
@@ -23,16 +24,13 @@ app.setName('Teams Everywhere')
 
 // Bis zur Umbenennung hieß die App „Teams Mac“. Der alte Datenordner enthält
 // Konten, Einstellungen und die Anmeldungen (Partitions) und zieht einmalig um.
-const userDataDir = join(app.getPath('appData'), 'Teams Everywhere')
-const legacyUserDataDir = join(app.getPath('appData'), 'Teams Mac')
-if (!existsSync(userDataDir) && existsSync(legacyUserDataDir)) {
-  try {
-    renameSync(legacyUserDataDir, userDataDir)
-  } catch {
-    /* alter Ordner bleibt liegen, die App startet dann ohne Konten */
-  }
-}
-app.setPath('userData', userDataDir)
+// TE_USER_DATA_DIR startet die App mit einem eigenen Datenordner, z. B. zum Testen von Updates.
+const customUserDataDir = process.env.TE_USER_DATA_DIR
+const userDataDir = customUserDataDir || join(app.getPath('appData'), 'Teams Everywhere')
+const migration = customUserDataDir ? 'none' : migrateLegacyUserData(join(app.getPath('appData'), 'Teams Mac'), userDataDir)
+// Läuft „Teams Mac“ noch, startet die App nur kurz mit einem Wegwerf-Ordner, meldet das und beendet sich.
+// So entsteht der neue Ordner nicht leer, und der Umzug klappt beim nächsten Start.
+app.setPath('userData', migration === 'legacy-running' ? join(app.getPath('temp'), 'teams-everywhere-waiting') : userDataDir)
 
 registerMediaScheme()
 
@@ -44,6 +42,7 @@ let mainWindow: BrowserWindow | null = null
 let settings: AppSettings
 const accounts = new Map<string, AccountService>()
 let calls: CallManager
+let updater: Updater
 let quitting = false
 let focusContext: { accountId?: string; conversationId?: string } = {}
 
@@ -252,7 +251,11 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     closeWindow: () => sender()?.close(),
     setAlwaysOnTop: (on) => {
       sender()?.setAlwaysOnTop(on, 'floating')
-    }
+    },
+    getUpdateState: () => updater.state,
+    checkForUpdates: () => updater.check(),
+    downloadUpdate: () => void updater.download(),
+    installUpdate: () => updater.install()
   }
 }
 
@@ -285,6 +288,14 @@ function buildMenu(): void {
       label: app.name,
       submenu: [
         { role: 'about', label: 'Über Teams Everywhere' },
+        {
+          label: 'Nach Updates suchen …',
+          click: () => {
+            showMain()
+            broadcast('navigate', { accountId: settings.activeAccountId ?? '', view: 'settings' })
+            void updater.check()
+          }
+        },
         { type: 'separator' },
         {
           label: 'Einstellungen …',
@@ -357,8 +368,21 @@ app.on('window-all-closed', () => {
 })
 
 void app.whenReady().then(() => {
+  if (migration === 'legacy-running') {
+    dialog.showMessageBoxSync({
+      type: 'warning',
+      message: 'Bitte beende zuerst „Teams Mac“',
+      detail: 'Teams Everywhere übernimmt beim ersten Start die Konten und Anmeldungen aus „Teams Mac“. Das geht nur, solange die alte App nicht läuft. Beende „Teams Mac“ und starte Teams Everywhere dann erneut.'
+    })
+    app.quit()
+    return
+  }
   settings = store.loadSettings()
   nativeTheme.themeSource = settings.theme
+  updater = new Updater(
+    (state) => broadcast('update-state', state),
+    () => app.quit()
+  )
   buildMenu()
   setupIpc()
   calls = new CallManager(() => [...accounts.values()], broadcast)
@@ -377,6 +401,7 @@ void app.whenReady().then(() => {
     if (idle < 120) for (const a of accounts.values()) a.engine.send('engine:cmd', { ch: 'action', action: 'activity' })
   }, 30_000)
   setTimeout(pushPrefs, 5000)
+  updater.start()
 })
 
 export { accounts, calls }

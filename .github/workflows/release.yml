@@ -147,6 +147,7 @@ jobs:
         run: npm pkg set version="${{ needs.prepare.outputs.version }}"
 
       - run: npm run typecheck
+      - run: npm test
 
       - name: App bauen (arm64 und x64)
         env:

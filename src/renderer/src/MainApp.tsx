@@ -3,6 +3,8 @@ import { Video20Filled, Warning20Regular } from '@fluentui/react-icons'
 import { useEffect, useState } from 'react'
 import { api } from './api'
 import { Rail } from './components/Rail'
+import { UpdateButton } from './components/UpdateButton'
+import { showUpdateButton, updateStatusText } from './update'
 import { TitleBar, statusText } from './components/TitleBar'
 import { duration } from './lib/format'
 import { initStore, useActive, useStore, type View } from './store'
@@ -110,6 +112,9 @@ function Welcome(): JSX.Element {
   return (
     <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div className="drag" style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 48 }} />
+      <div style={{ position: 'fixed', left: 8, bottom: 8 }}>
+        <WelcomeUpdate />
+      </div>
       <div style={{ textAlign: 'center', maxWidth: 440, display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center' }}>
         <div style={{ width: 72, height: 72, borderRadius: 18, background: 'var(--brand)', color: 'white', fontSize: 38, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>T</div>
         <h1 style={{ margin: 0, fontSize: 26 }}>Willkommen bei Teams</h1>
@@ -122,6 +127,17 @@ function Welcome(): JSX.Element {
       </div>
     </div>
   )
+}
+
+// Ohne Konto gibt es keine Einstellungsseite. Hier zeigt der Willkommensbildschirm,
+// was „Nach Updates suchen …“ ergeben hat.
+function WelcomeUpdate(): JSX.Element | null {
+  const update = useStore((s) => s.update)
+  if (showUpdateButton(update)) return <UpdateButton />
+  if (update && ['checking', 'up-to-date', 'error'].includes(update.status)) {
+    return <div style={{ padding: 8, fontSize: 12, color: 'var(--fg-3)' }}>{updateStatusText(update)}</div>
+  }
+  return null
 }
 
 function CallBanner(): JSX.Element | null {

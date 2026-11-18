@@ -321,6 +321,25 @@ button {
 .rail-spacer {
   flex: 1;
 }
+.rail-update {
+  color: var(--brand-fg);
+  font-weight: 600;
+}
+.rail-update > svg {
+  background: linear-gradient(to right, var(--selected-strong) var(--update-progress, 100%), var(--brand-soft) var(--update-progress, 100%));
+}
+.rail-update:hover > svg {
+  background: var(--selected-strong);
+}
+.rail-update:disabled {
+  cursor: default;
+}
+.rail-update:disabled:hover > svg {
+  background: linear-gradient(to right, var(--selected-strong) var(--update-progress, 100%), var(--brand-soft) var(--update-progress, 100%));
+}
+.rail-update.failed {
+  color: var(--danger);
+}
 
 /* ---------- Inhaltsbereich als Karte ---------- */
 .workspace {

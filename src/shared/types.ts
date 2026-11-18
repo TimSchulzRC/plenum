@@ -346,3 +346,19 @@ export interface DebugInfo {
   url?: string
   seen?: string[]
 }
+
+export type UpdateStatus = 'disabled' | 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error'
+
+export interface UpdateState {
+  status: UpdateStatus
+  currentVersion: string
+  channel: 'nightly' | 'stable'
+  availableVersion: string | null
+  downloadedVersion: string | null
+  releaseUrl: string | null
+  downloadPercent: number | null
+  // Bei status 'error': in welchem Schritt der Fehler auftrat.
+  errorContext: 'check' | 'download' | 'install' | null
+  message: string | null
+  lastChecked: number | null
+}
