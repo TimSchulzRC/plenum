@@ -4,7 +4,7 @@ Danke, dass du Teams Everywhere verbessern willst. Fehlerberichte, Ideen und Pul
 
 ## Fehler und Ideen
 
-Nutze die Vorlagen unter [Issues](https://github.com/TimSchulzRC/teams-everywhere/issues/new/choose). Bevor du Logs anhängst, entferne Namen, Mailadressen und Nachrichteninhalte. Das Log liegt unter `~/Library/Application Support/Teams Everywhere/logs/main.log`.
+Nutze die Vorlagen unter [Issues](https://github.com/TimSchulzRC/teams-everywhere/issues/new/choose). Bevor du Logs anhängst, entferne Namen, Mailadressen und Nachrichteninhalte. Das Log liegt unter `~/Library/Application Support/Teams Everywhere/logs/main.log`, bei `pnpm run dev` unter `~/Library/Application Support/Teams Everywhere (dev)/logs/main.log`.
 
 Sicherheitslücken meldest du bitte nicht öffentlich, sondern wie in [SECURITY.md](SECURITY.md) beschrieben.
 
@@ -14,6 +14,8 @@ Sicherheitslücken meldest du bitte nicht öffentlich, sondern wie in [SECURITY.
 pnpm install
 pnpm run dev
 ```
+
+Die Dev-Version hat eigene Konten und Anmeldungen und läuft neben der installierten App, ohne deren Daten anzufassen.
 
 Vor jedem Pull Request:
 
