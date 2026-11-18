@@ -5,6 +5,7 @@ import { api, onEvent } from '../api'
 import { PersonAvatar } from '../components/Avatars'
 import { ConversationView } from '../components/ConversationView'
 import { listTime } from '../lib/format'
+import { prefetchChannel, prefetchChat, useHoverPrefetch } from '../lib/prefetch'
 import { useActive, useStore } from '../store'
 
 const ICON: Record<string, { sym: string; color: string }> = {
@@ -62,8 +63,9 @@ export function ActivityView(): JSX.Element {
           {items?.map((it) => {
             const ic = ICON[it.type] ?? ICON.other
             return (
-              <div
+              <ActivityRow
                 key={it.id}
+                item={it}
                 className={`activity-item ${it.id === selection.activityId ? 'selected' : ''} ${it.read ? '' : 'unread'}`}
                 onClick={() => {
                   useStore.getState().select({ activityId: it.id })
@@ -88,13 +90,13 @@ export function ActivityView(): JSX.Element {
                   {it.location && <div className="a-loc">{it.location}</div>}
                   <div className="a-prev">{it.preview}</div>
                 </div>
-              </div>
+              </ActivityRow>
             )
           })}
         </div>
       </div>
       {chat ? (
-        <ConversationView key={chat.id} chat={chat} />
+        <ConversationView key={`${account?.id}|${chat.id}`} chat={chat} />
       ) : (
         <div className="main-pane">
           <div className="empty-state">
@@ -103,5 +105,23 @@ export function ActivityView(): JSX.Element {
         </div>
       )}
     </>
+  )
+}
+
+// Vorladen der Unterhaltung, auf die eine Aktivität zeigt
+function ActivityRow({ item, children, ...props }: { item: ActivityItem; className: string; onClick: () => void; children: React.ReactNode }): JSX.Element {
+  const { account, snapshot } = useActive()
+  const hover = useHoverPrefetch(() => {
+    const id = item.conversationId
+    if (!account || !snapshot || !id) return
+    const chat = snapshot.chats.find((c) => c.id === id)
+    if (chat) return prefetchChat(account.id, chat)
+    const team = snapshot.teams.find((t) => t.channels.some((c) => c.id === id))
+    if (team) prefetchChannel(account.id, team.id, id)
+  })
+  return (
+    <div {...props} {...hover}>
+      {children}
+    </div>
   )
 }

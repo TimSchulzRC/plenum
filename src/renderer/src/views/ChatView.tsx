@@ -16,6 +16,7 @@ import { ChatAvatar, PersonAvatar, TeamAvatar } from '../components/Avatars'
 import { Composer } from '../components/Composer'
 import { ConversationView } from '../components/ConversationView'
 import { listTime } from '../lib/format'
+import { prefetchChannel, prefetchChat, useHoverPrefetch } from '../lib/prefetch'
 import { useActive, useStore } from '../store'
 import { ChannelView } from './TeamsView'
 
@@ -32,9 +33,9 @@ export function ChatView(): JSX.Element {
       {selection.newChat ? (
         <NewChat />
       ) : chat ? (
-        <ConversationView key={chat.id} chat={chat} />
+        <ConversationView key={`${snapshot?.accountId}|${chat.id}`} chat={chat} />
       ) : team && channel ? (
-        <ChannelView key={channel.id} team={team} channel={channel} />
+        <ChannelView key={`${snapshot?.accountId}|${channel.id}`} team={team} channel={channel} />
       ) : (
         <div className="main-pane">
           <div className="empty-state">
@@ -371,6 +372,8 @@ function nameOf(r: Row): string {
 
 function ChatRow({ chat, selected, compact, onSelect }: { chat: ChatSummary; selected: boolean; compact: boolean; onSelect: () => void }): JSX.Element {
   const inCall = useStore((s) => !!s.callState && s.callState.title !== '' && (s.callState.conversationId === chat.id || (chat.kind === 'meeting' && s.callState.title === chat.title)))
+  const accountId = useStore((s) => s.activeAccountId ?? '')
+  const hover = useHoverPrefetch(() => !selected && prefetchChat(accountId, chat))
   const lm = chat.lastMessage
   let preview = lm?.text ?? ''
   if (lm && preview) {
@@ -378,7 +381,7 @@ function ChatRow({ chat, selected, compact, onSelect }: { chat: ChatSummary; sel
     else if (chat.kind !== 'oneOnOne' && lm.fromName) preview = `${lm.fromName.split(/[\s,]+/)[0]}: ${preview}`
   }
   return (
-    <div className={`list-item ${compact ? 'compact' : ''} ${selected ? 'selected' : ''} ${chat.unread && !chat.muted ? 'unread' : ''}`} onClick={onSelect}>
+    <div className={`list-item ${compact ? 'compact' : ''} ${selected ? 'selected' : ''} ${chat.unread && !chat.muted ? 'unread' : ''}`} onClick={onSelect} {...hover}>
       <span style={{ width: compact ? 16 : 0 }} />
       <ChatAvatar chat={chat} size={compact ? 24 : 32} />
       <div className="body">
@@ -396,8 +399,10 @@ function ChatRow({ chat, selected, compact, onSelect }: { chat: ChatSummary; sel
 }
 
 function ChannelRow({ team, channel, selected, onSelect, showTeam, indent }: { team: Team; channel: Channel; selected: boolean; onSelect: () => void; showTeam?: boolean; indent?: boolean }): JSX.Element {
+  const accountId = useStore((s) => s.activeAccountId ?? '')
+  const hover = useHoverPrefetch(() => !selected && prefetchChannel(accountId, team.id, channel.id))
   return (
-    <div className={`list-item compact ${selected ? 'selected' : ''} ${channel.unread ? 'unread' : ''}`} onClick={onSelect} title={`${team.displayName} › ${channel.displayName}`}>
+    <div className={`list-item compact ${selected ? 'selected' : ''} ${channel.unread ? 'unread' : ''}`} onClick={onSelect} title={`${team.displayName} › ${channel.displayName}`} {...hover}>
       <span style={{ width: indent ? 44 : 16 }} />
       {showTeam && <TeamAvatar team={team} size={24} />}
       <div className="body">
@@ -447,7 +452,7 @@ function NewChat(): JSX.Element {
     return (
       <div className="main-pane" style={{ position: 'relative' }}>
         <ToBar picked={picked} setPicked={setPicked} q={q} setQ={setQ} inputRef={inputRef} results={results} active={active} setActive={setActive} pick={pick} />
-        <ConversationView key={existing.id} chat={existing} />
+        <ConversationView key={`${account?.id}|${existing.id}`} chat={existing} />
       </div>
     )
   }

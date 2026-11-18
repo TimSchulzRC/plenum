@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ChatSummary, Message } from '@shared/types'
 import { api, onEvent } from '../api'
 import { dayLabel, sameDay } from '../lib/format'
+import { cacheKey, fetchHorizons, fetchMessages, horizonCache, messageCache, receiptsEnabled as hasReceipts } from '../lib/prefetch'
 import { personName, useStore } from '../store'
 import { ChatAvatar, PersonAvatar, presenceLabel } from './Avatars'
 import { Composer, type ComposerHandle, type SendPayload } from './Composer'
@@ -23,24 +24,31 @@ function merge(prev: Message[], next: Message[]): Message[] {
 }
 
 export function useMessages(accountId: string, conversationId: string) {
-  const [msgs, setMsgs] = useState<Message[]>([])
-  const [loading, setLoading] = useState(true)
+  const key = cacheKey(accountId, conversationId)
+  // Vorgeladene Nachrichten sofort zeigen, im Hintergrund auffrischen
+  const [msgs, setMsgs] = useState<Message[]>(() => messageCache.peek(key) ?? [])
+  const [loading, setLoading] = useState(() => !messageCache.peek(key))
   const [error, setError] = useState<string>()
   const [hasOlder, setHasOlder] = useState(true)
   const loadingOlder = useRef(false)
   const idRef = useRef(conversationId)
   idRef.current = conversationId
+  const seq = useRef(0)
 
   const reload = useCallback(async () => {
+    // Eine überholte Antwort (z. B. vom Hover vor einer neuen Nachricht) nicht mehr anwenden
+    const mine = ++seq.current
+    const current = () => idRef.current === conversationId && seq.current === mine
     try {
-      const list = await api.getMessages(accountId, conversationId)
-      if (idRef.current !== conversationId) return
+      // Teilt sich eine laufende Vorab-Anfrage vom Hover
+      const list = await fetchMessages(accountId, conversationId)
+      if (!current()) return
       setMsgs((prev) => merge(prev, list))
       setError(undefined)
     } catch (e) {
-      if (idRef.current === conversationId) setError((e as Error).message)
+      if (current()) setError((e as Error).message)
     } finally {
-      if (idRef.current === conversationId) setLoading(false)
+      if (current()) setLoading(false)
     }
   }, [accountId, conversationId])
 
@@ -58,10 +66,13 @@ export function useMessages(accountId: string, conversationId: string) {
   }, [accountId, conversationId, msgs, hasOlder])
 
   useEffect(() => {
-    setMsgs([])
-    setLoading(true)
+    const key = cacheKey(accountId, conversationId)
+    const cached = messageCache.peek(key)
+    setMsgs(cached ?? [])
+    setLoading(!cached)
     setHasOlder(true)
-    void reload()
+    // Gerade vorgeladen und seitdem nichts Neues: nicht sofort noch einmal holen
+    if (!messageCache.isFresh(key)) void reload()
     const off = onEvent('conversation-updated', (e) => {
       if (e.accountId === accountId && e.conversationIds.includes(conversationId)) void reload()
     })
@@ -71,6 +82,15 @@ export function useMessages(accountId: string, conversationId: string) {
       clearInterval(t)
     }
   }, [accountId, conversationId, reload])
+
+  // Aktuellen Stand merken, damit ein erneutes Öffnen ohne Laden auskommt
+  useEffect(() => {
+    const key = cacheKey(accountId, conversationId)
+    // Die eben aus dem Cache gezeigten Daten nicht als frisch neu eintragen
+    if (msgs === messageCache.peek(key)) return
+    const done = msgs.filter((m) => !m.pending && !m.failed)
+    if (done.length) messageCache.set(key, done)
+  }, [msgs, accountId, conversationId])
 
   return { msgs, setMsgs, loading, error, reload, loadOlder, hasOlder }
 }
@@ -91,19 +111,20 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
   const [, force] = useState(0)
 
   const names = useCallback((mri: string) => personName(snapshot, mri), [snapshot])
-  const [horizons, setHorizons] = useState<Record<string, number> | null>(null)
-  const receiptsEnabled = (chat.kind === 'oneOnOne' || chat.kind === 'group') && chat.members.length > 0 && chat.members.length <= 20
+  const [horizons, setHorizons] = useState<Record<string, number> | null>(() => horizonCache.peek(cacheKey(accountId, chat.id)) ?? null)
+  const receiptsEnabled = hasReceipts(chat)
 
   // Lesebestätigungen laden und regelmäßig auffrischen
   useEffect(() => {
     if (!receiptsEnabled) return
     let alive = true
     const load = () =>
-      api
-        .getReadHorizons(accountId, chat.id)
+      fetchHorizons(accountId, chat.id)
         .then((h) => alive && setHorizons(h))
         .catch(() => undefined)
-    void load()
+    const key = cacheKey(accountId, chat.id)
+    if (horizonCache.isFresh(key)) setHorizons(horizonCache.peek(key) ?? null)
+    else void load()
     const t = setInterval(load, 15_000)
     const off = onEvent('conversation-updated', (e) => {
       if (e.accountId === accountId && e.conversationIds.includes(chat.id)) void load()
