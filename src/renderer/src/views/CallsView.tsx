@@ -81,7 +81,7 @@ export function CallsView(): JSX.Element {
               <div key={h.id} className="person-row" style={{ padding: '8px 12px' }}>
                 <PersonAvatar mri={h.peerMri} name={h.peerName || 'Unbekannt'} size={32} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="p-name" style={{ color: missed ? 'var(--danger)' : undefined }}>{h.peerName || 'Unbekannt'}</div>
+                  <div className="p-name" style={{ color: missed ? 'var(--danger-fg)' : undefined }}>{h.peerName || 'Unbekannt'}</div>
                   <div className="p-sub" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     {missed ? <CallMissed16Regular /> : h.direction === 'incoming' ? <CallInbound16Regular /> : <CallOutbound16Regular />}
                     {missed ? 'Verpasst' : h.direction === 'incoming' ? 'Eingehend' : 'Ausgehend'}

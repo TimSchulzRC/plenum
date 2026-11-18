@@ -231,7 +231,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             </PopoverSurface>
           </Popover>
           <Tooltip content="Als wichtig markieren" relationship="label">
-            <button className={`icon-btn ${important ? 'active' : ''}`} onClick={() => setImportant(!important)} style={important ? { color: 'var(--danger)' } : undefined}>
+            <button className={`icon-btn ${important ? 'active' : ''}`} onClick={() => setImportant(!important)} style={important ? { color: 'var(--danger-fg)' } : undefined}>
               <Important20Regular />
             </button>
           </Tooltip>
