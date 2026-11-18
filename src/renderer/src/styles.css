@@ -854,7 +854,9 @@ button {
 }
 .reaction.mine {
   border-color: var(--brand-fg);
-  background: var(--brand-soft);
+  /* --brand-soft ist im Dark Mode halbtransparent: auf deckendem Grund
+     auftragen, sonst scheint die Nachricht darunter durch */
+  background: linear-gradient(var(--brand-soft), var(--brand-soft)), var(--content);
   color: var(--brand-fg);
 }
 /* Reaktionen überlappen die Unterkante der Nachricht */
@@ -870,9 +872,10 @@ button {
 .bubble.has-reactions {
   padding-bottom: 14px;
 }
+/* Leiste komplett über der Nachricht, damit sie den Text nicht verdeckt */
 .msg-toolbar {
   position: absolute;
-  top: -20px;
+  bottom: calc(100% + 4px);
   right: 8px;
   display: flex;
   align-items: center;
@@ -883,6 +886,23 @@ button {
   box-shadow: var(--shadow-lg);
   z-index: 5;
   white-space: nowrap;
+}
+/* Unsichtbare Brücke über den Abstand, damit der Hover beim Wechsel zur Leiste nicht abreißt */
+.msg-toolbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 4px;
+}
+/* Oben im Chat ist über der Nachricht kein Platz: dann darunter (top setzt HoverToolbar) */
+.msg-toolbar.below {
+  bottom: auto;
+}
+.msg-toolbar.below::after {
+  top: auto;
+  bottom: 100%;
 }
 .msg-toolbar .sep {
   width: 1px;
