@@ -109,7 +109,8 @@ function jumpToMessage(id: string): void {
   setTimeout(() => row.classList.remove('flash'), 1600)
 }
 
-// Leiste über der Nachricht. Wird so verschoben, dass sie im sichtbaren Chatbereich bleibt.
+// Leiste über der Nachricht. Wird so verschoben, dass sie im sichtbaren Chatbereich bleibt:
+// seitlich nach innen, und unter die Nachricht, wenn oben kein Platz ist.
 function HoverToolbar({ children }: { children: ReactNode }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -117,9 +118,17 @@ function HoverToolbar({ children }: { children: ReactNode }): JSX.Element {
     const box = el?.closest<HTMLElement>('.messages')
     if (!el || !box) return
     el.style.transform = ''
-    const r = el.getBoundingClientRect()
+    el.style.top = ''
+    el.classList.remove('below')
     const b = box.getBoundingClientRect()
     const pad = 8
+    const col = el.closest('.msg-col')
+    if (el.getBoundingClientRect().top < b.top + box.clientTop + pad && col && el.parentElement) {
+      // Unter die ganze Nachricht samt Reaktionen, 4px Abstand wie oben
+      el.classList.add('below')
+      el.style.top = `${Math.round(col.getBoundingClientRect().bottom - el.parentElement.getBoundingClientRect().top + 4)}px`
+    }
+    const r = el.getBoundingClientRect()
     const left = b.left + box.clientLeft + pad
     const right = b.left + box.clientLeft + box.clientWidth - pad
     let dx = 0
