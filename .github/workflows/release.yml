@@ -1,0 +1,240 @@
+name: Release
+
+# Nightly: jede Nacht automatisch, wenn es seit dem letzten Nightly neue Commits gibt.
+# Stable: per Tag-Push (git tag v1.2.3 && git push origin v1.2.3) oder manuell über
+# "Run workflow" mit Kanal "stable" und einer Version. Details: docs/releasing.md
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  push:
+    tags:
+      - "v*.*.*"
+      - "!v*-nightly.*"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release-Kanal
+        type: choice
+        default: nightly
+        options:
+          - nightly
+          - stable
+      version:
+        description: Version für Stable-Releases, z. B. 0.2.0 (bei Nightly leer lassen)
+        type: string
+        required: false
+
+# Releases laufen nacheinander, ein laufender Release wird nie abgebrochen.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Version bestimmen
+    # Forks sollen keine eigenen Nightlies bauen.
+    if: github.event_name != 'schedule' || github.repository == 'TimSchulzRC/teams-everywhere'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      skip: ${{ steps.meta.outputs.skip }}
+      channel: ${{ steps.meta.outputs.channel }}
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      name: ${{ steps.meta.outputs.name }}
+      previous_tag: ${{ steps.meta.outputs.previous_tag }}
+      sha: ${{ steps.meta.outputs.sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - id: meta
+        name: Version und Tag bestimmen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          short="${sha:0:12}"
+          skip=false
+
+          channel=nightly
+          [[ "$EVENT" == "push" ]] && channel=stable
+          [[ "$EVENT" == "workflow_dispatch" ]] && channel="${INPUT_CHANNEL:-nightly}"
+
+          releases="$(gh release list --limit 100 --exclude-drafts --json tagName,createdAt)"
+          last_nightly="$(jq -r '[.[] | select(.tagName | test("-nightly\\."))] | sort_by(.createdAt) | last | .tagName // ""' <<<"$releases")"
+          last_stable="$(jq -r '[.[] | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort_by(.createdAt) | last | .tagName // ""' <<<"$releases")"
+
+          if [[ "$channel" == "nightly" ]]; then
+            base="$(node -p 'require("./package.json").version')"
+            # Gibt es die Version aus package.json schon als Stable, sind Nightlies
+            # Vorabversionen des nächsten Patch-Releases.
+            if git rev-parse -q --verify "refs/tags/v$base" >/dev/null; then
+              IFS=. read -r major minor patch <<<"$base"
+              base="$major.$minor.$((patch + 1))"
+            fi
+            version="$base-nightly.$(date -u +%Y%m%d).$GITHUB_RUN_NUMBER"
+            name="Teams Everywhere Nightly $version ($short)"
+            previous="$last_nightly"
+
+            if [[ "$EVENT" == "schedule" && -n "$last_nightly" ]]; then
+              if [[ "$(git rev-list -n 1 "refs/tags/$last_nightly")" == "$sha" ]]; then
+                echo "::notice::Keine neuen Commits seit $last_nightly, kein Nightly heute."
+                skip=true
+              fi
+            fi
+          elif [[ "$channel" == "stable" ]]; then
+            if [[ "$EVENT" == "push" ]]; then raw="$GITHUB_REF_NAME"; else raw="${INPUT_VERSION:-}"; fi
+            version="${raw#v}"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Ungültige Stable-Version: '$raw'. Erwartet wird z. B. 0.2.0."
+              exit 1
+            fi
+            name="Teams Everywhere v$version"
+            previous="$last_stable"
+          else
+            echo "::error::Unbekannter Kanal: $channel"
+            exit 1
+          fi
+
+          {
+            echo "skip=$skip"
+            echo "channel=$channel"
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "name=$name"
+            echo "previous_tag=$previous"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### $name"
+            echo "- Kanal: $channel"
+            echo "- Tag: v$version"
+            echo "- Commit: $sha"
+            echo "- Vorheriger Release: ${previous:-keiner}"
+            echo "- Übersprungen: $skip"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: macOS-Build
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Version setzen
+        run: npm pkg set version="${{ needs.prepare.outputs.version }}"
+
+      - run: npm run typecheck
+
+      - name: App bauen (arm64 und x64)
+        env:
+          # Ohne Apple-Zertifikat signiert electron-builder ad hoc (mac.identity "-").
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run dist:release
+
+      - name: Prüfsummen
+        working-directory: release
+        run: shasum -a 256 -- *.dmg *.zip | tee SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-files
+          if-no-files-found: error
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/SHA256SUMS.txt
+
+  publish:
+    name: GitHub-Release veröffentlichen
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CHANNEL: ${{ needs.prepare.outputs.channel }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      NAME: ${{ needs.prepare.outputs.name }}
+      PREVIOUS_TAG: ${{ needs.prepare.outputs.previous_tag }}
+      SHA: ${{ needs.prepare.outputs.sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: dist
+
+      - name: Release-Notes schreiben
+        run: |
+          set -euo pipefail
+          {
+            if [[ "$CHANNEL" == "nightly" ]]; then
+              echo "Automatischer Nightly-Build aus \`${SHA:0:12}\`. Nightlies enthalten den neuesten Stand von \`main\` und können Fehler haben."
+              echo
+            fi
+            echo "## Installation"
+            echo
+            echo "1. Passende Datei laden: \`Teams-Everywhere-$VERSION-mac-arm64.dmg\` für Apple Silicon (M1 und neuer), \`Teams-Everywhere-$VERSION-mac-x64.dmg\` für Intel-Macs."
+            echo "2. Die App aus dem DMG in den Ordner Programme ziehen."
+            echo "3. Die App ist nicht von Apple notarisiert. Vor dem ersten Start einmal im Terminal ausführen:"
+            echo
+            echo '   ```sh'
+            echo '   xattr -dr com.apple.quarantine "/Applications/Teams Everywhere.app"'
+            echo '   ```'
+            echo
+            echo "Prüfsummen stehen in \`SHA256SUMS.txt\`."
+            echo
+            if [[ -n "$PREVIOUS_TAG" ]]; then
+              echo "## Änderungen seit $PREVIOUS_TAG"
+              echo
+              git log --no-merges --format='- %s (%h)' "$PREVIOUS_TAG..$SHA"
+              echo
+              echo "**Alle Änderungen**: https://github.com/$GITHUB_REPOSITORY/compare/$PREVIOUS_TAG...$TAG"
+            else
+              echo "## Änderungen"
+              echo
+              echo "Erster Release in diesem Kanal."
+            fi
+          } > notes.md
+          cat notes.md
+
+      - name: Release anlegen
+        run: |
+          set -euo pipefail
+          flags=(--latest)
+          [[ "$CHANNEL" == "nightly" ]] && flags=(--prerelease --latest=false)
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "$NAME" \
+            --notes-file notes.md \
+            "${flags[@]}"

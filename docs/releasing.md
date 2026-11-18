@@ -1,0 +1,48 @@
+# Versionen und Releases
+
+Die Pipeline steht in [.github/workflows/release.yml](../.github/workflows/release.yml). Sie baut auf `macos-latest` eine DMG und eine ZIP für Apple Silicon (arm64) und Intel (x64) und hängt beide zusammen mit `SHA256SUMS.txt` an einen GitHub-Release.
+
+## Kanäle
+
+| Kanal   | Auslöser                                           | Versionsschema                          | Tag                                 | GitHub-Release       |
+| ------- | -------------------------------------------------- | --------------------------------------- | ----------------------------------- | -------------------- |
+| Nightly | jede Nacht um 03:17 UTC oder manuell               | `<basis>-nightly.<JJJJMMTT>.<Lauf-Nr.>` | `v0.1.0-nightly.20261118.7`         | Pre-Release          |
+| Stable  | Tag-Push `v1.2.3` oder manuell mit Kanal „stable“  | `1.2.3`                                 | `v1.2.3`                            | Latest               |
+
+Der geplante Nightly-Lauf baut nur, wenn `main` seit dem letzten Nightly neue Commits hat. Ein manuell gestarteter Nightly baut immer.
+
+Die Basis eines Nightlys ist die Version aus `package.json`. Gibt es diese Version schon als Stable-Tag, nimmt die Pipeline die nächste Patch-Version. Nach `v0.1.0` heißen Nightlies also automatisch `0.1.1-nightly.…` und sortieren damit nach dem Stable-Release.
+
+Die Pipeline schreibt die Version nur im Build in `package.json`. Im Repo bleibt die Version stehen, bis du sie selbst änderst.
+
+## Nightly von Hand starten
+
+Unter Actions → Release → „Run workflow“ den Kanal „nightly“ wählen. Oder im Terminal:
+
+```sh
+gh workflow run release.yml -f channel=nightly
+```
+
+## Stable-Release anlegen
+
+1. Version in `package.json` setzen, z. B. `0.2.0`, committen und nach `main` pushen.
+2. Release auslösen, entweder per Tag:
+
+   ```sh
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+   oder per Workflow, der den Tag selbst anlegt:
+
+   ```sh
+   gh workflow run release.yml -f channel=stable -f version=0.2.0
+   ```
+
+3. Die Release-Notes enthalten die Commits seit dem letzten Stable-Release. Wer mehr erklären will, bearbeitet den Release danach auf GitHub.
+
+Für Minor- und Major-Sprünge erhöhst du die Version in `package.json` schon vorher. Die Nightlies heißen dann z. B. `0.3.0-nightly.…`.
+
+## Signierung
+
+Die Builds sind ad hoc signiert und nicht notarisiert. macOS blockiert sie deshalb nach dem Download, Nutzer entfernen die Quarantäne mit `xattr` (siehe README). Für eine echte Signierung braucht es ein Apple-Developer-Konto. Dann kommen das Zertifikat (`CSC_LINK`, `CSC_KEY_PASSWORD`) und die Notarisierungsdaten (`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`) als Secrets ins Repo, und `mac.identity` in `package.json` fällt weg. Erst mit Signierung lohnt sich auch ein Auto-Update über `electron-updater`.
