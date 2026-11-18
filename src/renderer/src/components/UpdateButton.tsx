@@ -17,7 +17,6 @@ export function UpdateButton(): JSX.Element | null {
   const failed = update.status === 'error'
   const percent = update.downloadPercent ?? 0
 
-  const label = downloading ? `${percent} %` : installing ? 'Startet neu' : action === 'install' ? 'Neustart' : 'Update'
   const Icon = failed ? ErrorCircle24Regular : action === 'install' || installing ? ArrowClockwise24Regular : ArrowDownload24Regular
 
   const onClick = () => {
@@ -26,7 +25,7 @@ export function UpdateButton(): JSX.Element | null {
   }
 
   return (
-    <Tooltip content={updateTooltip(update)} relationship="description" positioning="after" withArrow>
+    <Tooltip content={updateTooltip(update)} relationship="label" positioning="after">
       <button
         className={`rail-item rail-update ${failed ? 'failed' : ''}`}
         disabled={downloading || installing}
@@ -34,7 +33,6 @@ export function UpdateButton(): JSX.Element | null {
         style={downloading ? ({ '--update-progress': `${percent}%` } as CSSProperties) : undefined}
       >
         <Icon />
-        <span>{label}</span>
       </button>
     </Tooltip>
   )

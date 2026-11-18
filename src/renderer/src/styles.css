@@ -168,7 +168,7 @@ button {
 .app {
   display: grid;
   grid-template-rows: 52px 1fr;
-  grid-template-columns: 72px 1fr;
+  grid-template-columns: 56px 1fr;
   height: 100%;
   background: var(--frame);
 }
@@ -264,26 +264,23 @@ button {
 }
 .rail-item {
   position: relative;
-  width: 64px;
-  height: 58px;
+  width: 44px;
+  height: 44px;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-lg);
   background: transparent;
   color: var(--fg-3);
-  font-size: 10.5px;
-  font-weight: 500;
   cursor: pointer;
   transition: color 0.12s;
 }
 .rail-item > svg {
   width: 24px;
   height: 24px;
-  padding: 4px 12px;
+  padding: 8px;
   border-radius: 10px;
   box-sizing: content-box;
   transition: background 0.12s;
@@ -296,15 +293,14 @@ button {
 }
 .rail-item.active {
   color: var(--brand-fg);
-  font-weight: 600;
 }
 .rail-item.active > svg {
   background: var(--selected-strong);
 }
 .rail-badge {
   position: absolute;
-  top: 2px;
-  left: 37px;
+  top: 0;
+  left: 24px;
   min-width: 17px;
   height: 17px;
   padding: 0 5px;
@@ -323,7 +319,6 @@ button {
 }
 .rail-update {
   color: var(--brand-fg);
-  font-weight: 600;
 }
 .rail-update > svg {
   background: linear-gradient(to right, var(--selected-strong) var(--update-progress, 100%), var(--brand-soft) var(--update-progress, 100%));
