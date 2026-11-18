@@ -115,14 +115,20 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
         html
     }
     setSending(true)
+    // Sofort leeren: Was während des Sendens getippt wird, gehört zur nächsten Nachricht.
+    const draft = el.innerHTML
+    el.innerHTML = ''
+    setEmpty(true)
     try {
       await onSend({ html, text, subject: withSubject && subject.trim() ? subject.trim() : undefined, importance: important ? 'high' : undefined })
-      el.innerHTML = ''
-      setEmpty(true)
       setSubject('')
       setImportant(false)
       onCancelReply?.()
     } catch (e) {
+      // Entwurf zurückholen, vor dem, was inzwischen getippt wurde
+      const typed = el.innerText.trim() || el.querySelector('img') ? el.innerHTML : ''
+      el.innerHTML = typed ? `${draft}<br>${typed}` : draft
+      setEmpty(false)
       alert(`Nachricht konnte nicht gesendet werden: ${(e as Error).message}`)
     } finally {
       setSending(false)

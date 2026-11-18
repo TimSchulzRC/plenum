@@ -25,8 +25,19 @@ export function CallsView(): JSX.Element {
 
   useEffect(() => {
     if (!account || q.trim().length < 2) return setPeople([])
-    const t = setTimeout(() => void api.searchPeople(account.id, q).then(setPeople), 220)
-    return () => clearTimeout(t)
+    let alive = true
+    const t = setTimeout(
+      () =>
+        void api
+          .searchPeople(account.id, q)
+          .then((r) => alive && setPeople(r))
+          .catch(() => undefined),
+      220
+    )
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
   }, [q, account])
 
   const call = (mri: string, video: boolean) => account && void api.startCall(account.id, { mris: [mri] }, video)

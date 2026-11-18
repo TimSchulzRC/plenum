@@ -430,8 +430,25 @@ function NewChat(): JSX.Element {
       setResults([])
       return
     }
-    const t = setTimeout(() => void api.searchPeople(account.id, q).then((r) => setResults(r.filter((p) => !picked.some((x) => x.mri === p.mri)))), 220)
-    return () => clearTimeout(t)
+    // Eine Antwort, die erst nach der nächsten Eingabe oder Auswahl ankommt, verwerfen.
+    // Sonst taucht eine gerade gewählte Person wieder in der Liste auf.
+    let alive = true
+    const t = setTimeout(
+      () =>
+        void api
+          .searchPeople(account.id, q)
+          .then((r) => {
+            if (!alive) return
+            setResults(r.filter((p) => !picked.some((x) => x.mri === p.mri)))
+            setActive(0)
+          })
+          .catch(() => undefined),
+      220
+    )
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
   }, [q, account, picked])
 
   const pick = (p: Person) => {

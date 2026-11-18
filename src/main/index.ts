@@ -394,7 +394,7 @@ void app.whenReady().then(() => {
   )
   buildMenu()
   setupIpc()
-  calls = new CallManager(() => [...accounts.values()], broadcast)
+  calls = new CallManager(() => [...accounts.values()], broadcast, () => quitting)
   handleMediaProtocol((id) => accounts.get(id))
 
   const records = store.loadAccounts()

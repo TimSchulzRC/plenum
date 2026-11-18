@@ -193,10 +193,17 @@ function GlobalSearch(): JSX.Element {
       setPeople([])
       return
     }
+    let alive = true
     const t = setTimeout(() => {
-      void api.searchPeople(account.id, q).then(setPeople).catch(() => setPeople([]))
+      void api
+        .searchPeople(account.id, q)
+        .then((r) => alive && setPeople(r))
+        .catch(() => alive && setPeople([]))
     }, 250)
-    return () => clearTimeout(t)
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
   }, [q, account])
 
   const chats = useMemo(() => {

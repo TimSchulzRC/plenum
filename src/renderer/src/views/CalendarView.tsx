@@ -1,10 +1,11 @@
 import { Button, Popover, PopoverSurface, Spinner, ToggleButton } from '@fluentui/react-components'
 import { ChevronLeft20Regular, ChevronRight20Regular, Video20Regular, Chat20Regular, Location16Regular, Person16Regular, CalendarToday20Regular } from '@fluentui/react-icons'
-import { addDays, startOfWeek, startOfDay, isSameDay } from 'date-fns'
+import { addDays, startOfWeek, isSameDay } from 'date-fns'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CalendarEvent } from '@shared/types'
 import { api } from '../api'
 import { clock, fmt } from '../lib/format'
+import { allDayOn, wallHours } from '../lib/calendar'
 import { useActive, useStore } from '../store'
 
 const HOUR = 48
@@ -127,7 +128,7 @@ export function CalendarView(): JSX.Element {
               {dayList.map((d) => (
                 <div key={d.getTime()}>
                   {allDay
-                    .filter((e) => e.start < addDays(d, 1).getTime() && e.end > d.getTime())
+                    .filter((e) => allDayOn(e, d))
                     .map((e) => (
                       <div key={e.id} className="ev" title={e.subject}>
                         {e.subject}
@@ -152,15 +153,14 @@ export function CalendarView(): JSX.Element {
                 ))}
               </div>
               {dayList.map((d) => {
-                const dayStart = startOfDay(d).getTime()
                 return (
                   <div key={d.getTime()} className="cal-day">
                     {Array.from({ length: 24 }, (_, h) => (
                       <div key={h} className="cal-slot" />
                     ))}
-                    {isSameDay(d, new Date(now)) && <div className="cal-now" style={{ top: ((now - dayStart) / 3600_000) * HOUR }} />}
+                    {isSameDay(d, new Date(now)) && <div className="cal-now" style={{ top: wallHours(now) * HOUR }} />}
                     {layout(d).map(({ ev, col, cols: n }) => {
-                      const top = ((ev.start - dayStart) / 3600_000) * HOUR
+                      const top = wallHours(ev.start) * HOUR
                       const height = Math.max(20, ((ev.end - ev.start) / 3600_000) * HOUR - 2)
                       return (
                         <div

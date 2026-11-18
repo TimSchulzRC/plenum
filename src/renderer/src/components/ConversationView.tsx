@@ -174,6 +174,20 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
     prevHeight.current = el.scrollHeight
   }, [msgs])
 
+  // Bilder laden erst nach dem Rendern und haben keine feste Größe. Wächst der Inhalt,
+  // während die Ansicht unten klebt, wieder ans Ende scrollen.
+  useEffect(() => {
+    const el = scroller.current
+    const inner = el?.firstElementChild
+    if (!el || !inner) return
+    const ro = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight
+    })
+    ro.observe(inner)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   const onScroll = () => {
     const el = scroller.current
     if (!el) return
@@ -214,7 +228,8 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
       const real = await api.sendMessage(accountId, chat.id, p.html, { importance: p.importance })
       setMsgs((prev) => merge(prev.filter((m) => m.id !== temp.id), [real]))
     } catch (e) {
-      setMsgs((prev) => prev.map((m) => (m.id === temp.id ? { ...m, pending: false, failed: true } : m)))
+      // Der Composer bekommt den Text zurück. Bliebe die Blase stehen, gäbe es beim erneuten Senden zwei.
+      setMsgs((prev) => prev.filter((m) => m.id !== temp.id))
       throw e
     }
   }
