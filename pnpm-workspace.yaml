@@ -1,0 +1,3 @@
+# electron-winstaller baut nur für Windows-Installer, die App erscheint nur für macOS.
+allowBuilds:
+  electron-winstaller: false

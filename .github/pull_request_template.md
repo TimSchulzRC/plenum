@@ -2,5 +2,5 @@
 
 ## Wie getestet?
 
-- [ ] `npm run typecheck` läuft durch
-- [ ] In der App ausprobiert (`npm run dev`)
+- [ ] `pnpm run typecheck` läuft durch
+- [ ] In der App ausprobiert (`pnpm run dev`)

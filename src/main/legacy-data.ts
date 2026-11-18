@@ -1,5 +1,5 @@
 // Übernahme des Datenordners aus der Zeit, als die App „Teams Mac“ hieß.
-// Ohne Electron-Abhängigkeiten, damit `npm test` die Logik prüfen kann.
+// Ohne Electron-Abhängigkeiten, damit `pnpm test` die Logik prüfen kann.
 import { existsSync, readlinkSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 

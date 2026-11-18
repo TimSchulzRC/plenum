@@ -11,15 +11,15 @@ Sicherheitslücken meldest du bitte nicht öffentlich, sondern wie in [SECURITY.
 ## Entwickeln
 
 ```sh
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
 Vor jedem Pull Request:
 
 ```sh
-npm run typecheck
-npm run build
+pnpm run typecheck
+pnpm run build
 ```
 
 Die CI prüft beides bei jedem Pull Request.
