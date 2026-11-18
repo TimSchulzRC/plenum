@@ -145,8 +145,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Version setzen
-        run: pnpm pkg set version="${{ needs.prepare.outputs.version }}"
+      # Nightlies heißen „Teams Everywhere (nightly)“: App-Bundle, Menüleiste und Dock.
+      # Bundle-ID und Datenordner bleiben gleich, Updates und Anmeldungen gelten weiter.
+      - name: Version und Name setzen
+        env:
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          pnpm pkg set version="$VERSION"
+          if [[ "$CHANNEL" == "nightly" ]]; then pnpm pkg set build.productName="Teams Everywhere (nightly)"; fi
 
       - run: pnpm run typecheck
       - run: pnpm test
@@ -162,8 +169,9 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ needs.prepare.outputs.version }}"
-          scripts/patch-zip.sh "release/mac-arm64/Teams Everywhere.app" "release/Teams-Everywhere-$version-mac-arm64-patch.zip"
-          scripts/patch-zip.sh "release/mac/Teams Everywhere.app" "release/Teams-Everywhere-$version-mac-x64-patch.zip"
+          app="$(node -p 'require("./package.json").build.productName').app"
+          scripts/patch-zip.sh "release/mac-arm64/$app" "release/Teams-Everywhere-$version-mac-arm64-patch.zip"
+          scripts/patch-zip.sh "release/mac/$app" "release/Teams-Everywhere-$version-mac-x64-patch.zip"
           ls -la release/*-patch.zip
 
       - name: Prüfsummen
@@ -208,6 +216,8 @@ jobs:
       - name: Release-Notes schreiben
         run: |
           set -euo pipefail
+          APP_NAME="Teams Everywhere"
+          [[ "$CHANNEL" == "nightly" ]] && APP_NAME="Teams Everywhere (nightly)"
           {
             if [[ "$CHANNEL" == "nightly" ]]; then
               echo "Automatischer Nightly-Build aus \`${SHA:0:12}\`. Nightlies enthalten den neuesten Stand von \`main\` und können Fehler haben."
@@ -216,11 +226,11 @@ jobs:
             echo "## Installation"
             echo
             echo "1. Passende Datei laden: \`Teams-Everywhere-$VERSION-mac-arm64.dmg\` für Apple Silicon (M1 und neuer), \`Teams-Everywhere-$VERSION-mac-x64.dmg\` für Intel-Macs."
-            echo "2. Die App aus dem DMG in den Ordner Programme ziehen."
+            echo "2. $APP_NAME aus dem DMG in den Ordner Programme ziehen."
             echo "3. Die App ist nicht von Apple notarisiert. Vor dem ersten Start einmal im Terminal ausführen:"
             echo
             echo '   ```sh'
-            echo '   xattr -dr com.apple.quarantine "/Applications/Teams Everywhere.app"'
+            echo "   xattr -dr com.apple.quarantine \"/Applications/$APP_NAME.app\""
             echo '   ```'
             echo
             echo "Prüfsummen stehen in \`SHA256SUMS.txt\`."

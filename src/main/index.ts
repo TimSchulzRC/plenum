@@ -9,6 +9,8 @@ import { createMainWindow, uiWindows } from './windows'
 import { Updater } from './updater'
 import { log } from './log'
 import { migrateLegacyUserData } from './legacy-data'
+import { channelOf } from './update/releases'
+import { appVariant, dataName, displayName } from './variant'
 import type { ApiMethods } from '@shared/ipc'
 import type { AppSettings, DebugInfo, NavigateRequest } from '@shared/types'
 
@@ -20,14 +22,20 @@ app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns,Med
 app.commandLine.appendSwitch('allow-loopback-in-peer-connection')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 if (process.env.TM_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.TM_DEBUG_PORT)
-app.setName('Teams Everywhere')
+
+// Dev läuft mit eigenem Namen und eigenem Datenordner neben der installierten App:
+// eigene Konten, Einstellungen, Anmeldungen, Logs und Instanzsperre.
+// app.setName muss vor app.ready laufen, Electron leitet daraus auch den Keychain-Eintrag ab.
+const variant = appVariant(app.isPackaged, channelOf(app.getVersion()))
+const appName = displayName(variant)
+app.setName(dataName(variant))
 
 // Bis zur Umbenennung hieß die App „Teams Mac“. Der alte Datenordner enthält
 // Konten, Einstellungen und die Anmeldungen (Partitions) und zieht einmalig um.
 // TE_USER_DATA_DIR startet die App mit einem eigenen Datenordner, z. B. zum Testen von Updates.
 const customUserDataDir = process.env.TE_USER_DATA_DIR
-const userDataDir = customUserDataDir || join(app.getPath('appData'), 'Teams Everywhere')
-const migration = customUserDataDir ? 'none' : migrateLegacyUserData(join(app.getPath('appData'), 'Teams Mac'), userDataDir)
+const userDataDir = customUserDataDir || join(app.getPath('appData'), dataName(variant))
+const migration = customUserDataDir || variant === 'dev' ? 'none' : migrateLegacyUserData(join(app.getPath('appData'), 'Teams Mac'), userDataDir)
 // Läuft „Teams Mac“ noch, startet die App nur kurz mit einem Wegwerf-Ordner, meldet das und beendet sich.
 // So entsteht der neue Ordner nicht leer, und der Umzug klappt beim nächsten Start.
 app.setPath('userData', migration === 'legacy-running' ? join(app.getPath('temp'), 'teams-everywhere-waiting') : userDataDir)
@@ -285,9 +293,9 @@ function setupIpc(): void {
 function buildMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
-      label: app.name,
+      label: appName,
       submenu: [
-        { role: 'about', label: 'Über Teams Everywhere' },
+        { role: 'about', label: `Über ${appName}` },
         {
           label: 'Nach Updates suchen …',
           click: () => {
@@ -306,11 +314,11 @@ function buildMenu(): void {
           }
         },
         { type: 'separator' },
-        { role: 'hide', label: 'Teams Everywhere ausblenden' },
+        { role: 'hide', label: `${appName} ausblenden` },
         { role: 'hideOthers', label: 'Andere ausblenden' },
         { role: 'unhide', label: 'Alle einblenden' },
         { type: 'separator' },
-        { role: 'quit', label: 'Teams Everywhere beenden' }
+        { role: 'quit', label: `${appName} beenden` }
       ]
     },
     {
@@ -343,7 +351,7 @@ function buildMenu(): void {
       submenu: [
         { role: 'minimize', label: 'Im Dock ablegen' },
         { role: 'zoom', label: 'Zoomen' },
-        { label: 'Teams Everywhere', accelerator: 'Cmd+0', click: () => showMain() },
+        { label: appName, accelerator: 'Cmd+0', click: () => showMain() },
         { type: 'separator' },
         { role: 'front', label: 'Alle nach vorne bringen' }
       ]
@@ -377,6 +385,7 @@ void app.whenReady().then(() => {
     app.quit()
     return
   }
+  app.setAboutPanelOptions({ applicationName: appName, applicationVersion: app.getVersion() })
   settings = store.loadSettings()
   nativeTheme.themeSource = settings.theme
   updater = new Updater(

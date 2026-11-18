@@ -19,11 +19,11 @@ Aktuell läuft Teams Everywhere auf macOS. Windows und Linux sind geplant.
 Fertige Builds liegen unter [Releases](https://github.com/TimSchulzRC/teams-everywhere/releases). Im Moment gibt es nur Nightlies. Sie entstehen jede Nacht automatisch aus `main`, sobald es neue Commits gibt.
 
 1. Die passende DMG laden: `…-mac-arm64.dmg` für Apple Silicon (M1 und neuer), `…-mac-x64.dmg` für Intel-Macs.
-2. Teams Everywhere aus der DMG in den Ordner Programme ziehen.
-3. Die App ist nicht von Apple notarisiert, macOS blockiert sie deshalb beim ersten Start. Einmal im Terminal ausführen:
+2. Teams Everywhere aus der DMG in den Ordner Programme ziehen. Nightlies heißen „Teams Everywhere (nightly)“.
+3. Die App ist nicht von Apple notarisiert, macOS blockiert sie deshalb beim ersten Start. Einmal im Terminal ausführen (bei Stable-Releases ohne „ (nightly)“):
 
    ```sh
-   xattr -dr com.apple.quarantine "/Applications/Teams Everywhere.app"
+   xattr -dr com.apple.quarantine "/Applications/Teams Everywhere (nightly).app"
    ```
 
 Danach sucht die App selbst nach Updates, 15 Sekunden nach dem Start und dann alle vier Stunden. Gibt es eine neue Version, erscheint unten in der linken Leiste der Knopf „Update“. Ein Klick lädt sie und prüft ihre SHA256-Summe, ein Klick auf „Neustart“ tauscht die App aus und startet sie neu. Unter Einstellungen → Updates siehst du Version und Kanal und kannst die Suche auch von Hand anstoßen. Nightly-Installationen bekommen Nightlies und Stable-Releases, Stable-Installationen nur Stable-Releases.
@@ -57,6 +57,10 @@ pnpm run typecheck
 pnpm run dist         # baut release/mac-arm64/Teams Everywhere.app (ad hoc signiert)
 pnpm run dist:release # baut DMG und ZIP für arm64 und x64 wie die Release-Pipeline
 ```
+
+`pnpm run dev` und `pnpm start` laufen als „Teams Everywhere (dev)“ mit eigenem Datenordner `~/Library/Application Support/Teams Everywhere (dev)`. Konten, Anmeldungen, Einstellungen und Logs der installierten App bleiben unberührt, und beide können gleichzeitig laufen. Der Dev-Ordner hängt nicht am Checkout, Anmeldungen bleiben also auch in neuen Worktrees und nach Updates erhalten. Den Namen in der Menüleiste trägt `scripts/dev-app-name.mjs` vor jedem Start in die Electron.app unter `node_modules` ein.
+
+Stable und Nightly teilen sich den Ordner `~/Library/Application Support/Teams Everywhere`. Mit `TE_USER_DATA_DIR=<Ordner>` startet jede Ausgabe mit einem anderen Datenordner.
 
 Mit `TM_DEBUG_PORT=9339` startet die App mit Remote-Debugging. Nur dann ist die Diagnose-Schnittstelle `debugRaw` aktiv.
 
