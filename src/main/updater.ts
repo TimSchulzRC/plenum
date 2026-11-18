@@ -170,7 +170,10 @@ export class Updater {
           await verifyBundle(staged)
         } catch (err) {
           log.info(`Patch-Update nicht nutzbar, lade die ganze App: ${(err as Error).message}`)
-          rmSync(join(dir, 'patch'), { recursive: true, force: true })
+          // Klappt das Aufräumen nicht, räumt cleanup() bzw. das Install-Skript den Ordner später weg.
+          try {
+            rmSync(join(dir, 'patch'), { recursive: true, force: true })
+          } catch {}
           staged = null
           this.set({ downloadPercent: 0 })
         }
