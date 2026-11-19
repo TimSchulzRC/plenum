@@ -32,15 +32,13 @@ export function renderMessageHtml(html: string, accountId: string, myName?: stri
 
   clean.querySelectorAll('img').forEach((img) => {
     const src = img.getAttribute('src') ?? ''
-    const isEmoji = /Emoji/i.test(img.getAttribute('itemtype') ?? '') || /emoticon|personal-expressions|\/emoji/i.test(src)
-    if (isEmoji) {
+    if (isEmojiImage(img)) {
       img.classList.add('emoji')
       return
     }
     if (needsProxy(src)) img.setAttribute('src', proxyUrl(accountId, src))
     img.setAttribute('loading', 'lazy')
-    img.removeAttribute('width')
-    img.removeAttribute('height')
+    fitImage(img, Number(img.getAttribute('width')), Number(img.getAttribute('height')))
     img.classList.add('msg-image')
   })
   // Nur eigene Klassen behalten
@@ -61,6 +59,35 @@ export function renderMessageHtml(html: string, accountId: string, myName?: stri
   const wrapper = document.createElement('div')
   wrapper.appendChild(clean)
   return wrapper.innerHTML
+}
+
+// Bilder im Chat höchstens 400 × 300. Die Größe steht als width/height am Bild, damit die
+// Sprechblase sie kennt: Ein max-width in Prozent zählt für ihre Breite nicht, sie würde
+// sonst so breit wie das Originalbild. Ohne Angabe setzt MessageBody sie nach dem Laden.
+export function fitImage(img: HTMLImageElement, w: number, h: number): void {
+  if (!(w > 0 && h > 0)) {
+    img.removeAttribute('width')
+    img.removeAttribute('height')
+    return
+  }
+  const scale = Math.min(1, 400 / w, 300 / h)
+  img.setAttribute('width', String(Math.max(1, Math.round(w * scale))))
+  img.setAttribute('height', String(Math.max(1, Math.round(h * scale))))
+}
+
+function isEmojiImage(img: Element): boolean {
+  const src = img.getAttribute('src') ?? ''
+  return /Emoji/i.test(img.getAttribute('itemtype') ?? '') || /emoticon|personal-expressions|\/emoji/i.test(src)
+}
+
+// Nachricht besteht nur aus Bildern, ohne Text: Dann zeigt der Chat sie ohne Sprechblase.
+export function isImageOnly(html: string): boolean {
+  // <emoji alt="👍"> hat keinen Textinhalt, wird beim Anzeigen aber zu Text
+  if (!/<img\b/i.test(html) || /<emoji\b/i.test(html)) return false
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  if ((doc.body.textContent ?? '').replace(/[\s\u00a0\u200b]/g, '') !== '') return false
+  const imgs = [...doc.body.querySelectorAll('img')]
+  return imgs.length > 0 && imgs.every((i) => !isEmojiImage(i))
 }
 
 // Zitate (Teams „Antworten“): Kopf mit Name und Zeit, Vorschautext, Sprungziel
