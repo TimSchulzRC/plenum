@@ -211,6 +211,11 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     getPresence: (id, mris) => get(id).getPresence(mris),
     setMyPresence: (id, av) => get(id).setMyPresence(av),
     createChat: (id, mris, topic) => get(id).createChat(mris, topic),
+    openChatWith: async (id, mri) => {
+      const conversationId = await get(id).createChat([mri])
+      showMain()
+      broadcast('navigate', { accountId: id, view: 'chat', conversationId })
+    },
     reorderFolder: (id, folderId, order) => get(id).folderActions([{ action: 'ReorderItems', folderId, newItemsOrder: order }]),
     addToFolder: (id, folderId, itemId, index) => get(id).folderActions([{ action: 'AddItem', folderId, itemId, itemIndex: index ?? 0 }]),
     removeFromFolder: (id, folderId, itemId) => get(id).folderActions([{ action: 'RemoveItem', folderId, itemId }]),

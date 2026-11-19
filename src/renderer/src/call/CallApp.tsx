@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ComponentProps, type JSX, type ReactNode } from 'react'
-import { Avatar, Button, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Spinner, Tooltip } from '@fluentui/react-components'
+import { Avatar, Button, Menu, MenuDivider, MenuGroup, MenuGroupHeader, MenuItemRadio, MenuItem, MenuList, MenuPopover, MenuTrigger, Spinner, Tooltip } from '@fluentui/react-components'
 import {
   ArrowMaximize20Regular,
   ArrowMinimize24Regular,
@@ -27,13 +27,16 @@ import {
   VideoOff24Regular,
   Dismiss20Regular,
   HandRight16Filled,
-  ImageEdit20Regular
+  ImageEdit20Regular,
+  ScaleFill24Regular,
+  ScaleFit24Regular
 } from '@fluentui/react-icons'
 import type { CallAction, CallState } from '@shared/types'
 import { api, onEvent } from '../api'
 import { duration } from '../lib/format'
 import { useBridge, type BridgeStream } from './bridge'
-import { StreamVideo, VideoTile } from './VideoTile'
+import { StreamVideo, VideoTile, type VideoFit, type VideoTileProps } from './VideoTile'
+import { PersonPopover } from './PersonCard'
 import { DeviceChevron, EffectsPanel } from './Effects'
 import { compactMain, OWN_SCREEN_LABEL, shownStreams, stageModel, type TileModel } from './layout'
 import './call.css'
@@ -66,6 +69,30 @@ function useNow(active: boolean): number {
     return () => clearInterval(iv)
   }, [active])
   return now
+}
+
+// Ganzes Bild zeigen oder Kachel füllen. Gilt für alle Videos und wird gespeichert.
+function useVideoFit(): [VideoFit, (fit: VideoFit) => void] {
+  const [fit, setFit] = useState<VideoFit>('contain')
+  useEffect(() => {
+    void api.getSettings().then((s) => setFit(s.callVideoFit ?? 'contain'))
+    return onEvent('settings', (s) => setFit(s.callVideoFit ?? 'contain'))
+  }, [])
+  const change = useCallback((next: VideoFit) => {
+    setFit(next)
+    void api.setSettings({ callVideoFit: next })
+  }, [])
+  return [fit, change]
+}
+
+// Wessen Profil ein Klick auf das Namensschild zeigt. Eigene Kacheln und unbekannte Streams haben keins.
+function personFor(state: CallState, label: string, kind: TileModel['kind'], streamExternal?: boolean): VideoTileProps['person'] {
+  if (kind === 'self') return undefined
+  const name = label.replace(/ \(Bildschirm\)$/, '')
+  if (!name || name === OWN_SCREEN_LABEL || /^Teilnehmer( \d+)?$/.test(name)) return undefined
+  const p = state.participants.find((x) => x.name === name)
+  if (p?.isMe) return undefined
+  return { accountId: state.accountId, name, external: p?.external || streamExternal }
 }
 
 function act(action: CallAction, arg?: string): void {
@@ -225,13 +252,15 @@ function Stage({
   streams,
   view,
   pinned,
-  setPinned
+  setPinned,
+  fit
 }: {
   state: CallState
   streams: BridgeStream[]
   view: 'gallery' | 'speaker'
   pinned: string | null
   setPinned: (id: string | null) => void
+  fit: VideoFit
 }): JSX.Element {
   const [stageRef, size] = useElementSize()
   const { self, tiles, main, strip } = stageModel(state, streams, view, pinned)
@@ -244,6 +273,8 @@ function Stage({
       kind={t.kind}
       streamId={t.stream?.streamId}
       small={small}
+      fit={fit}
+      person={personFor(state, t.label, t.kind, t.stream?.external)}
       muted={t.participant?.muted}
       speaking={t.stream?.speaking || t.participant?.speaking}
       handRaised={t.participant?.handRaised}
@@ -254,7 +285,7 @@ function Stage({
 
   const selfTile = (
     <div className="cw-self">
-      <VideoTile media={state.cameraOn ? self?.media ?? null : null} label="Du" kind="self" streamId={self?.streamId} small muted={state.muted} hideActions={!self} />
+      <VideoTile media={state.cameraOn ? self?.media ?? null : null} label="Du" kind="self" streamId={self?.streamId} small fit={fit} muted={state.muted} hideActions={!self} />
     </div>
   )
 
@@ -267,6 +298,8 @@ function Stage({
             label={main.label}
             kind={main.kind}
             streamId={main.streamId}
+            fit={fit}
+            person={personFor(state, main.label, main.kind, main.external)}
             pinned={pinned === main.streamId}
             onPin={() => setPinned(pinned === main.streamId ? null : main.streamId)}
           />
@@ -315,29 +348,41 @@ function PeoplePanel({ state, onClose }: { state: CallState; onClose: () => void
       </div>
       <div className="cw-panel-body">
         {list.length === 0 && <p className="cw-muted">Die Teilnehmerliste ist noch nicht verfügbar.</p>}
-        {list.map((p) => (
-          <div key={p.id} className="cw-person">
-            <Avatar name={p.name} size={32} color="colorful" />
-            <span className="cw-person-name">
-              {p.name}
-              {p.isMe ? ' (du)' : ''}
-            </span>
-            {p.handRaised && <HandRight16Filled className="cw-hand" />}
-            {p.muted && <MicOff16Filled className="cw-muted" />}
-          </div>
-        ))}
+        {list.map((p) => {
+          const row = (
+            <>
+              <Avatar name={p.name} size={32} color="colorful" />
+              <span className="cw-person-name">
+                {p.name}
+                {p.isMe ? ' (du)' : ''}
+              </span>
+              {p.external && <span className="cw-person-tag">Extern</span>}
+              {p.handRaised && <HandRight16Filled className="cw-hand" />}
+              {p.muted && <MicOff16Filled className="cw-muted" />}
+            </>
+          )
+          // Die Personensuche findet das eigene Konto nicht, daher keine Karte für sich selbst
+          if (p.isMe) return <div key={p.id} className="cw-person">{row}</div>
+          return (
+            <PersonPopover key={p.id} accountId={state.accountId} name={p.name} external={p.external} positioning="before-top">
+              <button className="cw-person" title="Profil anzeigen">
+                {row}
+              </button>
+            </PersonPopover>
+          )
+        })}
       </div>
     </aside>
   )
 }
 
-function CompactView({ state, streams }: { state: CallState | null; streams: BridgeStream[] }): JSX.Element {
+function CompactView({ state, streams, fit }: { state: CallState | null; streams: BridgeStream[]; fit: VideoFit }): JSX.Element {
   const main = compactMain(streams)
   const now = useNow(!!state?.startedAt)
   return (
     <div className="cw-compact">
       {main ? (
-        <VideoTile media={main.media} label={main.label} kind={main.kind} hideActions />
+        <VideoTile media={main.media} label={main.label} kind={main.kind} fit={fit} hideActions />
       ) : (
         <div className="cw-compact-empty">
           <Avatar name={state?.title || 'Besprechung'} size={56} color="colorful" />
@@ -374,6 +419,7 @@ export default function CallApp(): JSX.Element {
   const [showPeople, setShowPeople] = useState(false)
   const [showEffects, setShowEffects] = useState(false)
   const [sources, setSources] = useState<DisplaySource[] | null>(null)
+  const [fit, setFit] = useVideoFit()
   const now = useNow(!!state?.startedAt)
 
   const shown = shownStreams(state, streams, view, pinned, compact)
@@ -419,7 +465,7 @@ export default function CallApp(): JSX.Element {
     void api.pickDisplaySource(id)
   }, [])
 
-  if (compact) return <CompactView state={state} streams={streams} />
+  if (compact) return <CompactView state={state} streams={streams} fit={fit} />
 
   const can = (a: CallAction): boolean => !!state && state.available?.[a] !== false
   const inCall = state?.phase === 'in-call'
@@ -462,7 +508,7 @@ export default function CallApp(): JSX.Element {
       </Centered>
     )
   } else {
-    body = <Stage state={state} streams={streams} view={view} pinned={pinned} setPinned={setPinned} />
+    body = <Stage state={state} streams={streams} view={view} pinned={pinned} setPinned={setPinned} fit={fit} />
   }
 
   return (
@@ -508,18 +554,39 @@ export default function CallApp(): JSX.Element {
               </div>
             </MenuPopover>
           </Menu>
-          <Menu positioning="below-end">
+          <Menu
+            positioning="below-end"
+            checkedValues={{ view: [view], fit: [fit] }}
+            onCheckedValueChange={(_e, d) => {
+              const v = d.checkedItems[0]
+              if (d.name === 'view' && (v === 'gallery' || v === 'speaker')) setView(v)
+              if (d.name === 'fit' && (v === 'contain' || v === 'cover')) setFit(v)
+            }}
+          >
             <MenuTrigger disableButtonEnhancement>
               <BarButton icon={view === 'gallery' ? <Grid24Regular /> : <PersonBoard24Regular />} label="Ansicht" disabled={!inCall} />
             </MenuTrigger>
             <MenuPopover>
               <MenuList>
-                <MenuItem icon={<Grid24Regular />} onClick={() => setView('gallery')}>
-                  Galerie
-                </MenuItem>
-                <MenuItem icon={<PersonBoard24Regular />} onClick={() => setView('speaker')}>
-                  Sprecher
-                </MenuItem>
+                <MenuGroup>
+                  <MenuGroupHeader>Anordnung</MenuGroupHeader>
+                  <MenuItemRadio name="view" value="gallery" icon={<Grid24Regular />}>
+                    Galerie
+                  </MenuItemRadio>
+                  <MenuItemRadio name="view" value="speaker" icon={<PersonBoard24Regular />}>
+                    Sprecher
+                  </MenuItemRadio>
+                </MenuGroup>
+                <MenuDivider />
+                <MenuGroup>
+                  <MenuGroupHeader>Videobild</MenuGroupHeader>
+                  <MenuItemRadio name="fit" value="contain" icon={<ScaleFit24Regular />}>
+                    Ganzes Bild zeigen
+                  </MenuItemRadio>
+                  <MenuItemRadio name="fit" value="cover" icon={<ScaleFill24Regular />}>
+                    Kachel füllen
+                  </MenuItemRadio>
+                </MenuGroup>
               </MenuList>
             </MenuPopover>
           </Menu>

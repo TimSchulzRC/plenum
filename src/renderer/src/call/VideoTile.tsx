@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type JSX } from 'react'
 import { Avatar, Tooltip } from '@fluentui/react-components'
 import { MicOff16Filled, HandRight16Filled, Pin20Regular, PinOff20Regular, WindowNew20Regular } from '@fluentui/react-icons'
 import { api } from '../api'
+import { PersonPopover } from './PersonCard'
+
+export type VideoFit = 'contain' | 'cover'
 
 export interface VideoTileProps {
   media: MediaStream | null
@@ -16,6 +19,9 @@ export interface VideoTileProps {
   handRaised?: boolean
   hideActions?: boolean
   className?: string
+  fit?: VideoFit
+  // Mit Konto und Namen öffnet ein Klick auf das Namensschild die Profilkarte
+  person?: { accountId: string; name: string; external?: boolean }
 }
 
 // Zeigt an, ob ein Stream tatsächlich Bilder liefert.
@@ -81,12 +87,19 @@ export function StreamVideo({
 }
 
 export function VideoTile(props: VideoTileProps): JSX.Element {
-  const { media, label, kind, streamId, pinned, onPin, small, muted, speaking, handRaised, hideActions, className } = props
+  const { media, label, kind, streamId, pinned, onPin, small, muted, speaking, handRaised, hideActions, className, person } = props
   const [video, setVideo] = useState<HTMLVideoElement | null>(null)
   const hasFrames = useHasFrames(media, video)
   const showVideo = !!media && hasFrames
-  const fit = kind === 'screen' ? 'contain' : 'cover'
+  const fit = props.fit ?? (kind === 'screen' ? 'contain' : 'cover')
   const avatarSize = small ? 40 : 96
+  const labelContent = (
+    <>
+      {handRaised && <HandRight16Filled className="cw-hand" />}
+      {muted && <MicOff16Filled />}
+      <span>{label}</span>
+    </>
+  )
 
   return (
     <div className={`cw-tile${small ? ' small' : ''}${speaking ? ' speaking' : ''}${kind === 'screen' ? ' screen' : ''} ${className ?? ''}`}>
@@ -96,11 +109,15 @@ export function VideoTile(props: VideoTileProps): JSX.Element {
           <Avatar name={label} size={avatarSize} color="colorful" idForColor={label} />
         </div>
       )}
-      <div className="cw-tile-label">
-        {handRaised && <HandRight16Filled className="cw-hand" />}
-        {muted && <MicOff16Filled />}
-        <span>{label}</span>
-      </div>
+      {person ? (
+        <PersonPopover accountId={person.accountId} name={person.name} external={person.external}>
+          <button className="cw-tile-label clickable" title="Profil anzeigen">
+            {labelContent}
+          </button>
+        </PersonPopover>
+      ) : (
+        <div className="cw-tile-label">{labelContent}</div>
+      )}
       {!hideActions && (
         <div className="cw-tile-actions">
           {streamId && media && (

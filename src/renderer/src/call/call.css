@@ -298,6 +298,16 @@ body[data-route='popout'] {
   font-size: 12px;
   line-height: 18px;
 }
+.cw-tile-label.clickable {
+  border: 0;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cw-tile-label.clickable:hover {
+  background: rgba(0, 0, 0, 0.8);
+  text-decoration: underline;
+}
 .cw-tile-label span {
   white-space: nowrap;
   overflow: hidden;
@@ -380,6 +390,105 @@ body[data-route='popout'] {
 }
 .cw-person:hover {
   background: #333333;
+}
+button.cw-person {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cw-person-tag {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #3d3d3d;
+  color: #d6d6d6;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+/* ---------- Profilkarte ---------- */
+.cw-pcard-surface {
+  width: 300px;
+  padding: 16px;
+}
+.cw-pcard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cw-pcard-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.cw-pcard-titles {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.cw-pcard-name {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 22px;
+  overflow-wrap: anywhere;
+}
+.cw-pcard-sub {
+  font-size: 12px;
+  color: var(--colorNeutralForeground3);
+}
+.cw-pcard-badge {
+  margin-top: 4px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--colorNeutralBackground3);
+  color: var(--colorNeutralForeground2);
+  font-size: 11px;
+  line-height: 18px;
+}
+.cw-pcard-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--colorNeutralForeground3);
+}
+.cw-pcard-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.cw-pcard-row > svg {
+  flex-shrink: 0;
+  color: var(--colorNeutralForeground3);
+}
+.cw-pcard-link {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--colorBrandForegroundLink);
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cw-pcard-link:hover {
+  text-decoration: underline;
+}
+.cw-pcard-row .cw-icon-btn {
+  color: var(--colorNeutralForeground2);
+}
+.cw-pcard-actions {
+  display: flex;
+  gap: 8px;
 }
 .cw-person-name {
   flex: 1;
