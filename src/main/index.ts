@@ -116,7 +116,7 @@ function showNotification(n: NotifyPayload): void {
   const multi = accounts.size > 1
   const presence = acct?.record.mri ? acct.presence.get(acct.record.mri) : undefined
   if (presence?.availability === 'DoNotDisturb') return
-  const notif = postNotification({
+  const notif = createNotification({
     title: n.title,
     subtitle: multi ? acct?.record.displayName || acct?.record.upn : undefined,
     body: settings.showMessagePreview ? n.body : 'Neue Nachricht',
@@ -135,11 +135,13 @@ function showNotification(n: NotifyPayload): void {
     broadcast('navigate', nav)
   })
   notif.on('close', () => liveNotifications.forget(notif))
+  notif.show()
   log.info(`Benachrichtigung angezeigt (${n.kind})`)
 }
 
-// Zeigt eine Mitteilung und merkt sich, ob macOS sie angenommen hat
-function postNotification(opts: Electron.NotificationConstructorOptions): Notification {
+// Legt eine Mitteilung an und merkt sich, ob macOS sie angenommen hat. show() ruft der Aufrufer,
+// nachdem er seine eigenen Listener angehängt hat.
+function createNotification(opts: Electron.NotificationConstructorOptions): Notification {
   const notif = new Notification(opts)
   notif.on('show', () => {
     notificationError = undefined
@@ -149,7 +151,6 @@ function postNotification(opts: Electron.NotificationConstructorOptions): Notifi
     if (notificationError !== error) log.warn(`Benachrichtigung abgelehnt: ${error}`)
     notificationError = error
   })
-  notif.show()
   return notif
 }
 
@@ -158,9 +159,10 @@ function postNotification(opts: Electron.NotificationConstructorOptions): Notifi
 let testNotif: Notification | undefined
 function testNotification(): Promise<{ ok: boolean; error?: string }> {
   return new Promise((resolve) => {
-    const notif = postNotification({ title: appName, body: 'So sehen Mitteilungen von neuen Nachrichten aus.', silent: !settings.notificationSound })
+    const notif = createNotification({ title: appName, body: 'So sehen Mitteilungen von neuen Nachrichten aus.', silent: !settings.notificationSound })
     testNotif = notif
-    const timer = setTimeout(() => resolve({ ok: !notificationError, error: notificationError }), 5000)
+    // Ohne Rückmeldung von Electron gilt der Test als nicht bestätigt
+    const timer = setTimeout(() => resolve({ ok: false, error: 'keine Rückmeldung von macOS' }), 5000)
     notif.once('show', () => {
       clearTimeout(timer)
       resolve({ ok: true })
@@ -169,6 +171,7 @@ function testNotification(): Promise<{ ok: boolean; error?: string }> {
       clearTimeout(timer)
       resolve({ ok: false, error })
     })
+    notif.show()
   })
 }
 

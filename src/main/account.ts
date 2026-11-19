@@ -535,6 +535,13 @@ export class AccountService extends EventEmitter<AccountEvents> {
               senderMri: from
             })
           }
+        } else if (channel.unread && lm?.id) {
+          // Keine neue Nachricht, aber auf einem anderen Gerät gelesen: Punkt und Dock-Zahl sofort anpassen
+          const horizon = parseHorizon(conv.properties?.consumptionhorizon)
+          if (horizon && Number(lm.id) <= horizon) {
+            channel.unread = false
+            changed.push(id)
+          }
         }
         for (const tm of this.teams) tm.unread = tm.channels.some((c) => c.unread && c.isFavorite)
         continue
