@@ -154,9 +154,12 @@ function postNotification(opts: Electron.NotificationConstructorOptions): Notifi
 }
 
 // Testmitteilung aus den Einstellungen. Löst beim ersten Mal die Rückfrage von macOS aus.
+// Die Referenz hält sie in der Mitteilungszentrale, bis die nächste Testmitteilung kommt.
+let testNotif: Notification | undefined
 function testNotification(): Promise<{ ok: boolean; error?: string }> {
   return new Promise((resolve) => {
     const notif = postNotification({ title: appName, body: 'So sehen Mitteilungen von neuen Nachrichten aus.', silent: !settings.notificationSound })
+    testNotif = notif
     const timer = setTimeout(() => resolve({ ok: !notificationError, error: notificationError }), 5000)
     notif.once('show', () => {
       clearTimeout(timer)
