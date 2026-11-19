@@ -1,0 +1,77 @@
+<!doctype html>
+<!--
+  Nachbau einer Teams-v2-Besprechung für den Prüfstand. Die Kacheln folgen dem Aufbau, den Teams
+  in seinem DOM zeigt: data-tid="video-item-container-<Name>" mit einem
+  [data-stream-type="Video"|"ScreenSharing"][data-tid="<Name>"] darin.
+  Parameter: cams (Anzahl Videos), share (Bildschirmfreigabe), dom (Größe des übrigen DOM).
+-->
+<html><head><meta charset="utf-8"><title>Besprechung | Microsoft Teams</title>
+<style>body{margin:0;font:14px sans-serif} .tile{position:relative;display:inline-block;width:300px;height:170px;background:#333;margin:2px;color:#fff;overflow:hidden} video{width:100%;height:100%;object-fit:cover} .noise span{display:inline-block;margin:1px}</style></head>
+<body>
+<div id="app">
+  <div data-tid="call-title">Projekt-Sync</div>
+  <div id="toolbar">
+    <button id="microphone-button" aria-label="Mute mic">Mic</button>
+    <button id="video-button" aria-label="Turn camera off">Cam</button>
+    <button id="share-button" aria-label="Share">Share</button>
+    <button id="raisehands-button" aria-label="Raise">Hand</button>
+    <button id="chat-button" aria-label="Chat">Chat</button>
+    <button id="roster-button" aria-label="People">People</button>
+    <button id="hangup-button" aria-label="Leave">Leave</button>
+  </div>
+  <div id="gallery"></div>
+  <div class="noise" id="noise"></div>
+</div>
+<script>
+const params = new URLSearchParams(location.search)
+const N = Number(params.get('cams') || 4)
+const W = Number(params.get('w') || 1280), H = Number(params.get('h') || 720)
+const gallery = document.getElementById('gallery')
+const frame = document.createElement('iframe'); frame.style.display = 'none'; document.body.appendChild(frame)
+async function camStream(seed) {
+  // Ungehooktes getUserMedia aus dem iframe: wirkt für die Engine wie ein entfernter Track
+  return frame.contentWindow.navigator.mediaDevices.getUserMedia({ video: { width: W, height: H, frameRate: 30 } })
+}
+const names = ['Müller, Anna', 'Schmidt, Ben', 'Weber, Clara', 'Fischer, David', 'Wagner, Eva', 'Becker, Finn']
+for (let i = 0; i < N; i++) {
+  const name = names[i]
+  const tile = document.createElement('div'); tile.className = 'tile'
+  tile.setAttribute('data-tid', 'video-item-container-' + name)
+  tile.setAttribute('aria-label', `${name}, Unmuted, video is on, Has context menu`)
+  tile.innerHTML = `<div data-stream-type="Video" data-tid="${name}" style="width:100%;height:100%"><video autoplay muted playsinline></video></div><div data-tid="voice-level-stream-outline"></div>`
+  camStream(i).then((ms) => { tile.querySelector('video').srcObject = new MediaStream(ms.getTracks()) })
+  gallery.appendChild(tile)
+}
+if (params.get('share')) {
+  const tile = document.querySelector('[data-tid="video-item-container-Müller, Anna"]')
+  const w = document.createElement('div'); w.setAttribute('data-stream-type', 'ScreenSharing'); w.setAttribute('data-tid', 'Müller, Anna'); w.setAttribute('aria-label', 'Shared content view')
+  w.innerHTML = '<video autoplay muted playsinline></video>'; tile.appendChild(w)
+  frame.contentWindow.navigator.mediaDevices.getUserMedia({ video: { width: 1920, height: 1080 } }).then((ms) => { w.querySelector('video').srcObject = new MediaStream(ms.getTracks()) })
+}
+// Teilnehmer ohne Video: mit Mute-Label, ohne, ganz ohne aria-label, Gast mit Kennungs-Namen
+const audio = [
+  ['Klein, Gustav', 'Klein, Gustav, Muted, Has context menu'],
+  ['Wolf, Hanna', 'Wolf, Hanna, Video is off, Has context menu'],
+  ['Neumann, Ida', null],
+  ['alex-lee', null]
+]
+for (const [name, label] of audio) {
+  const tile = document.createElement('div'); tile.className = 'tile'
+  tile.setAttribute('data-tid', 'video-item-container-' + name)
+  if (label) tile.setAttribute('aria-label', label)
+  tile.innerHTML = `<div data-stream-type="Video" data-tid="${name}" style="width:100%;height:100%"><div class="avatar">${name[0]}</div></div><div data-tid="voice-level-stream-outline"></div>`
+  gallery.appendChild(tile)
+}
+// Eigene Kachel
+const self = document.createElement('div'); self.className = 'tile'
+self.setAttribute('data-tid', 'myself-video')
+self.setAttribute('aria-label', 'Myself video, Beispiel, Kim, Unmuted, Has context menu')
+self.innerHTML = '<div data-stream-type="Video" data-tid="Beispiel, Kim"><div class="avatar">T</div></div>'
+gallery.appendChild(self)
+// Großes DOM wie in Teams (Chatliste, Menüs ...)
+const noise = document.getElementById('noise')
+const DOMN = Number(params.get('dom') || 6000)
+let html = ''
+for (let i = 0; i < DOMN; i++) html += i % 3 ? `<span aria-label="Element ${i}">x${i}</span>` : `<button>Knopf ${i}</button>`
+noise.innerHTML = html
+</script></body></html>

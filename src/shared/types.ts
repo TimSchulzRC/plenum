@@ -281,6 +281,8 @@ export interface MediaStreamInfo {
 export type BridgeMessage =
   | { type: 'subscribe'; receiverId: number; streams: string[] | 'all' }
   | { type: 'unsubscribe'; receiverId: number }
+  // Empfänger zeigt nur diese Streams an, die Engine kodiert nur sie
+  | { type: 'want'; receiverId: number; streams: string[] | 'all' }
   | { type: 'offer'; receiverId: number; sdp: string; mids: Record<string, string> }
   | { type: 'answer'; receiverId: number; sdp: string }
   | { type: 'ice'; receiverId: number; candidate: RTCIceCandidateInit | null; from: 'engine' | 'receiver' }
