@@ -107,7 +107,7 @@ const ICNS_ENTRIES = [
   ['ic13', 256], ['ic08', 256], ['ic14', 512], ['ic09', 512], ['ic10', 1024],
 ]
 
-export function icns(images) {
+function icns(images) {
   const chunks = ICNS_ENTRIES.map(([type, size]) => {
     const data = images(size)
     const head = Buffer.alloc(8)
@@ -121,23 +121,21 @@ export function icns(images) {
   return Buffer.concat([head, ...chunks])
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  mkdirSync(join(root, 'assets/icons'), { recursive: true })
-  const svgs = {}
-  for (const [channel, { dark, light }] of Object.entries(VARIANTS)) {
-    svgs[channel] = icon(dark)
-    writeFileSync(join(root, `assets/icons/${channel}.svg`), svgs[channel])
-    writeFileSync(join(root, `assets/icons/${channel}-light.svg`), icon(light))
-  }
-  const cache = new Map()
-  const render = (channel) => (size) => {
-    const key = `${channel}@${size}`
-    if (!cache.has(key)) cache.set(key, png(svgs[channel], size))
-    return cache.get(key)
-  }
-  writeFileSync(join(root, 'build/icon.icns'), icns(render('stable')))
-  writeFileSync(join(root, 'build/icon-nightly.icns'), icns(render('nightly')))
-  writeFileSync(join(root, 'build/icon.png'), render('stable')(1024))
-  writeFileSync(join(root, 'build/icon-dev.png'), render('dev')(1024))
-  console.log('Icons geschrieben: assets/icons, build/icon.icns, build/icon-nightly.icns, build/icon.png, build/icon-dev.png')
+mkdirSync(join(root, 'assets/icons'), { recursive: true })
+const svgs = {}
+for (const [channel, { dark, light }] of Object.entries(VARIANTS)) {
+  svgs[channel] = icon(dark)
+  writeFileSync(join(root, `assets/icons/${channel}.svg`), svgs[channel])
+  writeFileSync(join(root, `assets/icons/${channel}-light.svg`), icon(light))
 }
+const cache = new Map()
+const render = (channel) => (size) => {
+  const key = `${channel}@${size}`
+  if (!cache.has(key)) cache.set(key, png(svgs[channel], size))
+  return cache.get(key)
+}
+writeFileSync(join(root, 'build/icon.icns'), icns(render('stable')))
+writeFileSync(join(root, 'build/icon-nightly.icns'), icns(render('nightly')))
+writeFileSync(join(root, 'build/icon.png'), render('stable')(1024))
+writeFileSync(join(root, 'build/icon-dev.png'), render('dev')(1024))
+console.log('Icons geschrieben: assets/icons, build/icon.icns, build/icon-nightly.icns, build/icon.png, build/icon-dev.png')
