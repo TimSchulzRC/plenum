@@ -227,10 +227,21 @@ export function engineMainWorld(): void {
       ''
     ).trim()
   }
+  function attrLabel(el: Element): string {
+    return (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('data-tooltip') || '').trim()
+  }
   function byLabel(rx: RegExp, root: ParentNode = document, tag = 'button,[role="button"],[role="menuitem"],[role="menuitemcheckbox"]'): HTMLElement | null {
+    // Ohne ^ und $ ist ein Treffer im innerText immer auch einer im textContent. textContent kostet
+    // kein Layout und siebt fast alle Knöpfe aus, bevor Sichtbarkeit und innerText geprüft werden.
+    const loose = !/^\^|\$$/.test(rx.source)
     for (const el of Array.from(root.querySelectorAll<HTMLElement>(tag))) {
-      if (!visible(el)) continue
-      if (rx.test(labelOf(el))) return el
+      const attr = attrLabel(el)
+      if (attr) {
+        if (rx.test(attr) && visible(el)) return el
+        continue
+      }
+      if (loose && !rx.test(el.textContent || '')) continue
+      if (visible(el) && rx.test((el.innerText || '').trim())) return el
     }
     return null
   }
@@ -343,6 +354,41 @@ export function engineMainWorld(): void {
       screen: /(screen|bildschirm|content|inhalt|presenting|präsentiert)/i.test(lower) && !/video is on/.test(lower)
     }
   }
+  // Teams v2 trägt den Anzeigenamen stabil im data-tid: <div data-tid="video-item-container-Name">
+  // mit <div data-stream-type="Video|ScreenSharing" data-tid="Name"> darin. Das gilt auch für
+  // Teilnehmer ohne Video, deren Kachel kein Mute-Label haben muss.
+  const CONTAINER_PREFIX = 'video-item-container-'
+  const STREAM_SEL = '[data-stream-type][data-tid]'
+  const CONTAINER_SEL = `[data-tid^="${CONTAINER_PREFIX}"]`
+  function plausibleName(n: string): boolean {
+    if (!n || n.length > 120) return false
+    // Technische Kennungen wie "voice-level-stream-outline" oder "videoTile" sind keine Namen
+    return !/^(?:[a-z0-9]+(?:[-_][a-z0-9]+)+|[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+|\d+)$/.test(n)
+  }
+  interface TeamsTile {
+    name: string
+    screen: boolean
+    self: boolean
+    container: Element
+  }
+  function teamsTile(el: Element): TeamsTile | null {
+    // Liegt el in einem Stream, zählt dieser. Für eine ganze Kachel den Kamera-Stream nehmen.
+    const own = el.closest(STREAM_SEL)
+    const wrapper = own ?? el.querySelector('[data-stream-type="Video"][data-tid]') ?? el.querySelector(STREAM_SEL)
+    const container = el.closest(CONTAINER_SEL) ?? wrapper?.closest(CONTAINER_SEL) ?? wrapper
+    if (!container) return null
+    let name = wrapper?.getAttribute('data-tid')?.trim() || ''
+    if (!plausibleName(name)) {
+      // Hinter dem Präfix steht immer der Anzeigename, auch wenn er wie eine Kennung aussieht
+      const tid = container.getAttribute('data-tid') || ''
+      name = tid.startsWith(CONTAINER_PREFIX) ? tid.slice(CONTAINER_PREFIX.length).trim() : ''
+      if (name.length > 120) name = ''
+    }
+    if (!name) return null
+    const self = !!(container.closest('[data-tid="myself-video"]') || container.querySelector('[data-tid="myself-video"]'))
+    return { name, screen: own?.getAttribute('data-stream-type') === 'ScreenSharing', self, container }
+  }
+
   function tileFor(v: Element): { el: Element; info: TileInfo } | null {
     let n: Element | null = v
     for (let i = 0; i < 14 && n; i++) {
@@ -387,20 +433,27 @@ export function engineMainWorld(): void {
       if (!vt || out.has(vt.id)) continue
       const local = localTracks.get(vt.id)
       const tile = tileFor(v)
+      const tt = teamsTile(v)
+      if (tt && tile) {
+        tile.info.name = tt.name
+        if (tt.screen) tile.info.screen = true
+        if (tt.self) tile.info.self = true
+      }
       let kind: Src['kind']
       let label: string
       if (local?.kind === 'screen') {
         kind = 'screen'
         label = 'Deine Bildschirmfreigabe'
-      } else if (local || tile?.info.self) {
+      } else if (local || tile?.info.self || tt?.self) {
         if (haveSelf) continue
         kind = 'self'
         label = 'Du'
         haveSelf = true
       } else {
-        kind = tile?.info.screen ? 'screen' : guessKind(v as HTMLVideoElement)
-        label = tile?.info.name || 'Teilnehmer'
-        if (kind === 'screen' && tile?.info.name) label = `${tile.info.name} (Bildschirm)`
+        const name = tile?.info.name || tt?.name
+        kind = tile?.info.screen || tt?.screen ? 'screen' : guessKind(v as HTMLVideoElement)
+        label = name || 'Teilnehmer'
+        if (kind === 'screen' && name) label = `${name} (Bildschirm)`
       }
       out.set(vt.id, { id: vt.id, track: vt, label, kind, width: (v as HTMLVideoElement).videoWidth, height: (v as HTMLVideoElement).videoHeight, speaking: tile?.info.speaking })
     }
@@ -463,6 +516,59 @@ export function engineMainWorld(): void {
     post({ ch: 'bridge', msg: { type: 'map', receiverId: r.id, mids } })
   }
 
+  // H.264 vor VP8: macOS kodiert und dekodiert H.264 in Hardware (VideoToolbox), VP8 nur in
+  // Software. Jeder Stream wird für die Brücke neu kodiert, das war der größte CPU-Posten im Anruf.
+  let codecOrder: RTCRtpCodec[] | null | undefined
+  function preferredCodecs(): RTCRtpCodec[] | null {
+    if (codecOrder !== undefined) return codecOrder
+    codecOrder = null
+    try {
+      const codecs = RTCRtpSender.getCapabilities('video')?.codecs ?? []
+      const rank = (c: RTCRtpCodec): number => {
+        if (c.mimeType.toLowerCase() !== 'video/h264' || !/packetization-mode=1/.test(c.sdpFmtpLine ?? '')) return 2
+        // Constrained Baseline können alle Hardware-Encoder
+        return /profile-level-id=42e0/i.test(c.sdpFmtpLine ?? '') ? 0 : 1
+      }
+      if (codecs.some((c) => rank(c) < 2)) codecOrder = [...codecs].sort((a, b) => rank(a) - rank(b))
+    } catch (e) {
+      log('codec capabilities failed', String(e))
+    }
+    return codecOrder
+  }
+  const codecSet = new WeakSet<RTCRtpTransceiver>()
+  function preferCodecs(pc: RTCPeerConnection): void {
+    const codecs = preferredCodecs()
+    if (!codecs) return
+    for (const t of pc.getTransceivers()) {
+      if (codecSet.has(t)) continue
+      codecSet.add(t)
+      try {
+        t.setCodecPreferences(codecs)
+      } catch (e) {
+        log('setCodecPreferences failed', String(e))
+      }
+    }
+  }
+
+  // Einmal je Verbindung ins Log: welcher Codec und Encoder tatsächlich läuft
+  function logEncoders(r: Receiver): void {
+    ownTimeout(() => {
+      if (r.pc.connectionState !== 'connected') return
+      void r.pc
+        .getStats()
+        .then((stats) => {
+          const out: string[] = []
+          stats.forEach((s: any) => {
+            if (s.type !== 'outbound-rtp' || s.kind !== 'video' || !s.frameWidth) return
+            const codec = (stats.get(s.codecId) as any)?.mimeType?.replace('video/', '') ?? '?'
+            out.push(`${codec} ${s.encoderImplementation ?? '?'}${s.powerEfficientEncoder ? ' (hw)' : ''} ${s.frameWidth}x${s.frameHeight}@${Math.round(s.framesPerSecond ?? 0)} ${s.qualityLimitationReason ?? ''}`.trim())
+          })
+          if (out.length) post({ ch: 'log', text: `bridge ${r.id} encoders: ${out.join(' | ')}` })
+        })
+        .catch(() => undefined)
+    }, 10_000)
+  }
+
   function tuneSender(sender: RTCRtpSender, kind: string): void {
     try {
       const p = sender.getParameters()
@@ -516,6 +622,7 @@ export function engineMainWorld(): void {
     r.negotiating = true
     r.again = false
     try {
+      preferCodecs(r.pc)
       const offer = await r.pc.createOffer()
       await r.pc.setLocalDescription(offer)
       const mids: Record<string, string> = {}
@@ -577,6 +684,7 @@ export function engineMainWorld(): void {
       receivers.set(r.id, r)
       pc.onicecandidate = (e) => post({ ch: 'bridge', msg: { type: 'ice', receiverId: r.id, from: 'engine', candidate: e.candidate ? e.candidate.toJSON() : null } })
       pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') logEncoders(r)
         if (pc.connectionState === 'failed') {
           log('bridge failed', r.id)
           pc.close()
@@ -600,6 +708,12 @@ export function engineMainWorld(): void {
     if (msg.type === 'unsubscribe') {
       r.pc.close()
       receivers.delete(r.id)
+      return
+    }
+    if (msg.type === 'want') {
+      // Nur kodieren, was das Fenster gerade zeigt (z. B. in der Kompaktansicht nur ein Video)
+      r.want = msg.streams === 'all' ? 'all' : new Set<string>(msg.streams)
+      syncReceiver(r)
       return
     }
     if (msg.type === 'answer') {
@@ -626,15 +740,18 @@ export function engineMainWorld(): void {
   let lastStateJson = ''
   let lastStatePost = 0
   let lastIncomingJson = ''
+  let inCallSince = 0
   let callStart = 0
 
   // Eingehende Anrufe: nur Hinweise mit Anrufbezug. "Accept" gibt es auch bei Chat-Anfragen
   // (data-tid="accept-chat") und Besprechungseinladungen.
   function findIncoming(): any {
     const accepts = Array.from(document.querySelectorAll<HTMLElement>('button,[role="button"]')).filter((b) => {
-      if (!visible(b)) return false
       const tid = b.getAttribute('data-tid') || ''
-      if (tid === 'accept-chat' || b.closest('[data-tid="accept-block-container"]')) return false
+      if (tid === 'accept-chat') return false
+      // textContent enthält jeden Buchstaben aus innerText, kostet aber kein Layout
+      if (!/accept/i.test(tid) && !/(accept|annehmen)/i.test(`${attrLabel(b)} ${b.textContent || ''}`)) return false
+      if (!visible(b) || b.closest('[data-tid="accept-block-container"]')) return false
       return /(accept|annehmen)/i.test(labelOf(b)) || /accept/i.test(tid)
     })
     for (const accept of accepts) {
@@ -678,19 +795,57 @@ export function engineMainWorld(): void {
     return segs[segs.length - 1] || ''
   }
 
+  function liveVideo(root: Element): { live: boolean; local: boolean } {
+    const r = { live: false, local: false }
+    for (const v of Array.from(root.querySelectorAll('video'))) {
+      const s = (v as HTMLVideoElement).srcObject
+      if (!(s instanceof MediaStream)) continue
+      for (const t of s.getVideoTracks()) {
+        if (t.readyState !== 'live' || t.muted) continue
+        r.live = true
+        if (localTracks.has(t.id)) r.local = true
+      }
+    }
+    return r
+  }
+
   function participants(): any[] {
     const out: any[] = []
     const seen = new Set<string>()
+    const push = (p: any): void => {
+      const key = p.isMe ? '__self' : p.name.toLowerCase()
+      if (seen.has(key)) return
+      seen.add(key)
+      out.push({ ...p, id: p.isMe ? '__self' : p.name })
+    }
+    const handled = new Set<Element>()
+    // 1. Teams-v2-Kacheln über data-tid: findet auch Teilnehmer ohne Video und ohne Mute-Label
+    for (const el of Array.from(document.querySelectorAll(`${CONTAINER_SEL},${STREAM_SEL}`))) {
+      const tt = teamsTile(el)
+      if (!tt || tt.screen || !visible(tt.container)) continue
+      handled.add(tt.container)
+      const al = tt.container.getAttribute('aria-label') || ''
+      const info = parseTileLabel(al)
+      const vid = liveVideo(tt.container)
+      push({
+        name: tt.name,
+        isMe: tt.self || !!info?.self || vid.local,
+        muted: info?.muted,
+        speaking: info?.speaking,
+        handRaised: info?.hand,
+        hasVideo: /video is on|video ist an|kamera an/i.test(al) || vid.live
+      })
+      if (out.length > 60) return out
+    }
+    // 2. Ältere Oberflächen: Kacheln nur über ihr aria-label
     for (const el of Array.from(document.querySelectorAll('[aria-label]')).slice(0, 4000)) {
       const al = el.getAttribute('aria-label') || ''
       if (al.length > 300 || !/(muted|unmuted|stumm)/i.test(al)) continue
+      const tile = el.closest(CONTAINER_SEL) ?? el.closest(STREAM_SEL) ?? el.querySelector(CONTAINER_SEL) ?? el.querySelector(STREAM_SEL)
+      if (tile && handled.has(tile)) continue
       const info = parseTileLabel(al)
       if (!info || !info.name || !visible(el)) continue
-      const key = info.self ? '__self' : info.name
-      if (seen.has(key)) continue
-      seen.add(key)
-      out.push({
-        id: key,
+      push({
         name: info.name || 'Du',
         isMe: info.self,
         muted: info.muted,
@@ -724,10 +879,16 @@ export function engineMainWorld(): void {
     // Nur eindeutige Kennungen: "Join"/"Leave" gibt es auch in Chat-Köpfen und Menüs.
     const hangup = q(SEL.hangup)
     const joinNow = q(SEL.joinNow)
-    const bodyText = document.body ? document.body.innerText.slice(0, 4000) : ''
     let phase = 'idle'
-    if (hangup) phase = LBL.lobby.test(bodyText) ? 'lobby' : 'in-call'
-    else if (joinNow) phase = 'prejoin'
+    if (hangup) {
+      // document.body.innerText setzt das ganze Teams-DOM in Text um. Aus der Besprechung geht es
+      // nicht zurück in den Wartebereich. Nach 10 s ohne Wartebereich-Text ist der Einlass sicher.
+      const admitted = inCallSince > 0 && Date.now() - inCallSince > 10_000
+      const bodyText = admitted || !document.body ? '' : document.body.innerText.slice(0, 4000)
+      phase = LBL.lobby.test(bodyText) ? 'lobby' : 'in-call'
+    } else if (joinNow) phase = 'prejoin'
+    if (phase !== 'in-call') inCallSince = 0
+    else if (!inCallSince) inCallSince = Date.now()
     if (phase === 'in-call') {
       const ds = callDurationStart()
       if (ds && (!callStart || Math.abs(ds - callStart) > 3000)) callStart = ds

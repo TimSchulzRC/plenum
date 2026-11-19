@@ -29,16 +29,15 @@ import {
   HandRight16Filled,
   ImageEdit20Regular
 } from '@fluentui/react-icons'
-import type { CallAction, CallParticipant, CallState } from '@shared/types'
+import type { CallAction, CallState } from '@shared/types'
 import { api, onEvent } from '../api'
 import { duration } from '../lib/format'
 import { useBridge, type BridgeStream } from './bridge'
 import { StreamVideo, VideoTile } from './VideoTile'
 import { DeviceChevron, EffectsPanel } from './Effects'
+import { compactMain, OWN_SCREEN_LABEL, shownStreams, stageModel, type TileModel } from './layout'
 import './call.css'
 
-// Die Engine benennt die eigene Bildschirmfreigabe so (siehe engine-main.ts).
-const OWN_SCREEN_LABEL = 'Deine Bildschirmfreigabe'
 
 type DisplaySource = { id: string; name: string; thumbnail: string; kind: 'screen' | 'window' }
 
@@ -221,19 +220,6 @@ function useElementSize(): [(el: HTMLDivElement | null) => void, { width: number
   return [setEl, size]
 }
 
-interface TileModel {
-  key: string
-  stream?: BridgeStream
-  participant?: CallParticipant
-  label: string
-  kind: 'camera' | 'screen' | 'self'
-}
-
-function participantFor(label: string, participants: CallParticipant[]): CallParticipant | undefined {
-  const l = label.toLowerCase()
-  return participants.find((p) => p.name.toLowerCase() === l) ?? participants.find((p) => l.startsWith(p.name.toLowerCase()))
-}
-
 function Stage({
   state,
   streams,
@@ -248,20 +234,7 @@ function Stage({
   setPinned: (id: string | null) => void
 }): JSX.Element {
   const [stageRef, size] = useElementSize()
-  const self = streams.find((s) => s.kind === 'self')
-  const remoteScreens = streams.filter((s) => s.kind === 'screen' && s.label !== OWN_SCREEN_LABEL)
-  const cameras = streams.filter((s) => s.kind === 'camera')
-
-  const tiles: TileModel[] = cameras.map((s) => ({ key: s.streamId, stream: s, label: s.label, kind: 'camera', participant: participantFor(s.label, state.participants) }))
-  const withVideo = new Set(cameras.map((c) => c.label.toLowerCase()))
-  const placeholders = state.participants.filter((p) => !p.isMe && !p.hasVideo && !withVideo.has(p.name.toLowerCase()))
-  if (tiles.length < 9) {
-    for (const p of placeholders.slice(0, 9 - tiles.length)) tiles.push({ key: `p:${p.id}`, participant: p, label: p.name, kind: 'camera' })
-  }
-
-  const pinnedStream = pinned ? streams.find((s) => s.streamId === pinned) : undefined
-  const speaking = cameras.find((c) => c.speaking) ?? cameras[0]
-  const main: BridgeStream | undefined = pinnedStream ?? remoteScreens[0] ?? (view === 'speaker' ? speaking : undefined)
+  const { self, tiles, main, strip } = stageModel(state, streams, view, pinned)
 
   const tileView = (t: TileModel, small = false) => (
     <VideoTile
@@ -286,7 +259,6 @@ function Stage({
   )
 
   if (main) {
-    const strip = tiles.filter((t) => t.stream?.streamId !== main.streamId)
     return (
       <div className="cw-stage cw-stage-focus">
         <div className="cw-focus-main">
@@ -299,7 +271,7 @@ function Stage({
             onPin={() => setPinned(pinned === main.streamId ? null : main.streamId)}
           />
         </div>
-        {strip.length > 0 && <div className="cw-filmstrip">{strip.slice(0, 8).map((t) => tileView(t, true))}</div>}
+        {strip.length > 0 && <div className="cw-filmstrip">{strip.map((t) => tileView(t, true))}</div>}
         {selfTile}
       </div>
     )
@@ -360,11 +332,7 @@ function PeoplePanel({ state, onClose }: { state: CallState; onClose: () => void
 }
 
 function CompactView({ state, streams }: { state: CallState | null; streams: BridgeStream[] }): JSX.Element {
-  const main =
-    streams.find((s) => s.kind === 'screen' && s.label !== OWN_SCREEN_LABEL) ??
-    streams.find((s) => s.kind === 'camera' && s.speaking) ??
-    streams.find((s) => s.kind === 'camera') ??
-    streams.find((s) => s.kind === 'self')
+  const main = compactMain(streams)
   const now = useNow(!!state?.startedAt)
   return (
     <div className="cw-compact">
@@ -399,7 +367,7 @@ function CompactView({ state, streams }: { state: CallState | null; streams: Bri
 
 export default function CallApp(): JSX.Element {
   const state = useCallState()
-  const { streams } = useBridge('all')
+  const { streams, setActive } = useBridge('all')
   const [compact, setCompact] = useState(false)
   const [view, setView] = useState<'gallery' | 'speaker'>('gallery')
   const [pinned, setPinned] = useState<string | null>(null)
@@ -407,6 +375,12 @@ export default function CallApp(): JSX.Element {
   const [showEffects, setShowEffects] = useState(false)
   const [sources, setSources] = useState<DisplaySource[] | null>(null)
   const now = useNow(!!state?.startedAt)
+
+  const shown = shownStreams(state, streams, view, pinned, compact)
+  const shownKey = shown.slice().sort().join('|')
+  useEffect(() => {
+    setActive(shownKey ? shownKey.split('|') : [])
+  }, [shownKey, setActive])
 
   useEffect(() => {
     const offCompact = (window.teams.on as unknown as (e: string, cb: (p: unknown) => void) => () => void)('call-compact', (p) => setCompact(!!p))

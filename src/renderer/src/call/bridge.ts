@@ -1,6 +1,6 @@
 // Empfängerseite der Medienbrücke: Die versteckte Teams-Web-App schickt die
 // Video-Tracks eines Anrufs per lokaler WebRTC-Verbindung an dieses Fenster.
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BridgeMessage, CallState, MediaStreamInfo } from '@shared/types'
 import { onEvent } from '../api'
 
@@ -24,6 +24,8 @@ class Receiver {
   private uncoveredTimer?: ReturnType<typeof setTimeout>
   private retryTimer?: ReturnType<typeof setTimeout>
   private disposed = false
+  // Streams, die das Fenster gerade zeigt. Nur diese kodiert die Engine. undefined = alle gewünschten.
+  private active: string[] | undefined
   private offs: (() => void)[] = []
   private lastCall: CallState | null | undefined = undefined
 
@@ -97,11 +99,30 @@ class Receiver {
     this.pc = this.createPc()
     this.gotOffer = false
     this.queue = Promise.resolve()
-    window.teams.bridgeSend({ type: 'subscribe', receiverId: 0, streams: this.want })
+    window.teams.bridgeSend({ type: 'subscribe', receiverId: 0, streams: this.engineWant() })
     this.offerTimer = setTimeout(() => {
       if (!this.gotOffer) this.subscribe()
     }, OFFER_TIMEOUT)
     this.publish()
+  }
+
+  setActive(ids: string[] | undefined): void {
+    const key = (l: string[] | undefined) => (l ? [...l].sort().join('|') : '*')
+    if (key(ids) === key(this.active)) return
+    this.active = ids
+    if (this.disposed) return
+    window.teams.bridgeSend({ type: 'want', receiverId: 0, streams: this.engineWant() })
+    this.checkCoverage()
+    this.publish()
+  }
+
+  private engineWant(): string[] | 'all' {
+    if (!this.active) return this.want
+    return this.want === 'all' ? this.active : this.active.filter((id) => this.want.includes(id))
+  }
+
+  private isActive(info: MediaStreamInfo): boolean {
+    return this.wanted(info) && (!this.active || this.active.includes(info.streamId))
   }
 
   private scheduleRetry(ms: number): void {
@@ -179,7 +200,7 @@ class Receiver {
   // Liefert die Engine Streams, die wir nicht zugeordnet bekommen, wurde sie wohl neu geladen.
   private checkCoverage(): void {
     const covered = new Set(Object.values(this.mids))
-    const uncovered = this.infos.some((i) => this.wanted(i) && !covered.has(i.streamId))
+    const uncovered = this.infos.some((i) => this.isActive(i) && !covered.has(i.streamId))
     if (!uncovered) {
       clearTimeout(this.uncoveredTimer)
       this.uncoveredTimer = undefined
@@ -189,7 +210,7 @@ class Receiver {
     this.uncoveredTimer = setTimeout(() => {
       this.uncoveredTimer = undefined
       const nowCovered = new Set(Object.values(this.mids))
-      if (this.infos.some((i) => this.wanted(i) && !nowCovered.has(i.streamId))) this.subscribe()
+      if (this.infos.some((i) => this.isActive(i) && !nowCovered.has(i.streamId))) this.subscribe()
     }, UNCOVERED_GRACE)
   }
 
@@ -215,17 +236,31 @@ class Receiver {
   }
 }
 
-export function useBridge(streams: 'all' | string[]): { streams: BridgeStream[]; connected: boolean } {
+// setActive(ids): nur diese Streams werden gerade angezeigt. Die übrigen bleiben in der Liste,
+// die Engine kodiert sie aber nicht. undefined = alle.
+export function useBridge(streams: 'all' | string[]): { streams: BridgeStream[]; connected: boolean; setActive: (ids: string[] | undefined) => void } {
   const [state, setState] = useState<{ streams: BridgeStream[]; connected: boolean }>({ streams: [], connected: false })
   const key = streams === 'all' ? 'all' : streams.join('|')
   const wantRef = useRef(streams)
   wantRef.current = streams
+  const receiver = useRef<Receiver | null>(null)
+  const active = useRef<string[] | undefined>(undefined)
 
   useEffect(() => {
     const r = new Receiver(wantRef.current, (s, connected) => setState({ streams: s, connected }))
+    r.setActive(active.current)
+    receiver.current = r
     r.start()
-    return () => r.dispose()
+    return () => {
+      receiver.current = null
+      r.dispose()
+    }
   }, [key])
 
-  return state
+  const setActive = useCallback((ids: string[] | undefined) => {
+    active.current = ids
+    receiver.current?.setActive(ids)
+  }, [])
+
+  return { ...state, setActive }
 }
