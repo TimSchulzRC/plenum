@@ -14,6 +14,8 @@ export function SettingsView(): JSX.Element {
   const inCall = useStore((s) => s.callState !== null)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [debug, setDebug] = useState<DebugInfo | null>(null)
+  // Ergebnis der letzten Testmitteilung bzw. Fehler, den macOS beim Anzeigen gemeldet hat
+  const [notifyState, setNotifyState] = useState<{ testing?: boolean; ok?: boolean; error?: string }>({})
 
   const set = (patch: Partial<AppSettings>) => void api.setSettings(patch)
 
@@ -29,7 +31,14 @@ export function SettingsView(): JSX.Element {
 
   useEffect(() => {
     void navigator.mediaDevices.enumerateDevices().then(setDevices)
+    void api.getNotificationStatus().then((s) => s.error && setNotifyState({ ok: false, error: s.error }))
   }, [])
+
+  const testNotification = async () => {
+    setNotifyState({ testing: true })
+    const r = await api.testNotification().catch((e: Error) => ({ ok: false, error: e.message }))
+    setNotifyState(r)
+  }
 
   if (!settings) return <div className="settings" />
 
@@ -123,6 +132,26 @@ export function SettingsView(): JSX.Element {
         <div className="row">
           <div className="grow">Nachrichtenvorschau anzeigen</div>
           <Switch checked={settings.showMessagePreview} onChange={(_e, d) => set({ showMessagePreview: d.checked })} />
+        </div>
+        <div className="row">
+          <div className="grow">
+            Mitteilungen von macOS
+            <div className="hint">
+              {notifyState.testing
+                ? 'Testmitteilung wird gesendet …'
+                : notifyState.ok === false
+                  ? `macOS zeigt keine Mitteilungen dieser App an${notifyState.error ? ` (${notifyState.error})` : ''}. Erlaube sie in den Systemeinstellungen unter Mitteilungen.`
+                  : notifyState.ok
+                    ? 'Testmitteilung gesendet. Kam kein Banner, sind Mitteilungen in den Systemeinstellungen aus oder ein Fokus ist aktiv.'
+                    : 'Banner, Ton und Mitteilungszentrale stellst du in den Systemeinstellungen ein.'}
+            </div>
+          </div>
+          <Button size="small" disabled={notifyState.testing} onClick={() => void testNotification()}>
+            Testen
+          </Button>
+          <Button size="small" appearance={notifyState.ok === false ? 'primary' : 'secondary'} onClick={() => void api.openNotificationSettings()}>
+            Systemeinstellungen
+          </Button>
         </div>
       </section>
 

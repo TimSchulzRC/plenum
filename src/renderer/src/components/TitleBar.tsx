@@ -22,6 +22,7 @@ import {
   Checkmark16Regular
 } from '@fluentui/react-icons'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { accountBadge } from '@shared/badge'
 import type { Availability, Person } from '@shared/types'
 import { api } from '../api'
 import { useActive, useStore } from '../store'
@@ -86,7 +87,7 @@ export function TitleBar(): JSX.Element {
           <MenuTrigger disableButtonEnhancement>
             <button className="icon-btn" style={{ width: 36, height: 36, position: 'relative' }} title={account?.label}>
               {account ? <PersonAvatar mri={account.mri} name={account.label} size={28} /> : <PersonAdd20Regular />}
-              {accounts.some((a) => a.id !== account?.id && a.unread + a.activityUnread > 0) && (
+              {accounts.some((a) => a.id !== account?.id && accountBadge(a) > 0) && (
                 <span style={{ position: 'absolute', top: 2, left: 2, width: 8, height: 8, borderRadius: 4, background: 'var(--danger)' }} />
               )}
             </button>
@@ -122,7 +123,7 @@ export function TitleBar(): JSX.Element {
                 <MenuItem
                   key={a.id}
                   icon={<PersonAvatar mri={a.mri} name={a.label} size={24} accountId={a.id} />}
-                  secondaryContent={a.unread + a.activityUnread > 0 ? <CounterBadge count={a.unread + a.activityUnread} size="small" color="danger" /> : a.id === account?.id ? <Checkmark16Regular /> : undefined}
+                  secondaryContent={accountBadge(a) > 0 ? <CounterBadge count={accountBadge(a)} size="small" color="danger" /> : a.id === account?.id ? <Checkmark16Regular /> : undefined}
                   onClick={() => useStore.getState().setActiveAccount(a.id)}
                 >
                   <div>

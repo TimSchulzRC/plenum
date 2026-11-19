@@ -35,6 +35,7 @@ import type {
   Presence,
   Team
 } from '@shared/types'
+import { unreadChats, unreadTeams } from '@shared/badge'
 import { log } from './log'
 import { parseRealtimeFrame } from './engine/realtime'
 import { OlderCursors } from './older-cursors'
@@ -57,6 +58,8 @@ export interface NotifyPayload {
   body: string
   senderMri?: string
   teamId?: string
+  // Bei kind 'activity': ID des Eintrags im Aktivitäts-Feed
+  activityId?: string
 }
 
 interface AccountEvents {
@@ -110,6 +113,9 @@ export class AccountService extends EventEmitter<AccountEvents> {
   private started = false
   private initialSyncDone = false
   private lastActivityId = ''
+  // Wann zuletzt eine Chat- oder Kanal-Mitteilung kam, je Unterhaltung. Verhindert, dass dieselbe
+  // Nachricht als Erwähnung im Aktivitäts-Feed ein zweites Mal meldet.
+  private notifiedAt = new Map<string, number>()
   private csaRetries = 0
 
   constructor(
@@ -153,7 +159,6 @@ export class AccountService extends EventEmitter<AccountEvents> {
   }
 
   info(): AccountInfo {
-    const unread = [...this.chats.values()].filter((c) => c.unread && !c.muted && !c.hidden).length
     return {
       id: this.id,
       label: this.record.displayName || this.record.upn || 'Neues Konto',
@@ -164,7 +169,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
       mri: this.record.mri,
       status: this.engine.status,
       statusDetail: this.engine.statusDetail,
-      unread,
+      unread: unreadChats(this.chats.values()),
+      teamsUnread: unreadTeams(this.teams),
       activityUnread: this.activityUnread,
       presence: this.record.mri ? this.presence.get(this.record.mri) : undefined
     }
@@ -489,13 +495,17 @@ export class AccountService extends EventEmitter<AccountEvents> {
       if (id === '48:notifications') {
         const newest = String(conv.lastMessage?.id ?? '')
         if (newest && newest !== this.lastActivityId) {
-          const firstSeen = !this.lastActivityId
+          const previous = this.lastActivityId
           this.lastActivityId = newest
           activityChanged = true
-          if (!firstSeen && this.initialSyncDone) void this.notifyActivity()
+          if (previous && this.initialSyncDone) void this.notifyActivity(previous)
         }
+        // Auf einem anderen Gerät gelesen: Der Zähler muss neu gerechnet werden, sonst bleibt der Punkt am Dock
         const h = parseHorizon(conv.properties?.consumptionhorizon)
-        if (h) this.activityHorizon = h
+        if (h && h !== this.activityHorizon) {
+          this.activityHorizon = h
+          activityChanged = true
+        }
         continue
       }
       if (id.startsWith('48:') && id !== '48:notes') continue
@@ -514,6 +524,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
           changed.push(id)
           if (isNew && from !== this.record.mri && channel.isFavorite && !/^(ThreadActivity|Control)/.test(lm?.messagetype || '')) {
             const team = this.teams.find((tm) => tm.id === channel.teamId)
+            this.notifiedAt.set(id, Date.now())
             this.emit('notify', {
               accountId: this.id,
               conversationId: id,
@@ -543,6 +554,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
       if (isNewMessage && !initial && this.initialSyncDone && next.unread && !next.muted && next.lastMessage && !next.lastMessage.isMine) {
         const lm = next.lastMessage
         const sender = lm.fromName || this.people.get(lm.from)?.displayName || 'Neue Nachricht'
+        this.notifiedAt.set(id, Date.now())
         this.emit('notify', {
           accountId: this.id,
           conversationId: id,
@@ -1212,25 +1224,41 @@ export class AccountService extends EventEmitter<AccountEvents> {
     }
   }
 
-  private async notifyActivity(): Promise<void> {
+  // Mitteilungen für neue Erwähnungen und Antworten im Aktivitäts-Feed (wie Teams).
+  // In einem Chat meldet schon die Chat-Mitteilung die Nachricht, außer der Chat ist stummgeschaltet:
+  // Erwähnungen kommen dann trotzdem durch.
+  private async notifyActivity(previousId: string): Promise<void> {
     try {
       const items = await this.getActivity()
       if (!this.started) return
-      const newest = items[0]
-      if (!newest || newest.read || newest.type !== 'mention') return
-      if (this.channelIndex.has(newest.conversationId ?? '') || this.chats.has(newest.conversationId ?? '')) {
+      const fresh = items.filter((it) => !it.read && Number(it.id) > Number(previousId) && (it.type === 'mention' || it.type === 'reply'))
+      for (const it of fresh.slice(0, 3).reverse()) {
+        const conv = it.conversationId ?? ''
+        const chat = this.chats.get(conv)
+        if (chat && !(chat.muted && it.type === 'mention')) continue
+        if (!chat && !this.channelIndex.has(conv)) continue
+        if (Date.now() - (this.notifiedAt.get(conv) ?? 0) < 120_000) continue
         this.emit('notify', {
           accountId: this.id,
-          conversationId: newest.conversationId ?? '',
+          conversationId: conv,
           kind: 'activity',
-          title: `${newest.actorName} hat dich erwähnt`,
-          body: newest.preview,
-          senderMri: newest.actor
+          teamId: it.teamId,
+          activityId: it.id,
+          title: `${it.actorName || 'Jemand'} ${it.title}`,
+          body: it.preview || it.location || '',
+          senderMri: it.actor
         })
       }
     } catch {
       /* ignore */
     }
+  }
+
+  // Ist die Unterhaltung (bzw. der Aktivitätseintrag) einer Mitteilung noch ungelesen?
+  isUnread(key: { conversationId: string; kind: NotifyPayload['kind']; activityId?: string }): boolean {
+    if (key.kind === 'activity') return !!key.activityId && Number(key.activityId) > this.activityHorizon
+    if (key.kind === 'channel') return !!this.channelIndex.get(key.conversationId)?.unread
+    return !!this.chats.get(key.conversationId)?.unread
   }
 
   async markActivityRead(): Promise<void> {

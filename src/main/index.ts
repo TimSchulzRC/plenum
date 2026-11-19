@@ -10,8 +10,10 @@ import { createMainWindow, uiWindows } from './windows'
 import { Updater } from './updater'
 import { log } from './log'
 import { migrateLegacyUserData } from './legacy-data'
+import { LiveNotifications } from './live-notifications'
 import { channelOf } from './update/releases'
 import { appVariant, dataName, displayName } from './variant'
+import { dockBadge } from '@shared/badge'
 import type { ApiMethods } from '@shared/ipc'
 import type { AppSettings, DebugInfo, NavigateRequest } from '@shared/types'
 
@@ -47,6 +49,9 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 }
 
+// build.appId in package.json
+const BUNDLE_ID = 'io.github.timschulzrc.teamseverywhere'
+
 let mainWindow: BrowserWindow | null = null
 let settings: AppSettings
 const accounts = new Map<string, AccountService>()
@@ -69,8 +74,9 @@ function emitAccounts(): void {
   accountsTimer = setTimeout(() => {
     const list = accountList()
     broadcast('accounts', list)
-    const total = list.reduce((s, a) => s + a.unread + a.activityUnread, 0)
-    app.setBadgeCount(total)
+    app.setBadgeCount(dockBadge(list))
+    // Gelesene Unterhaltungen: Mitteilung aus der Mitteilungszentrale nehmen, wie der Punkt am Dock
+    liveNotifications.closeRead((k) => accounts.get(k.accountId)?.isUnread(k) ?? false)
   }, 150)
 }
 
@@ -98,6 +104,10 @@ function addAccountService(rec: AccountRecord, autoShowLogin: boolean): AccountS
   return acct
 }
 
+const liveNotifications = new LiveNotifications<Notification>()
+// Letzter Fehler von macOS beim Anzeigen, z. B. wenn Mitteilungen für die App aus sind
+let notificationError: string | undefined
+
 function showNotification(n: NotifyPayload): void {
   if (!settings.notifications) return
   const focused = mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()
@@ -106,13 +116,15 @@ function showNotification(n: NotifyPayload): void {
   const multi = accounts.size > 1
   const presence = acct?.record.mri ? acct.presence.get(acct.record.mri) : undefined
   if (presence?.availability === 'DoNotDisturb') return
-  const notif = new Notification({
+  const notif = postNotification({
     title: n.title,
     subtitle: multi ? acct?.record.displayName || acct?.record.upn : undefined,
     body: settings.showMessagePreview ? n.body : 'Neue Nachricht',
     silent: !settings.notificationSound
   })
+  liveNotifications.add(notif, n)
   notif.on('click', () => {
+    liveNotifications.forget(notif)
     showMain()
     const nav: NavigateRequest = {
       accountId: n.accountId,
@@ -122,8 +134,39 @@ function showNotification(n: NotifyPayload): void {
     }
     broadcast('navigate', nav)
   })
+  notif.on('close', () => liveNotifications.forget(notif))
+  log.info(`Benachrichtigung angezeigt (${n.kind})`)
+}
+
+// Zeigt eine Mitteilung und merkt sich, ob macOS sie angenommen hat
+function postNotification(opts: Electron.NotificationConstructorOptions): Notification {
+  const notif = new Notification(opts)
+  notif.on('show', () => {
+    notificationError = undefined
+  })
+  notif.on('failed', (_e, error) => {
+    liveNotifications.forget(notif)
+    if (notificationError !== error) log.warn(`Benachrichtigung abgelehnt: ${error}`)
+    notificationError = error
+  })
   notif.show()
-  log.info(`Benachrichtigung angezeigt (${n.kind}), unterstützt: ${Notification.isSupported()}`)
+  return notif
+}
+
+// Testmitteilung aus den Einstellungen. Löst beim ersten Mal die Rückfrage von macOS aus.
+function testNotification(): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const notif = postNotification({ title: appName, body: 'So sehen Mitteilungen von neuen Nachrichten aus.', silent: !settings.notificationSound })
+    const timer = setTimeout(() => resolve({ ok: !notificationError, error: notificationError }), 5000)
+    notif.once('show', () => {
+      clearTimeout(timer)
+      resolve({ ok: true })
+    })
+    notif.once('failed', (_e, error) => {
+      clearTimeout(timer)
+      resolve({ ok: false, error })
+    })
+  })
 }
 
 function showMain(): void {
@@ -263,6 +306,13 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     },
     setBadge: (n) => {
       app.setBadgeCount(n)
+    },
+    getNotificationStatus: () => ({ supported: Notification.isSupported(), error: notificationError }),
+    testNotification: () => testNotification(),
+    openNotificationSettings: () => {
+      // Öffnet Systemeinstellungen › Mitteilungen, bei der installierten App direkt deren Eintrag
+      const id = app.isPackaged ? `?id=${BUNDLE_ID}` : ''
+      void shell.openExternal(`x-apple.systempreferences:com.apple.Notifications-Settings.extension${id}`)
     },
     closeWindow: () => sender()?.close(),
     setAlwaysOnTop: (on) => {
