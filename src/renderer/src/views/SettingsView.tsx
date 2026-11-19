@@ -142,7 +142,7 @@ export function SettingsView(): JSX.Element {
                 : notifyState.ok === false
                   ? `macOS zeigt keine Mitteilungen dieser App an${notifyState.error ? ` (${notifyState.error})` : ''}. Erlaube sie in den Systemeinstellungen unter Mitteilungen.`
                   : notifyState.ok
-                    ? 'Testmitteilung gesendet. Kam kein Banner, sind Mitteilungen in den Systemeinstellungen aus oder ein Fokus ist aktiv.'
+                    ? 'Testmitteilung gesendet. Kam kein Banner, sind Mitteilungen für diese App in den Systemeinstellungen aus oder ein Fokus ist aktiv.'
                     : 'Banner, Ton und Mitteilungszentrale stellst du in den Systemeinstellungen ein.'}
             </div>
           </div>
