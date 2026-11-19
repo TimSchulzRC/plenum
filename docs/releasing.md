@@ -9,7 +9,7 @@ Die Pipeline steht in [.github/workflows/release.yml](../.github/workflows/relea
 | Nightly | automatisch höchstens alle 6 Stunden oder manuell  | `<basis>-nightly.<JJJJMMTT>.<Lauf-Nr.>` | `v0.1.0-nightly.20261118.7`         | Pre-Release          |
 | Stable  | Tag-Push `v1.2.3` oder manuell mit Kanal „stable“  | `1.2.3`                                 | `v1.2.3`                            | Latest               |
 
-Nightlies heißen „Teams Everywhere (nightly)“, die Pipeline setzt dafür `build.productName`. Bundle-ID, Datenordner und der interne Name (`app.name`) bleiben dieselben wie bei Stable, ein Kanalwechsel per Update behält also Konten und Anmeldungen. Eine schon installierte App behält beim Update ihren Dateinamen in Programme und zeigt den neuen Namen in Menüleiste und Über-Fenster.
+Nightlies heißen „Teams Everywhere (nightly)“ und haben ein eigenes Icon, die Pipeline setzt dafür `build.productName` und `build.mac.icon` (`build/icon-nightly.icns`). Bundle-ID, Datenordner und der interne Name (`app.name`) bleiben dieselben wie bei Stable, ein Kanalwechsel per Update behält also Konten und Anmeldungen. Eine schon installierte App behält beim Update ihren Dateinamen in Programme und zeigt den neuen Namen in Menüleiste und Über-Fenster.
 
 Der Zeitplan startet den Workflow alle 30 Minuten (Minute 8 und 38). Er baut nur, wenn der letzte Nightly mindestens 6 Stunden alt ist und `main` seitdem neue Commits hat. Sonst endet der Lauf nach dem Schritt „Version bestimmen“ ohne Build. Fällt bei GitHub ein geplanter Lauf aus, holt der nächste ihn also nach. Ein manuell gestarteter Nightly baut immer und setzt die 6 Stunden neu an.
 

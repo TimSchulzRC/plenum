@@ -389,6 +389,9 @@ void app.whenReady().then(() => {
     return
   }
   app.setAboutPanelOptions({ applicationName: appName, applicationVersion: app.getVersion() })
+  // Dev läuft als Electron.app aus node_modules und hätte sonst deren Icon. Das Dev-Icon
+  // zeigen Dock, App-Umschalter und Über-Fenster. Erzeugt von `pnpm run icons`.
+  if (variant === 'dev') app.dock?.setIcon(join(app.getAppPath(), 'build/icon-dev.png'))
   settings = store.loadSettings()
   nativeTheme.themeSource = settings.theme
   updater = new Updater(
