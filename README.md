@@ -1,4 +1,7 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="assets/icons/stable-light.svg">
+  <img src="assets/icons/stable.svg" width="64" height="64" alt="">
+</picture>
 
 # Teams Everywhere
 
@@ -59,6 +62,8 @@ pnpm run dist:release # baut DMG und ZIP für arm64 und x64 wie die Release-Pipe
 ```
 
 `pnpm run dev` und `pnpm start` laufen als „Teams Everywhere (dev)“ mit eigenem Datenordner `~/Library/Application Support/Teams Everywhere (dev)`. Konten, Anmeldungen, Einstellungen und Logs der installierten App bleiben unberührt, und beide können gleichzeitig laufen. Der Dev-Ordner hängt nicht am Checkout, Anmeldungen bleiben also auch in neuen Worktrees und nach Updates erhalten. Den Namen in der Menüleiste trägt `scripts/dev-app-name.mjs` vor jedem Start in die Electron.app unter `node_modules` ein.
+
+Jede Ausgabe hat ein eigenes Icon mit derselben Marke: Stable dunkel mit Amber-Punkt, Nightly unter einem Nachthimmel, Dev auf einer Blaupause. Im Dev-Modus setzt die App das Dev-Icon beim Start ins Dock. `pnpm run icons` erzeugt alle Icons aus `scripts/icons.mjs` neu: die SVGs unter `assets/icons` (dunkel und hell), `build/icon.icns`, `build/icon-nightly.icns` und `build/icon-dev.png`.
 
 Stable und Nightly teilen sich den Ordner `~/Library/Application Support/Teams Everywhere`. Mit `TE_USER_DATA_DIR=<Ordner>` startet jede Ausgabe mit einem anderen Datenordner.
 

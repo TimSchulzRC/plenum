@@ -159,6 +159,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # Nightlies heißen „Teams Everywhere (nightly)“: App-Bundle, Menüleiste und Dock.
+      # Sie bekommen das Nightly-Icon (Nachthimmel), siehe scripts/icons.mjs.
       # Bundle-ID und Datenordner bleiben gleich, Updates und Anmeldungen gelten weiter.
       - name: Version und Name setzen
         env:
@@ -166,7 +167,9 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           pnpm pkg set version="$VERSION"
-          if [[ "$CHANNEL" == "nightly" ]]; then pnpm pkg set build.productName="Teams Everywhere (nightly)"; fi
+          if [[ "$CHANNEL" == "nightly" ]]; then
+            pnpm pkg set build.productName="Teams Everywhere (nightly)" build.mac.icon="build/icon-nightly.icns"
+          fi
 
       - run: pnpm run typecheck
       - run: pnpm test

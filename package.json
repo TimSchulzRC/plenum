@@ -28,11 +28,13 @@
     "bench:call": "node scripts/call-bench/run.mjs",
     "dist": "electron-vite build && electron-builder --mac --dir",
     "dist:dmg": "electron-vite build && electron-builder --mac dmg",
-    "dist:release": "electron-vite build && electron-builder --mac dmg zip --arm64 --x64 --publish never"
+    "dist:release": "electron-vite build && electron-builder --mac dmg zip --arm64 --x64 --publish never",
+    "icons": "node scripts/icons.mjs"
   },
   "devDependencies": {
     "@fluentui/react-components": "^9.75.2",
     "@fluentui/react-icons": "^2.0.346",
+    "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^26.6.6",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
