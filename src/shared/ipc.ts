@@ -89,6 +89,10 @@ export interface ApiMethods {
   // Bild aus dem Chat: Kontextmenü zeigen, kopieren oder speichern. x/y: Mausposition im Fenster.
   imageAction(src: string, action: 'menu' | 'copy' | 'save', x: number, y: number): void
   setBadge(count: number): void
+  // Systemmitteilungen: Zustand, Testmitteilung, Systemeinstellungen öffnen
+  getNotificationStatus(): { supported: boolean; error?: string }
+  testNotification(): { ok: boolean; error?: string }
+  openNotificationSettings(): void
   closeWindow(): void
   setAlwaysOnTop(on: boolean): void
 

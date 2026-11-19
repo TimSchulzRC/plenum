@@ -12,7 +12,10 @@ export interface AccountInfo {
   mri?: string
   status: AccountStatus
   statusDetail?: string
+  // Chats mit Punkt in der Chatliste
   unread: number
+  // Teams mit ungelesenem Kanalbeitrag
+  teamsUnread: number
   activityUnread: number
   presence?: Presence
 }

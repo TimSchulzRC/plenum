@@ -12,6 +12,7 @@ import {
 } from '@fluentui/react-icons'
 import { Tooltip } from '@fluentui/react-components'
 import type { ComponentType } from 'react'
+import { chatBadge } from '@shared/badge'
 import { useActive, useStore, type View } from '../store'
 import { UpdateButton } from './UpdateButton'
 
@@ -32,11 +33,10 @@ const ITEMS: Item[] = [
 
 export function Rail(): JSX.Element {
   const view = useStore((s) => s.view)
-  const { account, snapshot } = useActive()
-  const teamsUnread = snapshot?.teams.filter((t) => t.unread).length ?? 0
+  const { account } = useActive()
   const badges: Partial<Record<View, number>> = {
     activity: account?.activityUnread ?? 0,
-    chat: (account?.unread ?? 0) + teamsUnread
+    chat: account ? chatBadge(account) : 0
   }
   return (
     <nav className="rail">
