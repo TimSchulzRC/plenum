@@ -1,12 +1,16 @@
 name: Release
 
-# Nightly: jede Nacht automatisch, wenn es seit dem letzten Nightly neue Commits gibt.
+# Nightly: automatisch, sobald der letzte Nightly mindestens 6 Stunden alt ist und es
+# seitdem neue Commits gibt. Der Zeitplan prüft das alle 30 Minuten.
 # Stable: per Tag-Push (git tag v1.2.3 && git push origin v1.2.3) oder manuell über
 # "Run workflow" mit Kanal "stable" und einer Version. Details: docs/releasing.md
 
 on:
   schedule:
-    - cron: "17 3 * * *"
+    # Alle 30 Minuten prüfen, ob ein Nightly fällig ist (siehe „Version und Tag bestimmen“).
+    # Fällt bei GitHub ein geplanter Lauf aus, holt der nächste ihn nach. Minute 0 meiden,
+    # da sind die geplanten Jobs bei GitHub am vollsten.
+    - cron: "8,38 * * * *"
   push:
     tags:
       - "v*.*.*"
@@ -25,9 +29,11 @@ on:
         type: string
         required: false
 
-# Releases laufen nacheinander, ein laufender Release wird nie abgebrochen.
+# Nightlies laufen nacheinander, ein laufender Release wird nie abgebrochen. Stable hat
+# eine eigene Gruppe: GitHub verwirft in einer Gruppe den wartenden Lauf, sobald ein neuer
+# kommt, und die halbstündlichen Prüfläufe sollen nie einen wartenden Stable-Release verdrängen.
 concurrency:
-  group: release
+  group: release-${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.channel == 'nightly')) && 'nightly' || 'stable' }}
   cancel-in-progress: false
 
 permissions:
@@ -70,7 +76,7 @@ jobs:
           [[ "$EVENT" == "push" ]] && channel=stable
           [[ "$EVENT" == "workflow_dispatch" ]] && channel="${INPUT_CHANNEL:-nightly}"
 
-          releases="$(gh release list --limit 100 --exclude-drafts --json tagName,createdAt)"
+          releases="$(gh release list --limit 100 --exclude-drafts --json tagName,createdAt,publishedAt)"
           last_nightly="$(jq -r '[.[] | select(.tagName | test("-nightly\\."))] | sort_by(.createdAt) | last | .tagName // ""' <<<"$releases")"
           last_stable="$(jq -r '[.[] | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort_by(.createdAt) | last | .tagName // ""' <<<"$releases")"
 
@@ -86,9 +92,16 @@ jobs:
             name="Teams Everywhere Nightly $version ($short)"
             previous="$last_nightly"
 
+            # Geplante Läufe bauen höchstens alle 6 Stunden und nur bei neuen Commits.
+            # Manuell gestartete Nightlies bauen immer.
             if [[ "$EVENT" == "schedule" && -n "$last_nightly" ]]; then
-              if [[ "$(git rev-list -n 1 "refs/tags/$last_nightly")" == "$sha" ]]; then
-                echo "::notice::Keine neuen Commits seit $last_nightly, kein Nightly heute."
+              published="$(jq -r --arg tag "$last_nightly" '.[] | select(.tagName == $tag) | .publishedAt // .createdAt' <<<"$releases")"
+              age=$(( $(date -u +%s) - $(date -u -d "$published" +%s) ))
+              if (( age < 6 * 3600 )); then
+                echo "::notice::$last_nightly ist erst $(( age / 60 )) Minuten alt, nächster Nightly frühestens nach 6 Stunden."
+                skip=true
+              elif [[ "$(git rev-list -n 1 "refs/tags/$last_nightly")" == "$sha" ]]; then
+                echo "::notice::Keine neuen Commits seit $last_nightly, kein neuer Nightly."
                 skip=true
               fi
             fi

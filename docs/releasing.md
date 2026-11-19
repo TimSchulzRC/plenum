@@ -6,12 +6,12 @@ Die Pipeline steht in [.github/workflows/release.yml](../.github/workflows/relea
 
 | Kanal   | Auslöser                                           | Versionsschema                          | Tag                                 | GitHub-Release       |
 | ------- | -------------------------------------------------- | --------------------------------------- | ----------------------------------- | -------------------- |
-| Nightly | jede Nacht um 03:17 UTC oder manuell               | `<basis>-nightly.<JJJJMMTT>.<Lauf-Nr.>` | `v0.1.0-nightly.20261118.7`         | Pre-Release          |
+| Nightly | automatisch höchstens alle 6 Stunden oder manuell  | `<basis>-nightly.<JJJJMMTT>.<Lauf-Nr.>` | `v0.1.0-nightly.20261118.7`         | Pre-Release          |
 | Stable  | Tag-Push `v1.2.3` oder manuell mit Kanal „stable“  | `1.2.3`                                 | `v1.2.3`                            | Latest               |
 
 Nightlies heißen „Teams Everywhere (nightly)“, die Pipeline setzt dafür `build.productName`. Bundle-ID, Datenordner und der interne Name (`app.name`) bleiben dieselben wie bei Stable, ein Kanalwechsel per Update behält also Konten und Anmeldungen. Eine schon installierte App behält beim Update ihren Dateinamen in Programme und zeigt den neuen Namen in Menüleiste und Über-Fenster.
 
-Der geplante Nightly-Lauf baut nur, wenn `main` seit dem letzten Nightly neue Commits hat. Ein manuell gestarteter Nightly baut immer.
+Der Zeitplan startet den Workflow alle 30 Minuten (Minute 8 und 38). Er baut nur, wenn der letzte Nightly mindestens 6 Stunden alt ist und `main` seitdem neue Commits hat. Sonst endet der Lauf nach dem Schritt „Version bestimmen“ ohne Build. Fällt bei GitHub ein geplanter Lauf aus, holt der nächste ihn also nach. Ein manuell gestarteter Nightly baut immer und setzt die 6 Stunden neu an.
 
 Die Basis eines Nightlys ist die Version aus `package.json`. Gibt es diese Version schon als Stable-Tag, nimmt die Pipeline die nächste Patch-Version. Nach `v0.1.0` heißen Nightlies also automatisch `0.1.1-nightly.…` und sortieren damit nach dem Stable-Release.
 
