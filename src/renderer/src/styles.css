@@ -606,6 +606,8 @@ button {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* Sprechblase so breit wie ihr Inhalt, nicht wie Name und Uhrzeit darüber */
+  align-items: flex-start;
 }
 .msg-row.mine .msg-col {
   align-items: flex-end;
@@ -667,10 +669,12 @@ button {
   text-decoration: underline;
   text-decoration-color: rgba(127, 127, 160, 0.6);
 }
-/* Höchstens so groß, wie die App Bilder beim Senden an Teams meldet (400 × 300) */
+/* Höchstens so groß, wie die App Bilder beim Senden an Teams meldet (400 × 300).
+   Die genaue Größe setzt fitImage() als width/height. */
 .bubble img {
   max-width: min(100%, 400px);
   max-height: 300px;
+  height: auto;
   border-radius: 10px;
   vertical-align: middle;
 }
@@ -943,6 +947,31 @@ button {
   font-size: 12px;
   color: var(--fg-3);
   padding: 0 32px;
+}
+
+/* Nur Bilder ohne Text: ohne Sprechblase */
+.bubble.image-only,
+.msg-row.mine .bubble.image-only {
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+.bubble.image-only img.msg-image {
+  display: block;
+}
+/* Teams schickt vor Bildern oft ein leeres <p>&nbsp;</p> */
+.bubble.image-only p {
+  margin: 0;
+}
+.bubble.image-only p:not(:has(img)) {
+  display: none;
+}
+.bubble.image-only img.msg-image + img.msg-image,
+.bubble.image-only p:has(img) ~ p:has(img) {
+  margin-top: 6px;
+}
+.bubble.image-only.has-reactions {
+  padding-bottom: 14px;
 }
 
 /* Nur Emojis: groß und ohne Sprechblase */

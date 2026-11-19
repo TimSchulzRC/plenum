@@ -14,7 +14,7 @@ import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from
 import type { Message } from '@shared/types'
 import { api } from '../api'
 import { clock, messageTime } from '../lib/format'
-import { reactionEmoji, renderMessageHtml, REACTIONS } from '../lib/html'
+import { fitImage, isImageOnly, reactionEmoji, renderMessageHtml, REACTIONS } from '../lib/html'
 import { PersonAvatar } from './Avatars'
 import { openImage } from './ImageViewer'
 
@@ -32,6 +32,21 @@ interface Props {
 
 export const MessageBody = memo(function MessageBody({ msg, accountId, myName }: { msg: Message; accountId: string; myName?: string }) {
   const html = useMemo(() => renderMessageHtml(msg.html, accountId, myName), [msg.html, accountId, myName])
+  const body = useRef<HTMLDivElement>(null)
+  // Bilder ohne Größenangabe bekommen sie nach dem Laden (siehe fitImage), auch solche aus
+  // dem Cache, die schon vor dem Effekt fertig waren
+  useLayoutEffect(() => {
+    const el = body.current
+    if (!el) return
+    const fit = (img: EventTarget | null) => {
+      if (img instanceof HTMLImageElement && img.classList.contains('msg-image') && !img.hasAttribute('width') && img.naturalWidth)
+        fitImage(img, img.naturalWidth, img.naturalHeight)
+    }
+    el.querySelectorAll('img').forEach(fit)
+    const onLoad = (e: Event) => fit(e.target)
+    el.addEventListener('load', onLoad, true)
+    return () => el.removeEventListener('load', onLoad, true)
+  }, [html])
   if (msg.kind === 'deleted') return <div className="msg-deleted">Diese Nachricht wurde gelöscht.</div>
   return (
     <>
@@ -43,6 +58,7 @@ export const MessageBody = memo(function MessageBody({ msg, accountId, myName }:
       )}
       {html ? (
         <div
+          ref={body}
           dangerouslySetInnerHTML={{ __html: html }}
           onClick={(e) => {
             const target = e.target as HTMLElement
@@ -182,6 +198,7 @@ export const MessageItem = memo(function MessageItem({ msg, accountId, myMri, my
     )
   }
   const mine = msg.isMine
+  const imageOnly = msg.kind === 'text' && !msg.subject && !msg.importance && msg.attachments.length === 0 && isImageOnly(msg.html)
   const canEdit = mine && !!onEdit && msg.kind === 'text'
   const react = (key: string) => {
     const has = msg.reactions.find((r) => r.key === key)?.users.some((u) => u.mri === myMri)
@@ -200,7 +217,7 @@ export const MessageItem = memo(function MessageItem({ msg, accountId, myMri, my
             {msg.failed && <span style={{ color: 'var(--danger-fg)' }}>Fehler beim Senden</span>}
           </div>
         )}
-        <div className={`bubble ${msg.importance ? 'important' : ''} ${msg.reactions.length ? 'has-reactions' : ''} ${isEmojiOnly(msg) ? 'emoji-only' : ''}`} style={msg.pending ? { opacity: 0.6 } : undefined}>
+        <div className={`bubble ${msg.importance ? 'important' : ''} ${msg.reactions.length ? 'has-reactions' : ''} ${isEmojiOnly(msg) ? 'emoji-only' : ''} ${imageOnly ? 'image-only' : ''}`} style={msg.pending ? { opacity: 0.6 } : undefined}>
           <MessageBody msg={msg} accountId={accountId} myName={myName} />
           {msg.editedTime && msg.kind !== 'deleted' && <span className="edited">Bearbeitet</span>}
           {showToolbar && (
