@@ -54,6 +54,8 @@ export interface ApiMethods {
   getPresence(accountId: string, mris: string[]): Record<string, Presence>
   setMyPresence(accountId: string, availability: Availability | 'Reset'): void
   createChat(accountId: string, mris: string[], topic?: string): string
+  // Chat mit der Person im Hauptfenster öffnen (z.B. aus der Profilkarte im Anruf)
+  openChatWith(accountId: string, mri: string): void
   reorderFolder(accountId: string, folderId: string, order: string[]): void
   addToFolder(accountId: string, folderId: string, itemId: string, index?: number): void
   removeFromFolder(accountId: string, folderId: string, itemId: string): void

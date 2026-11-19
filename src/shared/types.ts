@@ -230,6 +230,8 @@ export interface CallParticipant {
   isMe?: boolean
   hasVideo?: boolean
   streamId?: string
+  // Teams kennzeichnet die Person als extern, Gast oder nicht verifiziert
+  external?: boolean
 }
 
 export interface CallState {
@@ -276,6 +278,8 @@ export interface MediaStreamInfo {
   width?: number
   height?: number
   speaking?: boolean
+  // Teams kennzeichnet die Person hinter dem Stream als extern (aus dem Namen gelesen)
+  external?: boolean
 }
 
 export type BridgeMessage =
@@ -331,6 +335,8 @@ export interface AppSettings {
   preferredCamera?: string
   preferredMic?: string
   preferredSpeaker?: string
+  // Videos im Anruf: ganzes Bild zeigen (contain) oder die Kachel füllen (cover)
+  callVideoFit?: 'contain' | 'cover'
 }
 
 export interface NavigateRequest {

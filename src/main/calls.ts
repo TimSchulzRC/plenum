@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { BrowserWindow, desktopCapturer, dialog, ipcMain, screen, shell, webContents, type DesktopCapturerSource } from 'electron'
 import type { AccountService } from './account'
-import type { BackgroundList, BridgeMessage, CallAction, CallDevices, CallState, IncomingCall, MediaStreamInfo } from '@shared/types'
+import type { BackgroundList, BridgeMessage, CallAction, CallDevices, CallParticipant, CallState, IncomingCall, MediaStreamInfo } from '@shared/types'
 import { createCallWindow, createIncomingWindow, createPopoutWindow, uiWindows } from './windows'
 import { log } from './log'
 import { isTeamsUrl } from './engine/hosts'
+import { cleanCallName } from '@shared/call-names'
 
 type Broadcast = (event: string, payload: unknown) => void
 
@@ -12,6 +13,23 @@ type Broadcast = (event: string, payload: unknown) => void
 // Mit null lehnt es die Anfrage ab, und getDisplayMedia() in der Web-App scheitert sauber.
 function denyDisplay(cb: (s: any) => void): void {
   cb(null)
+}
+
+// Namen aus den aria-labels bereinigen. Gleiche Personen nach der Bereinigung nur einmal.
+function cleanParticipants(list: CallParticipant[] | undefined): CallParticipant[] {
+  const out: CallParticipant[] = []
+  for (const p of list ?? []) {
+    const { name, external } = cleanCallName(p.name)
+    const id = p.isMe ? p.id : name
+    const prev = out.find((x) => x.id.toLowerCase() === id.toLowerCase())
+    if (prev) {
+      // Dieselbe Person aus zwei Quellen der Seite: Hinweis auf extern nicht verlieren
+      prev.external ||= external
+      continue
+    }
+    out.push({ ...p, id, name, external: external || p.external })
+  }
+  return out
 }
 
 export class CallManager {
@@ -104,8 +122,12 @@ export class CallManager {
         break
       case 'streams':
         if (this.activeAccountId === acct.id || !this.activeAccountId) {
-          this.streams = msg.streams
-          this.broadcast('bridge', { type: 'streams', streams: msg.streams })
+          const streams = (msg.streams as MediaStreamInfo[]).map((s) => {
+            const { name, external } = cleanCallName(s.label)
+            return { ...s, label: name, external }
+          })
+          this.streams = streams
+          this.broadcast('bridge', { type: 'streams', streams })
         }
         break
       case 'bridge': {
@@ -171,7 +193,7 @@ export class CallManager {
     clearTimeout(this.closeTimer)
     const wasIdle = !this.state
     this.activeAccountId = acct.id
-    this.state = { accountId: acct.id, ...raw, conversationId: this.conversationId }
+    this.state = { accountId: acct.id, ...raw, participants: cleanParticipants(raw?.participants), conversationId: this.conversationId }
     this.broadcast('call-state', this.state)
     if (wasIdle) this.openCallWindow()
   }
