@@ -57,6 +57,10 @@ elif ! mv "$source" "$target"; then
   launch
 else
   xattr -dr com.apple.quarantine "$target" 2>/dev/null
+  # Pfad und Dateiname des Icons bleiben gleich, deshalb zeigen Finder und Dock sonst das
+  # alte Icon aus ihrem Cache. Neues Änderungsdatum und neu registrieren lassen sie es neu laden.
+  touch "$target"
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$target" 2>/dev/null
   if launch; then
     rm -rf "$backup"
     echo "Update installiert: $target"
