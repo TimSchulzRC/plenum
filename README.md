@@ -16,7 +16,7 @@ Aktuell läuft Teams Everywhere auf macOS. Windows und Linux sind geplant.
 
 ## Installation
 
-Fertige Builds liegen unter [Releases](https://github.com/TimSchulzRC/teams-everywhere/releases). Im Moment gibt es nur Nightlies. Sie entstehen jede Nacht automatisch aus `main`, sobald es neue Commits gibt.
+Fertige Builds liegen unter [Releases](https://github.com/TimSchulzRC/teams-everywhere/releases). Im Moment gibt es nur Nightlies. Sie entstehen automatisch aus `main`, höchstens alle 6 Stunden und nur, wenn es neue Commits gibt.
 
 1. Die passende DMG laden: `…-mac-arm64.dmg` für Apple Silicon (M1 und neuer), `…-mac-x64.dmg` für Intel-Macs.
 2. Teams Everywhere aus der DMG in den Ordner Programme ziehen. Nightlies heißen „Teams Everywhere (nightly)“.
