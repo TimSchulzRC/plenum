@@ -667,9 +667,10 @@ button {
   text-decoration: underline;
   text-decoration-color: rgba(127, 127, 160, 0.6);
 }
+/* Höchstens so groß, wie die App Bilder beim Senden an Teams meldet (400 × 300) */
 .bubble img {
-  max-width: 100%;
-  max-height: 360px;
+  max-width: min(100%, 400px);
+  max-height: 300px;
   border-radius: 10px;
   vertical-align: middle;
 }
