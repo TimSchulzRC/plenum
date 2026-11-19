@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { AccountService, type AccountRecord, type NotifyPayload } from './account'
 import { CallManager } from './calls'
 import { handleMediaProtocol, registerMediaScheme } from './media-protocol'
+import { imageAction } from './image-actions'
 import { store } from './store'
 import { createMainWindow, uiWindows } from './windows'
 import { Updater } from './updater'
@@ -205,9 +206,6 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     markRead: (id, conv, mid) => get(id).markRead(conv, mid),
     getReadHorizons: (id, conv) => get(id).getReadHorizons(conv),
     sendTyping: (id, conv) => get(id).sendTyping(conv),
-    uploadImage: () => {
-      throw new Error('Bilder hochladen wird noch nicht unterstützt')
-    },
     searchPeople: (id, q) => get(id).searchPeople(q),
     getPeople: (id, mris) => get(id).getPeople(mris),
     getPresence: (id, mris) => get(id).getPresence(mris),
@@ -253,6 +251,10 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     },
     openExternal: (url) => {
       if (/^(https?|mailto|tel):/.test(url)) void shell.openExternal(url)
+    },
+    imageAction: (src, action, x, y) => {
+      const win = sender()
+      if (win) return imageAction(win, src, action, x, y)
     },
     setBadge: (n) => {
       app.setBadgeCount(n)

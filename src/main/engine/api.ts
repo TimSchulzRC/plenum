@@ -2,6 +2,7 @@
 import type { Engine } from './engine'
 import type { Family } from './tokens'
 import { log } from '../log'
+import { uploadAmsImage } from './ams'
 
 export class ApiError extends Error {
   constructor(
@@ -121,6 +122,13 @@ export class TeamsApi {
 
   createThread(members: { id: string; role: string }[], properties: Record<string, unknown>): Promise<Response> {
     return this.engine.request('chatsvc', this.chatsvc('/v1/threads'), { method: 'POST', body: { members, properties } })
+  }
+
+  // Bild in den Async Media Service laden, Leserecht für die Unterhaltung. Gibt die Objekt-ID zurück.
+  async uploadImage(conversationId: string, data: Uint8Array, mime: string): Promise<string> {
+    const skype = this.engine.tokens.skypeToken?.token
+    if (!skype) throw new ApiError(0, 'Teams ist noch nicht verbunden, das Bild kann noch nicht hochgeladen werden')
+    return uploadAmsImage((url, init) => this.json('ams', url, init), skype, conversationId, data, mime)
   }
 
   // ---------- Chat-Service-Aggregator (Teams, Kanäle, Chats) ----------

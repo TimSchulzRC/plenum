@@ -2,6 +2,7 @@ import { Button, Spinner } from '@fluentui/react-components'
 import { Video20Filled, Warning20Regular } from '@fluentui/react-icons'
 import { useEffect, useState } from 'react'
 import { api } from './api'
+import { ImageViewer } from './components/ImageViewer'
 import { Rail } from './components/Rail'
 import { UpdateButton } from './components/UpdateButton'
 import { showUpdateButton, updateStatusText } from './update'
@@ -87,6 +88,7 @@ export default function MainApp(): JSX.Element {
           {content}
         </div>
       </div>
+      <ImageViewer />
     </div>
   )
 }

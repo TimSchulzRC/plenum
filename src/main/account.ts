@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { Engine, enginePreloadPath } from './engine/engine'
 import { TeamsApi, ApiError, clientMessageId } from './engine/api'
+import { amsImageIds, replaceInlineImages } from './engine/ams'
 import {
   conversationKind,
   htmlToText,
@@ -1010,11 +1011,14 @@ export class AccountService extends EventEmitter<AccountEvents> {
   async sendMessage(conversationId: string, html: string, opts: { replyToId?: string; subject?: string; importance?: 'normal' | 'high' | 'urgent' } = {}): Promise<Message> {
     const cmid = clientMessageId()
     const target = opts.replyToId ? `${conversationId};messageid=${opts.replyToId}` : conversationId
+    // Eingefügte Bilder kommen als data:-URL aus dem Eingabefeld und gehen vorher zu Teams
+    const images = await replaceInlineImages(html, (data, mime) => this.api.uploadImage(conversationId, data, mime))
+    html = images.html
     const body = {
       content: html,
       messagetype: 'RichText/Html',
       contenttype: 'text',
-      amsreferences: [],
+      amsreferences: images.ids,
       clientmessageid: cmid,
       imdisplayname: this.me?.displayName ?? this.record.displayName ?? '',
       properties: { importance: opts.importance && opts.importance !== 'normal' ? opts.importance : '', subject: opts.subject ?? '' }
@@ -1052,11 +1056,12 @@ export class AccountService extends EventEmitter<AccountEvents> {
   }
 
   async editMessage(conversationId: string, messageId: string, html: string): Promise<void> {
+    const images = await replaceInlineImages(html, (data, mime) => this.api.uploadImage(conversationId, data, mime))
     await this.api.editMessage(conversationId, messageId, {
-      content: html,
+      content: images.html,
       messagetype: 'RichText/Html',
       contenttype: 'text',
-      amsreferences: [],
+      amsreferences: amsImageIds(images.html),
       imdisplayname: this.me?.displayName ?? ''
     })
   }
