@@ -18,6 +18,13 @@ function Root(): JSX.Element {
   return <ThemeRoot><MainApp /></ThemeRoot>
 }
 
+// Eine Datei, die neben einem Eingabefeld abgelegt wird, würde sonst das Fenster zu file:// navigieren
+for (const type of ['dragover', 'drop'] as const) {
+  window.addEventListener(type, (e) => {
+    if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
+  })
+}
+
 createRoot(document.getElementById('root')!).render(
   <Suspense fallback={null}>
     <Root />

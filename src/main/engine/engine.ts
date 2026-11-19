@@ -402,8 +402,11 @@ export class Engine extends EventEmitter<EngineEvents> {
   // HTTP-Aufruf mit den Auth-Headern der Web-App über den Netzwerk-Stack dieser Partition.
   async request(family: Family, url: string, init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean } = {}): Promise<Response> {
     const headers: Record<string, string> = { ...this.tokens.headersFor(family), ...(init.headers ?? {}) }
-    let body: string | undefined
-    if (init.body !== undefined) {
+    let body: string | Uint8Array | undefined
+    if (init.body instanceof Uint8Array) {
+      body = init.body
+      if (!headers['content-type']) headers['content-type'] = 'application/octet-stream'
+    } else if (init.body !== undefined) {
       body = typeof init.body === 'string' && init.raw ? init.body : JSON.stringify(init.body)
       if (!headers['content-type']) headers['content-type'] = 'application/json'
     }

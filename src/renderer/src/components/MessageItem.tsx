@@ -16,6 +16,7 @@ import { api } from '../api'
 import { clock, messageTime } from '../lib/format'
 import { reactionEmoji, renderMessageHtml, REACTIONS } from '../lib/html'
 import { PersonAvatar } from './Avatars'
+import { openImage } from './ImageViewer'
 
 interface Props {
   msg: Message
@@ -45,6 +46,11 @@ export const MessageBody = memo(function MessageBody({ msg, accountId, myName }:
           dangerouslySetInnerHTML={{ __html: html }}
           onClick={(e) => {
             const target = e.target as HTMLElement
+            if (target instanceof HTMLImageElement && target.classList.contains('msg-image')) {
+              e.preventDefault()
+              openImage(target.currentSrc || target.src)
+              return
+            }
             const a = target.closest('a')
             if (a?.href) {
               e.preventDefault()
@@ -53,6 +59,12 @@ export const MessageBody = memo(function MessageBody({ msg, accountId, myName }:
             }
             const quote = target.closest<HTMLElement>('.quote[data-mid]')
             if (quote) jumpToMessage(quote.dataset['mid'] ?? '')
+          }}
+          onContextMenu={(e) => {
+            const target = e.target as HTMLElement
+            if (!(target instanceof HTMLImageElement) || !target.classList.contains('msg-image')) return
+            e.preventDefault()
+            void api.imageAction(target.currentSrc || target.src, 'menu', e.clientX, e.clientY)
           }}
         />
       ) : msg.kind === 'card' ? (

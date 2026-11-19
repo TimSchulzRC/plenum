@@ -19,6 +19,7 @@ export interface ComposerHandle {
   focus(): void
   insertText(t: string): void
   setContent(html: string): void
+  addImages(files: File[], at?: { x: number; y: number }): void
 }
 
 export interface SendPayload {
@@ -43,6 +44,46 @@ interface Props {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'])
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024
+
+export function imageFiles(list: FileList | null | undefined): File[] {
+  return [...(list ?? [])].filter((f) => IMAGE_TYPES.has(f.type))
+}
+
+// Bilder aus der Zwischenablage nur nehmen, wenn sie das Kopierte selbst sind. Word und Excel legen
+// neben dem Text ein Bild der Auswahl ab, dann soll der Text ankommen.
+function clipboardImages(data: DataTransfer): File[] {
+  const files = imageFiles(data.files)
+  if (files.length === 0) return []
+  if (data.types.includes('text/rtf')) return []
+  const html = data.getData('text/html')
+  if (html && !/<img\b/i.test(html)) return []
+  return files
+}
+
+function readDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.onerror = () => reject(r.error ?? new Error('Datei nicht lesbar'))
+    r.readAsDataURL(file)
+  })
+}
+
+// Anzeigegröße im Chat, wie Teams sie mitschickt: höchstens 400 × 300, Seitenverhältnis bleibt
+async function imageTag(file: File): Promise<string> {
+  const url = await readDataUrl(file)
+  const img = new Image()
+  img.src = url
+  await img.decode().catch(() => undefined)
+  const w = img.naturalWidth
+  const h = img.naturalHeight
+  const scale = w && h ? Math.min(1, 400 / w, 300 / h) : 1
+  const size = w && h ? ` width="${Math.max(1, Math.round(w * scale))}" height="${Math.max(1, Math.round(h * scale))}"` : ''
+  return `<img src="${url}"${size}>`
 }
 
 function normalizeHtml(el: HTMLElement): string {
@@ -76,7 +117,45 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [important, setImportant] = useState(false)
   const [sending, setSending] = useState(false)
   const [showFormat, setShowFormat] = useState(false)
+  const [dropping, setDropping] = useState(false)
   const lastTyping = useRef(0)
+  // Bilder werden erst gelesen, dann eingefügt. Enter direkt danach wartet darauf.
+  const inserting = useRef<Promise<void>>(Promise.resolve())
+  // Zählt hoch, wenn setContent den Entwurf ersetzt. Ein wartendes Senden bricht dann ab.
+  const draftId = useRef(0)
+
+  const addImages = (files: File[], at?: { x: number; y: number }) => {
+    const draft = draftId.current
+    inserting.current = inserting.current.then(() => insertImages(files, draft, at)).catch((e: Error) => alert(`Bild konnte nicht eingefügt werden: ${e.message}`))
+  }
+
+  // Bilder an der Schreibmarke einfügen, bei Drag & Drop an der Stelle, wo sie abgelegt wurden
+  const insertImages = async (files: File[], draft: number, at?: { x: number; y: number }) => {
+    const el = editor.current
+    if (!el || disabled || files.length === 0 || draft !== draftId.current) return
+    const tooBig = files.filter((f) => f.size > MAX_IMAGE_BYTES)
+    if (tooBig.length) alert(`${tooBig.map((f) => f.name || 'Bild').join(', ')}: Bilder dürfen höchstens 25 MB groß sein.`)
+    const ok = files.filter((f) => f.size <= MAX_IMAGE_BYTES)
+    if (ok.length === 0) return
+    const tags = await Promise.all(ok.map(imageTag))
+    // Inzwischen wird eine andere Nachricht bearbeitet: Das Bild gehörte zum alten Entwurf
+    if (draft !== draftId.current) return
+    el.focus()
+    const sel = window.getSelection()
+    const dropAt = at ? document.caretRangeFromPoint(at.x, at.y) : null
+    if (dropAt && el.contains(dropAt.startContainer)) {
+      sel?.removeAllRanges()
+      sel?.addRange(dropAt)
+    } else if (!sel || sel.rangeCount === 0 || !el.contains(sel.getRangeAt(0).startContainer)) {
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      range.collapse(false)
+      sel?.removeAllRanges()
+      sel?.addRange(range)
+    }
+    document.execCommand('insertHTML', false, tags.join(''))
+    setEmpty(false)
+  }
 
   useImperativeHandle(ref, () => ({
     focus: () => editor.current?.focus(),
@@ -88,6 +167,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     setContent: (html: string) => {
       const el = editor.current
       if (!el) return
+      draftId.current++
       el.innerHTML = html
       setEmpty(el.innerText.trim() === '')
       el.focus()
@@ -97,10 +177,14 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       const sel = window.getSelection()
       sel?.removeAllRanges()
       sel?.addRange(range)
-    }
+    },
+    addImages
   }))
 
   const send = async () => {
+    const draftAtEnter = draftId.current
+    await inserting.current
+    if (draftAtEnter !== draftId.current) return
     const el = editor.current
     if (!el || sending) return
     const text = el.innerText.trim()
@@ -138,7 +222,27 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   return (
     <div className="composer-wrap" style={compact ? { padding: '8px 0 0' } : undefined}>
-      <div className="composer">
+      <div
+        className={`composer ${dropping ? 'drop' : ''}`}
+        onDragOver={(e) => {
+          if (disabled || !e.dataTransfer.types.includes('Files')) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
+          setDropping(true)
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false)
+        }}
+        onDrop={(e) => {
+          setDropping(false)
+          if (!e.dataTransfer.types.includes('Files')) return
+          e.preventDefault()
+          e.stopPropagation()
+          const files = imageFiles(e.dataTransfer.files)
+          if (files.length) addImages(files, { x: e.clientX, y: e.clientY })
+          else alert('Hier lassen sich nur Bilder (PNG, JPEG, GIF, WebP) ablegen.')
+        }}
+      >
         {replyTo && (
           <div className="reply-to">
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -189,6 +293,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           }}
           onPaste={(e) => {
             e.preventDefault()
+            const images = clipboardImages(e.clipboardData)
+            if (images.length) {
+              addImages(images)
+              return
+            }
             const text = e.clipboardData.getData('text/plain')
             document.execCommand('insertText', false, text)
           }}

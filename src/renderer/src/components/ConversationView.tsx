@@ -7,7 +7,7 @@ import { dayLabel, sameDay } from '../lib/format'
 import { cacheKey, fetchHorizons, fetchMessages, horizonCache, messageCache, receiptsEnabled as hasReceipts } from '../lib/prefetch'
 import { personName, useStore } from '../store'
 import { ChatAvatar, PersonAvatar, presenceLabel } from './Avatars'
-import { Composer, type ComposerHandle, type SendPayload } from './Composer'
+import { Composer, imageFiles, type ComposerHandle, type SendPayload } from './Composer'
 import { MessageItem } from './MessageItem'
 
 function merge(prev: Message[], next: Message[]): Message[] {
@@ -298,7 +298,22 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
   }, [msgs, accountId, me, names, reload, lastMineId, receipt])
 
   return (
-    <div className="main-pane">
+    <div
+      className="main-pane"
+      // Bilder, die irgendwo im Chat abgelegt werden, landen im Eingabefeld
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'copy'
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return
+        e.preventDefault()
+        const files = imageFiles(e.dataTransfer.files)
+        if (files.length) composer.current?.addImages(files)
+        else alert('Hier lassen sich nur Bilder (PNG, JPEG, GIF, WebP) ablegen.')
+      }}
+    >
       <div className="pane-header">
         <ChatAvatar chat={chat} size={32} />
         <div className="grow" style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>

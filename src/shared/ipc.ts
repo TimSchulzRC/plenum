@@ -49,7 +49,6 @@ export interface ApiMethods {
   markRead(accountId: string, conversationId: string, messageId: string): void
   getReadHorizons(accountId: string, conversationId: string): Record<string, number>
   sendTyping(accountId: string, conversationId: string): void
-  uploadImage(accountId: string, conversationId: string, dataUrl: string, fileName: string): string
   searchPeople(accountId: string, query: string): Person[]
   getPeople(accountId: string, mris: string[]): Person[]
   getPresence(accountId: string, mris: string[]): Record<string, Presence>
@@ -85,6 +84,8 @@ export interface ApiMethods {
   getSettings(): AppSettings
   setSettings(patch: Partial<AppSettings>): AppSettings
   openExternal(url: string): void
+  // Bild aus dem Chat: Kontextmenü zeigen, kopieren oder speichern. x/y: Mausposition im Fenster.
+  imageAction(src: string, action: 'menu' | 'copy' | 'save', x: number, y: number): void
   setBadge(count: number): void
   closeWindow(): void
   setAlwaysOnTop(on: boolean): void
