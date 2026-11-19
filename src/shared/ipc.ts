@@ -102,6 +102,7 @@ export interface EventMap {
   accounts: AccountInfo[]
   snapshot: AccountSnapshot
   'conversation-updated': { accountId: string; conversationIds: string[] }
+  'read-receipts': { accountId: string; conversationIds: string[] }
   presence: { accountId: string; presence: Record<string, Presence> }
   'call-state': CallState | null
   'incoming-call': IncomingCall | null

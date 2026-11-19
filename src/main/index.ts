@@ -88,6 +88,7 @@ function addAccountService(rec: AccountRecord, autoShowLogin: boolean): AccountS
   })
   acct.on('snapshot', (s) => broadcast('snapshot', s))
   acct.on('conversation-updated', (ids) => broadcast('conversation-updated', { accountId: rec.id, conversationIds: ids }))
+  acct.on('read-receipts', (ids) => broadcast('read-receipts', { accountId: rec.id, conversationIds: ids }))
   acct.on('presence', (p) => broadcast('presence', { accountId: rec.id, presence: p }))
   acct.on('typing', (t) => broadcast('typing', { accountId: rec.id, ...t }))
   acct.on('activity-updated', () => broadcast('activity-updated', { accountId: rec.id }))

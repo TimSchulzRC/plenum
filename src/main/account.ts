@@ -35,6 +35,7 @@ import type {
   Team
 } from '@shared/types'
 import { log } from './log'
+import { parseRealtimeFrame } from './engine/realtime'
 import { OlderCursors } from './older-cursors'
 
 export interface AccountRecord {
@@ -61,6 +62,8 @@ interface AccountEvents {
   changed: []
   snapshot: [AccountSnapshot]
   'conversation-updated': [string[]]
+  // Andere haben in diesen Chats gelesen
+  'read-receipts': [string[]]
   presence: [Record<string, Presence>]
   notify: [NotifyPayload]
   typing: [{ conversationId: string; mri: string; name: string }]
@@ -92,6 +95,10 @@ export class AccountService extends EventEmitter<AccountEvents> {
   private presenceTimer?: NodeJS.Timeout
   private snapshotTimer?: NodeJS.Timeout
   private realtimeTimer?: NodeJS.Timeout
+  private receiptTimer?: NodeJS.Timeout
+  // Chats mit Echtzeit-Ereignis seit dem letzten deltaSync
+  private realtimeConvs = new Set<string>()
+  private receiptConvs = new Set<string>()
   private fullSyncAt = 0
   private syncing = false
   private deltaQueue: Promise<void> = Promise.resolve()
@@ -139,6 +146,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
     clearTimeout(this.snapshotTimer)
     clearTimeout(this.peopleTimer)
     clearTimeout(this.realtimeTimer)
+    clearTimeout(this.receiptTimer)
     this.engine.destroy()
     this.started = false
   }
@@ -453,6 +461,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
   private async runDeltaSync(initial: boolean): Promise<void> {
     // Nach stop() (Konto entfernt) keine Abfragen und Benachrichtigungen mehr
     if (!this.started || !this.engine.tokens.has('chatsvc')) return
+    const touched = [...this.realtimeConvs]
+    this.realtimeConvs.clear()
     let data: any
     try {
       if (this.syncStateUrl && !initial) {
@@ -464,6 +474,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
     } catch (e) {
       if (e instanceof ApiError && (e.status === 400 || e.status === 404)) this.syncStateUrl = undefined
       log.warn(`[${this.id}] deltaSync failed`, (e as Error).message)
+      if (this.started && touched.length > 0) this.emit('conversation-updated', touched)
       return
     }
     // Konto während der Abfrage entfernt
@@ -547,6 +558,9 @@ export class AccountService extends EventEmitter<AccountEvents> {
       this.scheduleSnapshot()
       this.emit('changed')
     }
+    // Echtzeit-Ereignisse ohne neue letzte Nachricht (Bearbeitung, Reaktion): nur die Ansicht neu laden
+    const extra = touched.filter((id) => !changed.includes(id))
+    if (extra.length > 0) this.emit('conversation-updated', extra)
     if (activityChanged) {
       void this.refreshActivityCount()
       this.emit('activity-updated')
@@ -555,6 +569,47 @@ export class AccountService extends EventEmitter<AccountEvents> {
 
   private onRealtime(payload: string): void {
     if (!payload || payload.length < 10) return
+    const events = parseRealtimeFrame(payload)
+    if (!events) return this.onRealtimeText(payload)
+    let sync = false
+    for (const ev of events) {
+      if (ev.kind === 'typing') {
+        if (ev.conversationId && ev.from && ev.from !== this.record.mri && !ev.clear) {
+          this.emit('typing', { conversationId: ev.conversationId, mri: ev.from, name: ev.name ?? '' })
+        }
+        continue
+      }
+      // Lesebestätigung eines anderen: nur den Lesestand dieses Chats neu holen.
+      // Der eigene Lesestand (z. B. vom Handy) ändert dagegen "ungelesen" in der Chatliste.
+      if (ev.kind === 'read-receipt' && ev.conversationId && ev.from !== this.record.mri) {
+        this.receiptConvs.add(ev.conversationId)
+        // Leser unbekannt: es könnte auch der eigene Lesestand sein
+        if (!ev.from) sync = true
+        continue
+      }
+      // Bearbeitet, Reaktion, gelöscht: Die letzte Nachricht bleibt dieselbe, deltaSync meldet den Chat
+      // deshalb nicht. Die offene Ansicht soll trotzdem neu laden.
+      if (ev.conversationId && (ev.kind === 'new-message' || ev.kind === 'message-update' || ev.kind === 'thread-update')) {
+        this.realtimeConvs.add(ev.conversationId)
+      }
+      sync = true
+    }
+    if (this.receiptConvs.size > 0) {
+      clearTimeout(this.receiptTimer)
+      this.receiptTimer = setTimeout(() => {
+        const ids = [...this.receiptConvs]
+        this.receiptConvs.clear()
+        if (this.started && ids.length > 0) this.emit('read-receipts', ids)
+      }, 250)
+    }
+    if (sync) {
+      clearTimeout(this.realtimeTimer)
+      this.realtimeTimer = setTimeout(() => void this.deltaSync(), 350)
+    }
+  }
+
+  // Rückfall, wenn ein Frame kein lesbarer Trouter-Frame ist
+  private onRealtimeText(payload: string): void {
     if (/Control\/Typing|ClearTyping/.test(payload)) {
       const m = payload.match(/conversations\\?\/((?:19|8):[^/"\\]+)/)
       const f = payload.match(/contacts\\?\/(8:[^/"\\]+)/)

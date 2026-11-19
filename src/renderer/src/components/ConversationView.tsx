@@ -118,21 +118,28 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
   useEffect(() => {
     if (!receiptsEnabled) return
     let alive = true
-    const load = () =>
-      fetchHorizons(accountId, chat.id)
-        .then((h) => alive && setHorizons(h))
+    let seq = 0
+    const load = () => {
+      // Eine ältere Abfrage (z. B. vom 15-s-Takt) darf eine neuere Lesebestätigung nicht überschreiben
+      const mine = ++seq
+      return fetchHorizons(accountId, chat.id)
+        .then((h) => alive && mine === seq && setHorizons(h))
         .catch(() => undefined)
+    }
     const key = cacheKey(accountId, chat.id)
     if (horizonCache.isFresh(key)) setHorizons(horizonCache.peek(key) ?? null)
     else void load()
     const t = setInterval(load, 15_000)
-    const off = onEvent('conversation-updated', (e) => {
+    const onChange = (e: { accountId: string; conversationIds: string[] }) => {
       if (e.accountId === accountId && e.conversationIds.includes(chat.id)) void load()
-    })
+    }
+    const off = onEvent('conversation-updated', onChange)
+    const offReceipts = onEvent('read-receipts', onChange)
     return () => {
       alive = false
       clearInterval(t)
       off()
+      offReceipts()
     }
   }, [accountId, chat.id, receiptsEnabled])
 

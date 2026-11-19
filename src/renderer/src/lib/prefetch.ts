@@ -27,6 +27,9 @@ function listen(): void {
       channelCache.markStale(key)
     }
   })
+  onEvent('read-receipts', ({ accountId, conversationIds }) => {
+    for (const id of conversationIds) horizonCache.markStale(cacheKey(accountId, id))
+  })
 }
 
 export function fetchMessages(accountId: string, conversationId: string): Promise<Message[]> {
