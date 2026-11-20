@@ -472,7 +472,18 @@ export default function CallApp(): JSX.Element {
   const ownShare = state?.sharing
 
   let body: JSX.Element
-  if (!state || state.phase === 'connecting' || state.phase === 'idle') {
+  if (state?.phase === 'connecting' && state.error) {
+    body = (
+      <Centered>
+        <div className="cw-alone">
+          <h2>{state.error}</h2>
+          <Button appearance="secondary" onClick={() => act('hangup')}>
+            Schließen
+          </Button>
+        </div>
+      </Centered>
+    )
+  } else if (!state || state.phase === 'connecting' || state.phase === 'idle') {
     body = (
       <Centered>
         <Spinner size="large" label="Verbindung wird hergestellt …" labelPosition="below" />
@@ -639,7 +650,7 @@ export default function CallApp(): JSX.Element {
             onClick={() => act(ownShare ? 'stopShare' : 'share')}
           />
         </div>
-        <button className="cw-leave" onClick={() => act('hangup')} disabled={!state || state.phase === 'prejoin'}>
+        <button className="cw-leave" onClick={() => act('hangup')} disabled={state?.phase === 'prejoin'}>
           <CallEnd24Filled />
           <span>Verlassen</span>
         </button>

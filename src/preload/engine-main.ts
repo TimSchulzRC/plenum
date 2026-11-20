@@ -964,6 +964,38 @@ export function engineMainWorld(): void {
   }, 700)
 
   // ---------- Befehle ----------
+  // Zählt abgebrochene Anrufstarts. Ein Start, der beim Warten eine neue Zahl sieht, gibt auf.
+  let startSeq = 0
+
+  async function startCall(video: boolean, seq: number): Promise<void> {
+    const wanted = () => seq === startSeq
+    const fail = (why: string) => {
+      log(why)
+      post({ ch: 'call-start-failed' })
+    }
+    if (video) {
+      const direct = await waitFor(() => q(['[data-tid="chat-call-video-button"]']), 500)
+      if (!wanted()) return
+      if (direct) {
+        click(direct)
+        return
+      }
+      const dd = await waitFor(() => (wanted() ? q(['[data-tid="dropdown-calling-toggle-more-options-btn"]']) : document.body), 30000)
+      if (!wanted()) return
+      if (!dd) return fail('video call button not found')
+      click(dd)
+      const item = await waitFor(() => q(['[data-tid="chat-call-video-button"]']) || byLabel(LBL.videoCall), 4000)
+      if (!wanted()) return
+      if (item) click(item)
+      else fail('video call menu item not found')
+      return
+    }
+    const b = await waitFor(() => (wanted() ? q(['[data-tid="default-chat-call-audio-button"]', '[data-tid="chat-call-audio-button"]']) || byLabel(LBL.audioCall) : document.body), 30000)
+    if (!wanted()) return
+    if (b) click(b)
+    else fail('audio call button not found')
+  }
+
   function doAction(action: string, arg?: string): boolean {
     switch (action) {
       case 'toggleMute': {
@@ -992,7 +1024,10 @@ export function engineMainWorld(): void {
       case 'raiseHand':
         return click(q(SEL.raiseHand))
       case 'cancelJoin':
-        return click(q(['[data-tid="prejoin-cancel-button"]']) || byLabel(RX('^(cancel|abbrechen)$')))
+        // Einen noch laufenden Anrufstart abbrechen, sonst klickt er später doch noch auf "Anrufen"
+        startSeq++
+        // Den Knopf nur über die Beschriftung suchen, wenn die Vorschau offen ist, sonst trifft er fremde Dialoge
+        return click(q(['[data-tid="prejoin-cancel-button"]']) || (q(SEL.joinNow) ? byLabel(RX('^(cancel|abbrechen)$')) : null))
       case 'join':
         return click(q(SEL.joinNow))
       case 'toggleChat':
@@ -1023,23 +1058,8 @@ export function engineMainWorld(): void {
       case 'decline':
         return click(byLabel(LBL.decline))
       case 'startVideoCall':
-        void (async () => {
-          const direct = await waitFor(() => q(['[data-tid="chat-call-video-button"]']), 500)
-          if (direct) return click(direct)
-          const dd = await waitFor(() => q(['[data-tid="dropdown-calling-toggle-more-options-btn"]']), 30000)
-          if (!dd) return log('video call button not found')
-          click(dd)
-          const item = await waitFor(() => q(['[data-tid="chat-call-video-button"]']) || byLabel(LBL.videoCall), 4000)
-          if (item) click(item)
-          else log('video call menu item not found')
-        })()
-        return true
       case 'startAudioCall':
-        void (async () => {
-          const b = await waitFor(() => q(['[data-tid="default-chat-call-audio-button"]', '[data-tid="chat-call-audio-button"]']) || byLabel(LBL.audioCall), 30000)
-          if (b) click(b)
-          else log('audio call button not found')
-        })()
+        void startCall(action === 'startVideoCall', startSeq)
         return true
       case 'activity': {
         const x = 200 + Math.random() * 400
@@ -1290,7 +1310,8 @@ export function engineMainWorld(): void {
   // Befehl aus dem Link (z.B. Anruf starten), sobald die Seite bereit ist
   const linkAction = location.href.match(/[?&#]tmAction=(startAudioCall|startVideoCall)/)
   if (linkAction && /teams\.cloud\.microsoft|teams\.microsoft\.com/.test(location.hostname)) {
-    ownTimeout(() => doAction(linkAction[1]), 1500)
+    const seq = startSeq
+    ownTimeout(() => void startCall(linkAction[1] === 'startVideoCall', seq), 1500)
   }
 
   log('engine hooks installed', location.href)
