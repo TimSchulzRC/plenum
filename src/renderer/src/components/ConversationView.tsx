@@ -5,6 +5,7 @@ import type { ChatSummary, Message } from '@shared/types'
 import { api, onEvent } from '../api'
 import { dayLabel, sameDay } from '../lib/format'
 import { cacheKey, fetchHorizons, fetchMessages, horizonCache, messageCache, receiptsEnabled as hasReceipts } from '../lib/prefetch'
+import { readReceipt } from '../lib/receipts'
 import { personName, useStore } from '../store'
 import { ChatAvatar, PersonAvatar, presenceLabel } from './Avatars'
 import { Composer, imageFiles, type ComposerHandle, type SendPayload } from './Composer'
@@ -21,6 +22,23 @@ function merge(prev: Message[], next: Message[]): Message[] {
     byId.set(m.id, m)
   }
   return [...byId.values()].sort((a, b) => a.time - b.time || Number(a.id) - Number(b.id))
+}
+
+function ReaderList({ title, mris, names }: { title: string; mris: string[]; names: (mri: string) => string }) {
+  if (mris.length === 0) return null
+  return (
+    <div className="receipt-group">
+      <div className="receipt-title">
+        {title} ({mris.length})
+      </div>
+      {mris.map((m) => (
+        <div key={m} className="person-row">
+          <PersonAvatar mri={m} name={names(m)} size={24} />
+          <div className="p-name">{names(m)}</div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export function useMessages(accountId: string, conversationId: string) {
@@ -249,12 +267,7 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
   const lastMineId = useMemo(() => [...msgs].reverse().find((m) => m.isMine && !m.pending && m.kind === 'text')?.id, [msgs])
   const receipt = useMemo(() => {
     if (!receiptsEnabled || !lastMineId || !horizons) return null
-    const others = chat.members
-    const id = Number(lastMineId)
-    const seen = others.filter((m) => (horizons[m] ?? 0) >= id)
-    if (seen.length === 0) return { seen: false, text: 'Gesendet' }
-    if (others.length === 1 || seen.length === others.length) return { seen: true, text: 'Gesehen' }
-    return { seen: true, text: `Gesehen von ${seen.length}` }
+    return readReceipt(chat.members, horizons, lastMineId)
   }, [receiptsEnabled, lastMineId, horizons, chat.members])
 
   const rows = useMemo(() => {
@@ -285,17 +298,40 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
         />
       )
       if (m.id === lastMineId && receipt) {
-        out.push(
-          <div key={`rcpt-${m.id}`} className={`read-receipt ${receipt.seen ? 'seen' : ''}`} title={receipt.seen ? 'Gelesen' : 'Zugestellt'}>
-            {receipt.seen ? <Eye12Regular /> : <CheckmarkCircle12Regular />}
+        const anySeen = receipt.seen.length > 0
+        const label = (
+          <>
+            {anySeen ? <Eye12Regular /> : <CheckmarkCircle12Regular />}
             <span>{receipt.text}</span>
+          </>
+        )
+        out.push(
+          <div key={`rcpt-${m.id}`} className={`read-receipt ${anySeen ? 'seen' : ''}`}>
+            {chat.kind === 'group' ? (
+              // Im Gruppenchat zeigt ein Klick, wer die Nachricht schon gesehen hat
+              <Popover positioning="above-end" withArrow>
+                <PopoverTrigger disableButtonEnhancement>
+                  <button className="read-receipt-btn" title="Wer hat es gesehen?">
+                    {label}
+                  </button>
+                </PopoverTrigger>
+                <PopoverSurface className="receipt-pop">
+                  <ReaderList title="Gesehen von" mris={receipt.seen} names={names} />
+                  <ReaderList title="Noch nicht gesehen" mris={receipt.unseen} names={names} />
+                </PopoverSurface>
+              </Popover>
+            ) : (
+              <span className="read-receipt-label" title={anySeen ? 'Gelesen' : 'Zugestellt'}>
+                {label}
+              </span>
+            )}
           </div>
         )
       }
       prev = m
     }
     return out
-  }, [msgs, accountId, me, names, reload, lastMineId, receipt])
+  }, [msgs, accountId, me, names, reload, lastMineId, receipt, chat.kind])
 
   return (
     <div
