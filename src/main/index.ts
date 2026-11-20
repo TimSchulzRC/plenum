@@ -316,9 +316,10 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     getNotificationStatus: () => ({ supported: Notification.isSupported(), error: notificationError }),
     testNotification: () => testNotification(),
     openNotificationSettings: () => {
-      // Öffnet Systemeinstellungen › Mitteilungen, bei der installierten App direkt deren Eintrag
-      const id = app.isPackaged ? `?id=${BUNDLE_ID}` : ''
-      void shell.openExternal(`x-apple.systempreferences:com.apple.Notifications-Settings.extension${id}`)
+      // Öffnet Systemeinstellungen › Mitteilungen direkt beim Eintrag der App
+      // Dev läuft mit eigener Bundle-ID, siehe scripts/dev-app.mjs
+      const id = app.isPackaged ? BUNDLE_ID : `${BUNDLE_ID}.dev`
+      void shell.openExternal(`x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=${id}`)
     },
     closeWindow: () => sender()?.close(),
     setAlwaysOnTop: (on) => {

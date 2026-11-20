@@ -5,7 +5,7 @@
 // die hellen zeigt die README im hellen GitHub-Theme.
 //
 // Aufruf: pnpm run icons. Schreibt assets/icons/*.svg, build/icon.icns (Stable),
-// build/icon-nightly.icns und build/icon-dev.png (Dock-Icon bei `pnpm run dev`).
+// build/icon-nightly.icns, build/icon-dev.icns (Bundle-Icon bei `pnpm run dev`) und build/icon-dev.png.
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -136,6 +136,7 @@ const render = (channel) => (size) => {
 }
 writeFileSync(join(root, 'build/icon.icns'), icns(render('stable')))
 writeFileSync(join(root, 'build/icon-nightly.icns'), icns(render('nightly')))
+writeFileSync(join(root, 'build/icon-dev.icns'), icns(render('dev')))
 writeFileSync(join(root, 'build/icon.png'), render('stable')(1024))
 writeFileSync(join(root, 'build/icon-dev.png'), render('dev')(1024))
-console.log('Icons geschrieben: assets/icons, build/icon.icns, build/icon-nightly.icns, build/icon.png, build/icon-dev.png')
+console.log('Icons geschrieben: assets/icons, build/icon.icns, build/icon-nightly.icns, build/icon-dev.icns, build/icon.png, build/icon-dev.png')
