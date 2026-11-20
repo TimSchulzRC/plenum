@@ -61,7 +61,7 @@ pnpm run dist         # baut release/mac-arm64/Teams Everywhere.app (ad hoc sign
 pnpm run dist:release # baut DMG und ZIP für arm64 und x64 wie die Release-Pipeline
 ```
 
-`pnpm run dev` und `pnpm start` laufen als „Teams Everywhere (dev)“ mit eigenem Datenordner `~/Library/Application Support/Teams Everywhere (dev)`. Konten, Anmeldungen, Einstellungen und Logs der installierten App bleiben unberührt, und beide können gleichzeitig laufen. Der Dev-Ordner hängt nicht am Checkout, Anmeldungen bleiben also auch in neuen Worktrees und nach Updates erhalten. Den Namen in der Menüleiste trägt `scripts/dev-app-name.mjs` vor jedem Start in die Electron.app unter `node_modules` ein.
+`pnpm run dev` und `pnpm start` laufen als „Teams Everywhere (dev)“ mit eigenem Datenordner `~/Library/Application Support/Teams Everywhere (dev)`. Konten, Anmeldungen, Einstellungen und Logs der installierten App bleiben unberührt, und beide können gleichzeitig laufen. Der Dev-Ordner hängt nicht am Checkout, Anmeldungen bleiben also auch in neuen Worktrees und nach Updates erhalten. Vor jedem Start trägt `scripts/dev-app.mjs` Namen, eigene Bundle-ID (`io.github.timschulzrc.teamseverywhere.dev`) und das Dev-Icon in die Electron.app unter `node_modules` ein und signiert sie ad hoc neu. So zeigen Dock und Mitteilungen das Dev-Icon, und macOS fragt die Mitteilungen für Dev getrennt ab.
 
 Jede Ausgabe hat ein eigenes Icon mit derselben Marke: Stable dunkel mit Amber-Punkt, Nightly unter einem Nachthimmel, Dev auf einer Blaupause. Im Dev-Modus setzt die App das Dev-Icon beim Start ins Dock. `pnpm run icons` erzeugt alle Icons aus `scripts/icons.mjs` neu: die SVGs unter `assets/icons` (dunkel und hell), `build/icon.icns`, `build/icon-nightly.icns` und `build/icon-dev.png`.
 
