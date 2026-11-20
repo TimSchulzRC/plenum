@@ -45,8 +45,10 @@ export class CallManager {
   private closeTimer?: NodeJS.Timeout
   private pendingDisplay?: { cb: (s: any) => void; sources: DesktopCapturerSource[] }
   private probes = new Map<string, (r: unknown) => void>()
-  // Solange ein Anruf/Beitritt angestoßen wird, meldet die Seite noch "idle" – das ignorieren wir.
-  private pendingUntil = 0
+  // Zählt Anrufstarts, damit alte Zeitgeber einen neueren Start nicht beenden
+  private pendingSeq = 0
+  // Nach einem abgebrochenen Start: Klickt die Web-App doch noch auf "Anrufen", sofort wieder auflegen
+  private cancelled?: { accountId: string; until: number }
   private rpcSeq = 0
   private rpcPending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>()
 
@@ -142,6 +144,9 @@ export class CallManager {
         cb?.(msg.result)
         break
       }
+      case 'call-start-failed':
+        if (this.activeAccountId === acct.id && this.state?.phase === 'connecting') this.failPending()
+        break
       case 'display-media-requested':
         break
       case 'log':
@@ -175,8 +180,9 @@ export class CallManager {
 
   private onCallState(acct: AccountService, raw: any): void {
     const phase = raw?.phase ?? 'idle'
-    if (phase === 'idle' && this.activeAccountId === acct.id && Date.now() < this.pendingUntil) return
-    if (phase !== 'idle') this.pendingUntil = 0
+    // Solange ein Anruf/Beitritt angestoßen wird, meldet die Seite noch "idle". Ob der Start scheitert,
+    // entscheiden setPending und failPending.
+    if (phase === 'idle' && this.activeAccountId === acct.id && this.state?.phase === 'connecting') return
     if (phase === 'idle') {
       if (this.activeAccountId === acct.id) {
         this.activeAccountId = undefined
@@ -190,6 +196,11 @@ export class CallManager {
       return
     }
     if (this.activeAccountId && this.activeAccountId !== acct.id) return
+    if (!this.state && this.cancelled?.accountId === acct.id && Date.now() < this.cancelled.until) {
+      log.info('call started after cancel, leaving', phase)
+      acct.engine.send('engine:cmd', { ch: 'action', action: phase === 'prejoin' ? 'cancelJoin' : 'hangup' })
+      return
+    }
     clearTimeout(this.closeTimer)
     const wasIdle = !this.state
     this.activeAccountId = acct.id
@@ -231,10 +242,18 @@ export class CallManager {
     if (!acct) return
     const action = mode === 'video' ? 'acceptVideo' : mode === 'audio' ? 'acceptAudio' : 'decline'
     acct.engine.send('engine:cmd', { ch: 'action', action })
-    if (mode !== 'decline') this.activeAccountId = acct.id
+    if (mode !== 'decline') {
+      this.cancelled = undefined
+      this.activeAccountId = acct.id
+    }
   }
 
   action(action: CallAction | 'startVideoCall' | 'startAudioCall', arg?: string, accountId?: string): void {
+    // Solange der Anruf erst gestartet wird, gibt es in der Web-App noch nichts zum Auflegen
+    if ((action === 'hangup' || action === 'cancelJoin') && !accountId && (!this.state || this.state.phase === 'connecting')) {
+      this.cancelPending(true)
+      return
+    }
     const acct = (accountId && this.accounts().find((a) => a.id === accountId)) || this.activeAccount()
     if (!acct) return
     acct.engine.send('engine:cmd', { ch: 'action', action, arg })
@@ -250,6 +269,7 @@ export class CallManager {
       this.openCallWindow()
       return
     }
+    this.cancelled = undefined
     this.activeAccountId = acct.id
     this.conversationId = CallManager.threadFromJoinUrl(joinUrl)
     acct.engine.navigate(joinUrl)
@@ -262,6 +282,7 @@ export class CallManager {
       this.openCallWindow()
       return
     }
+    this.cancelled = undefined
     this.activeAccountId = acct.id
     this.conversationId = target.conversationId
     const origin = acct.engine.webOrigin()
@@ -289,31 +310,43 @@ export class CallManager {
   private resetCall(): void {
     this.conversationId = undefined
     this.state = null
-    this.pendingUntil = 0
     this.activeAccountId = undefined
     this.streams = []
     this.broadcast('call-state', null)
   }
 
   private setPending(accountId: string, title: string, video: boolean): void {
-    this.pendingUntil = Date.now() + 45_000
+    const seq = ++this.pendingSeq
     this.state = { accountId, phase: 'connecting', title, muted: false, cameraOn: video, sharing: false, handRaised: false, participants: [], available: {}, conversationId: this.conversationId }
     this.broadcast('call-state', this.state)
-    // Falls nichts passiert, Fenster nach Ablauf wieder schließen
+    // Falls nichts passiert, Fehler zeigen und das Fenster schließen
     setTimeout(() => {
-      if (this.state?.phase === 'connecting' && Date.now() >= this.pendingUntil) {
-        this.state = { ...this.state, error: 'Der Anruf konnte nicht gestartet werden.' }
-        this.broadcast('call-state', this.state)
-        setTimeout(() => {
-          if (this.state?.phase === 'connecting') {
-            this.state = null
-            this.activeAccountId = undefined
-            this.broadcast('call-state', null)
-            this.closeCallWindows()
-          }
-        }, 5000)
-      }
+      if (seq === this.pendingSeq && this.state?.phase === 'connecting' && !this.state.error) this.failPending()
     }, 46_000)
+  }
+
+  // Start gescheitert: Fehler kurz zeigen, dann wie "Verlassen"
+  private failPending(): void {
+    if (!this.state) return
+    const seq = this.pendingSeq
+    this.state = { ...this.state, error: 'Der Anruf konnte nicht gestartet werden.' }
+    this.broadcast('call-state', this.state)
+    setTimeout(() => {
+      if (seq === this.pendingSeq && this.state?.phase === 'connecting') this.cancelPending(true)
+    }, 5000)
+  }
+
+  // Anruf, der noch nicht verbunden ist, abbrechen. Die Web-App bricht ihren Start ab.
+  private cancelPending(closeWindow: boolean): void {
+    const acct = this.activeAccount()
+    if (acct) {
+      acct.engine.send('engine:cmd', { ch: 'action', action: 'cancelJoin' })
+      this.cancelled = { accountId: acct.id, until: Date.now() + 45_000 }
+    }
+    log.info('call start cancelled')
+    this.pendingSeq++
+    this.resetCall()
+    if (closeWindow) this.closeCallWindows()
   }
 
   openCallWindow(): void {
@@ -331,7 +364,11 @@ export class CallManager {
       // Beim Beenden der App nicht nachfragen: preventDefault würde das Beenden abbrechen,
       // nachdem die Konten schon gestoppt sind.
       if (this.isQuitting()) return
-      if (phase === 'prejoin' || phase === 'connecting') {
+      if (phase === 'connecting') {
+        this.cancelPending(false)
+        return
+      }
+      if (phase === 'prejoin') {
         this.action('cancelJoin')
         this.resetCall()
         return
