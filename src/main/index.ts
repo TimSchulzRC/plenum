@@ -69,12 +69,16 @@ function accountList() {
 }
 
 let accountsTimer: NodeJS.Timeout | undefined
+let lastBadge = -1
 function emitAccounts(): void {
   clearTimeout(accountsTimer)
   accountsTimer = setTimeout(() => {
     const list = accountList()
     broadcast('accounts', list)
-    app.setBadgeCount(dockBadge(list))
+    const badge = dockBadge(list)
+    if (badge !== lastBadge) log.info(`Dock-Zahl: ${badge}`)
+    lastBadge = badge
+    app.setBadgeCount(badge)
     // Gelesene Unterhaltungen: Mitteilung aus der Mitteilungszentrale nehmen, wie der Punkt am Dock
     liveNotifications.closeRead((k) => accounts.get(k.accountId)?.isUnread(k) ?? false)
   }, 150)
