@@ -60,7 +60,7 @@ Werkzeuge: `list_accounts`, `list_conversations`, `list_teams`, `get_messages`, 
 
 ## Datenschutz
 
-Beim ersten Start fragt die App, ob sie anonyme Nutzungsdaten und Fehlerberichte an PostHog (EU) senden darf. Ohne Zustimmung sendet sie nichts. Nachrichten, Namen, Mailadressen, Kontodaten und IP-Adressen gehen nie mit. Unter Einstellungen › Datenschutz lässt sich das jederzeit ändern, unter Einstellungen › Feedback kannst du Probleme und Ideen direkt schicken. Welche Ereignisse die App sendet, steht in [docs/analytics.md](docs/analytics.md).
+Die App sendet anonyme Nutzungsdaten und Fehlerberichte an PostHog (EU). Nachrichten, Namen, Mailadressen, Kontodaten und IP-Adressen gehen nie mit. Unter Einstellungen › Feedback kannst du Probleme und Ideen direkt schicken. Welche Ereignisse die App sendet, steht in [docs/analytics.md](docs/analytics.md).
 
 ## Aufbau
 

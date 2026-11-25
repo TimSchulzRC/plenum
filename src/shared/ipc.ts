@@ -111,7 +111,6 @@ export interface ApiMethods {
 
   // Nutzungsdaten und Feedback (PostHog). available: die App wurde mit Projektschlüssel gebaut.
   getAnalyticsInfo(): { available: boolean; installId?: string }
-  setUsageData(on: boolean, source: 'prompt' | 'settings'): AppSettings
   sendFeedback(kind: FeedbackKind, message: string): void
 }
 

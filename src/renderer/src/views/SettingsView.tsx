@@ -219,9 +219,9 @@ export function SettingsView(): JSX.Element {
           <h2>Datenschutz</h2>
           <div className="row">
             <div className="grow">
-              Anonyme Nutzungsdaten und Fehlerberichte senden
+              Anonyme Nutzungsdaten und Fehlerberichte
               <div className="hint">
-                Zeigt, welche Funktionen genutzt werden und wo Fehler auftreten. Nachrichten, Namen, Mailadressen und Kontodaten gehen nie mit.{' '}
+                Die App sendet, welche Funktionen genutzt werden und wo Fehler auftreten. Nachrichten, Namen, Mailadressen und Kontodaten gehen nie mit.{' '}
                 <a
                   href={USAGE_DATA_DOC}
                   onClick={(e) => {
@@ -233,9 +233,8 @@ export function SettingsView(): JSX.Element {
                 </a>
               </div>
             </div>
-            <Switch checked={settings.usageData === true} onChange={(_e, d) => void api.setUsageData(d.checked, 'settings')} />
           </div>
-          {settings.usageData === true && analyticsInfo.installId && (
+          {analyticsInfo.installId && (
             <div className="row">
               <div className="grow">
                 Anonyme ID dieser Installation

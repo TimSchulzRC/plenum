@@ -1447,44 +1447,6 @@ button {
   margin: 0 0 8px;
 }
 
-/* ---------- Frage nach Nutzungsdaten ---------- */
-.usage-prompt {
-  align-items: flex-start;
-}
-.usage-prompt-icon {
-  flex: none;
-  margin-top: 1px;
-  color: var(--brand-fg);
-}
-.usage-prompt-text {
-  flex: 1;
-  line-height: 18px;
-}
-.usage-prompt-actions {
-  display: flex;
-  flex: none;
-  gap: 6px;
-  align-self: center;
-}
-.usage-prompt.card {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-  margin-top: 8px;
-  padding: 14px 16px;
-  border-radius: var(--radius-lg);
-  background: var(--pane);
-  border: 1px solid var(--border);
-  text-align: left;
-  font-size: 13px;
-}
-.usage-prompt.card .usage-prompt-icon {
-  display: none;
-}
-.usage-prompt.card .usage-prompt-actions {
-  align-self: flex-end;
-}
 .call-banner {
   display: flex;
   align-items: center;

@@ -319,8 +319,7 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     getSettings: () => settings,
     setSettings: (patch) => {
       const prev = settings
-      // Die Zustimmung zu Nutzungsdaten läuft nur über setUsageData
-      settings = { ...settings, ...patch, usageData: settings.usageData }
+      settings = { ...settings, ...patch }
       store.saveSettings(settings)
       for (const c of settingsChanges(prev, settings)) analytics.track(c.event, c.props, { active: true })
       if (patch.activeAccountId && patch.activeAccountId !== prev.activeAccountId && accounts.size > 1) {
@@ -366,14 +365,6 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
       return installMcp(client, info.name, info.url)
     },
     getAnalyticsInfo: () => ({ available: analytics.available, installId: analytics.installId }),
-    setUsageData: (on, source) => {
-      const value = on === true
-      settings = { ...settings, usageData: value }
-      store.saveSettings(settings)
-      analytics.setConsent(value, source === 'prompt' ? 'prompt' : 'settings')
-      broadcast('settings', settings)
-      return settings
-    },
     sendFeedback: (kind, message) => analytics.sendFeedback(kind, message)
   }
 }
@@ -535,7 +526,7 @@ app.on('before-quit', () => {
   void mcp?.stop()
 })
 // Wartende Nutzungsdaten noch senden, höchstens zwei Sekunden lang. Ohne PostHog-Client
-// (kein Schlüssel, keine Zustimmung) beendet sich die App wie bisher in einem Durchgang.
+// (kein Schlüssel) beendet sich die App wie bisher in einem Durchgang.
 let analyticsDrain: 'idle' | 'running' | 'done' = 'idle'
 app.on('will-quit', (e) => {
   if (analyticsDrain === 'done' || (analyticsDrain === 'idle' && !analytics.needsDrain)) return
@@ -571,7 +562,7 @@ void app.whenReady().then(() => {
   if (variant === 'dev' && !app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon-dev.png'))
   settings = store.loadSettings()
   nativeTheme.themeSource = settings.theme
-  const launch = analytics.init({ variant, consent: settings.usageData, dynamic: () => ({ account_count: accounts.size }) })
+  const launch = analytics.init({ variant, dynamic: () => ({ account_count: accounts.size }) })
   setupCrashReporting(isUiContents)
   let lastUpdate: UpdateState | undefined
   updater = new Updater(
