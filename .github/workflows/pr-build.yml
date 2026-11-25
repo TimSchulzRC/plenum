@@ -1,0 +1,130 @@
+name: PR-Build
+
+# Baut zu jedem Pull Request „Teams Everywhere (dev)“ für Apple Silicon und schreibt den
+# Download-Link als Kommentar in den Pull Request. Der Build ist die Dev-Ausgabe: eigene
+# Bundle-ID, Dev-Icon, Datenordner von `pnpm run dev`, keine Updates. Er stört Stable und
+# Nightly also nicht, und Anmeldungen aus Dev bleiben über neue Builds hinweg erhalten.
+# Details: docs/releasing.md
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: pr-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Dev-Build für macOS
+    runs-on: macos-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      file: ${{ steps.meta.outputs.file }}
+      artifact-url: ${{ steps.upload.outputs.artifact-url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # „-dev.“ in der Version macht die gepackte App zur Dev-Ausgabe, siehe src/main/variant.ts.
+      # Name, Bundle-ID und Icon wie bei `pnpm run dev` (scripts/dev-app.mjs).
+      - id: meta
+        name: Version und Name setzen
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')-dev.pr$PR.$GITHUB_RUN_NUMBER"
+          pnpm pkg set version="$version" \
+            build.productName="Teams Everywhere (dev)" \
+            build.appId="io.github.timschulzrc.teamseverywhere.dev" \
+            build.mac.icon="build/icon-dev.icns"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "file=Teams-Everywhere-$version-mac-arm64.zip" >> "$GITHUB_OUTPUT"
+
+      - name: App bauen (arm64)
+        env:
+          # Ohne Apple-Zertifikat signiert electron-builder ad hoc (mac.identity "-").
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: pnpm run dist
+
+      # ditto behält Symlinks und Signatur der Electron-Frameworks.
+      - name: ZIP packen
+        env:
+          FILE: ${{ steps.meta.outputs.file }}
+        run: |
+          set -euo pipefail
+          app="release/mac-arm64/Teams Everywhere (dev).app"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "release/$FILE"
+          ls -la "release/$FILE"
+
+      # Ohne archive packt GitHub die ZIP noch einmal in eine ZIP.
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: release/${{ steps.meta.outputs.file }}
+          archive: false
+          retention-days: 14
+          if-no-files-found: error
+
+  comment:
+    name: Download-Link in den Pull Request
+    needs: build
+    # Pull Requests aus Forks bekommen kein Token mit Schreibrecht.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+      VERSION: ${{ needs.build.outputs.version }}
+      FILE: ${{ needs.build.outputs.file }}
+      URL: ${{ needs.build.outputs.artifact-url }}
+    steps:
+      # Ein Kommentar pro Pull Request, den jeder neue Build aktualisiert.
+      - run: |
+          set -euo pipefail
+          marker='<!-- pr-build -->'
+          app='/Applications/Teams Everywhere (dev).app'
+          {
+            echo "$marker"
+            echo "### Dev-Build zum Testen"
+            echo
+            echo "**[$FILE herunterladen]($URL)** (Apple Silicon, Stand \`${SHA:0:12}\`, Version \`$VERSION\`)"
+            echo
+            echo "Der Build läuft als „Teams Everywhere (dev)“ mit Dev-Icon, eigener Bundle-ID und den Daten aus \`~/Library/Application Support/Teams Everywhere (dev)\`. Stable und Nightly bleiben unberührt, Anmeldungen aus Dev bleiben erhalten. Er sucht keine Updates, jeder neue Push an diesem Pull Request ersetzt den Link hier."
+            echo
+            echo "1. „Teams Everywhere (dev)“ beenden, falls sie läuft (auch \`pnpm run dev\`)."
+            echo "2. ZIP laden, entpacken und die App in den Ordner Programme ziehen, die alte ersetzen."
+            echo "3. Die App ist nicht notarisiert. Vor dem Start einmal im Terminal ausführen:"
+            echo
+            echo '   ```sh'
+            echo "   xattr -dr com.apple.quarantine \"$app\""
+            echo '   ```'
+            echo
+            echo "Der Link braucht eine Anmeldung bei GitHub und gilt 14 Tage."
+          } > body.md
+          id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n 1)"
+          if [[ -n "$id" ]]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@body.md > /dev/null
+            echo "Kommentar $id aktualisiert"
+          else
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          fi
