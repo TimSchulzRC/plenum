@@ -340,6 +340,8 @@ export interface AppSettings {
   preferredSpeaker?: string
   // Videos im Anruf: ganzes Bild zeigen (contain) oder die Kachel füllen (cover)
   callVideoFit?: 'contain' | 'cover'
+  // Anonyme Nutzungsdaten und Fehlerberichte senden. undefined: noch nicht gefragt.
+  usageData?: boolean
 }
 
 export interface NavigateRequest {

@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { lazy, Suspense } from 'react'
 import { routeInfo } from './api'
+import { installErrorReporting, reactErrorHandlers } from './analytics'
 import { ThemeRoot } from './theme'
 import './styles.css'
 
@@ -25,7 +26,9 @@ for (const type of ['dragover', 'drop'] as const) {
   })
 }
 
-createRoot(document.getElementById('root')!).render(
+installErrorReporting()
+
+createRoot(document.getElementById('root')!, reactErrorHandlers).render(
   <Suspense fallback={null}>
     <Root />
   </Suspense>

@@ -5,6 +5,7 @@ import { TokenStore, type Family } from './tokens'
 import { mayReceiveTokens } from './hosts'
 import type { AccountStatus, BridgeMessage, CallState, IncomingCall, MediaStreamInfo } from '@shared/types'
 import { log } from '../log'
+import { analytics } from '../analytics'
 
 export const TEAMS_START_URL = 'https://teams.microsoft.com/v2/'
 
@@ -226,11 +227,13 @@ export class Engine extends EventEmitter<EngineEvents> {
     wc.on('did-fail-load', (_e, code, desc, url, isMain) => {
       if (!isMain || code === -3) return
       log.warn(`[${this.accountId}] load failed ${code} ${desc} ${url}`)
+      analytics.track('web_app_load_failed', { code, error: desc }, { throttle: { key: `load-${this.accountId}-${code}`, ms: 30 * 60_000 } })
       this.setStatus('error', `Teams konnte nicht geladen werden (${desc}).`)
       setTimeout(() => this.reload(), 15000)
     })
     wc.on('render-process-gone', (_e, details) => {
       log.warn(`[${this.accountId}] renderer gone`, details.reason)
+      analytics.track('web_app_crashed', { reason: details.reason, exit_code: details.exitCode })
       this.setStatus('error', 'Die Teams-Web-App ist abgestürzt, sie wird neu geladen.')
       setTimeout(() => this.reload(), 3000)
     })

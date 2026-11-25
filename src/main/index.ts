@@ -12,6 +12,8 @@ import { log } from './log'
 import { migrateLegacyUserData } from './legacy-data'
 import { LiveNotifications } from './live-notifications'
 import { appVariant, dataName, displayName } from './variant'
+import { analytics } from './analytics'
+import { setupCrashReporting, setupUiAnalytics, trackApiCall, trackApiFailure, trackFocus, usageContext, watchAccount } from './usage'
 import { dockBadge } from '@shared/badge'
 import { McpServer } from './mcp/server'
 import { McpProtocol } from './mcp/protocol'
@@ -19,8 +21,9 @@ import { createTools, SERVER_INSTRUCTIONS } from './mcp/tools'
 import { mcpAccount } from './mcp/source'
 import { installMcp } from './mcp/install'
 import { saveMcpFile } from './mcp/files'
+import { settingsChanges, updateEvents } from '@shared/analytics'
 import type { ApiMethods } from '@shared/ipc'
-import type { AppSettings, DebugInfo, NavigateRequest } from '@shared/types'
+import type { AppSettings, DebugInfo, NavigateRequest, UpdateState } from '@shared/types'
 
 // ---------- Chromium-Schalter (vor app.ready) ----------
 app.commandLine.appendSwitch('disable-renderer-backgrounding')
@@ -98,6 +101,7 @@ function addAccountService(rec: AccountRecord, autoShowLogin: boolean): AccountS
   const acct = new AccountService(rec, { autoShowLogin })
   accounts.set(rec.id, acct)
   calls?.setupSession(acct)
+  watchAccount(acct)
   acct.on('changed', emitAccounts)
   acct.on('record-updated', () => {
     saveRecords()
@@ -135,6 +139,7 @@ function showNotification(n: NotifyPayload): void {
   liveNotifications.add(notif, n)
   notif.on('click', () => {
     liveNotifications.forget(notif)
+    analytics.track('notification_clicked', { kind: n.kind }, { active: true })
     showMain()
     const nav: NavigateRequest = {
       accountId: n.accountId,
@@ -158,7 +163,10 @@ function createNotification(opts: Electron.NotificationConstructorOptions): Noti
   })
   notif.on('failed', (_e, error) => {
     liveNotifications.forget(notif)
-    if (notificationError !== error) log.warn(`Benachrichtigung abgelehnt: ${error}`)
+    if (notificationError !== error) {
+      log.warn(`Benachrichtigung abgelehnt: ${error}`)
+      analytics.track('notification_failed', { error })
+    }
     notificationError = error
   })
   return notif
@@ -201,7 +209,11 @@ function showMain(): void {
 
 function get(id: string): AccountService {
   const a = accounts.get(id)
-  if (!a) throw new Error(`Konto ${id} nicht gefunden`)
+  if (!a) {
+    // Die ID nur ins Log, die Meldung geht auch in die Fehlerberichte
+    log.warn(`Konto ${id} nicht gefunden`)
+    throw new Error('Konto nicht gefunden')
+  }
   return a
 }
 
@@ -306,8 +318,14 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     setCallDevice: (kind, did) => calls.setDevice(kind, did),
     getSettings: () => settings,
     setSettings: (patch) => {
-      settings = { ...settings, ...patch }
+      const prev = settings
+      // Die Zustimmung zu Nutzungsdaten läuft nur über setUsageData
+      settings = { ...settings, ...patch, usageData: settings.usageData }
       store.saveSettings(settings)
+      for (const c of settingsChanges(prev, settings)) analytics.track(c.event, c.props, { active: true })
+      if (patch.activeAccountId && patch.activeAccountId !== prev.activeAccountId && accounts.size > 1) {
+        analytics.track('account_switched', {}, { active: true })
+      }
       if (patch.theme) nativeTheme.themeSource = settings.theme
       broadcast('settings', settings)
       pushPrefs()
@@ -346,21 +364,41 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
       const info = mcp.info()
       if (!info.url) return { ok: false, message: 'Der MCP-Server ist aus.' }
       return installMcp(client, info.name, info.url)
-    }
+    },
+    getAnalyticsInfo: () => ({ available: analytics.available, installId: analytics.installId }),
+    setUsageData: (on, source) => {
+      const value = on === true
+      settings = { ...settings, usageData: value }
+      store.saveSettings(settings)
+      analytics.setConsent(value, source === 'prompt' ? 'prompt' : 'settings')
+      broadcast('settings', settings)
+      return settings
+    },
+    sendFeedback: (kind, message) => analytics.sendFeedback(kind, message)
   }
 }
 
 // Lokaler MCP-Server: Claude Code, Codex & Co. lesen darüber Chats, Dateien, Anrufe und Kalender aller Konten.
 // Stable und Nightly teilen sich Daten und Port, Dev hat beides getrennt und läuft daneben.
 function startMcp(): void {
+  // Nutzungsdaten: nur welches Werkzeug, nie Argumente oder Ergebnisse, je Werkzeug höchstens alle 10 Minuten
   const tools = createTools({
     accounts: () => [...accounts.values()].map(mcpAccount),
     saveFile: (name, data) => saveMcpFile(name, data)
-  })
+  }).map((t) => ({
+    ...t,
+    run: (args: Record<string, unknown>) => {
+      analytics.track('mcp_tool_called', { tool: t.name }, { throttle: { key: `mcp-${t.name}`, ms: 10 * 60_000 } })
+      return t.run(args)
+    }
+  }))
   const protocol = new McpProtocol(
     { name: variant === 'dev' ? 'teams-everywhere-dev' : 'teams-everywhere', title: appName, version: app.getVersion(), instructions: SERVER_INSTRUCTIONS },
     tools,
-    (tool, err) => log.warn(`[mcp] ${tool} fehlgeschlagen`, err.message)
+    (tool, err) => {
+      log.warn(`[mcp] ${tool} fehlgeschlagen`, err.message)
+      analytics.captureError(err, { source: 'mcp', handled: true, props: { tool } })
+    }
   )
   mcp = new McpServer({
     file: join(app.getPath('userData'), 'mcp.json'),
@@ -379,15 +417,23 @@ function pushPrefs(): void {
   }
 }
 
+const usage = usageContext(() => accounts)
+const isUiContents = (wc: Electron.WebContents) => [...uiWindows].some((w) => !w.isDestroyed() && w.webContents === wc)
+
 function setupIpc(): void {
+  setupUiAnalytics(isUiContents)
   ipcMain.handle('api', async (e, name: keyof ApiMethods, ...args: unknown[]) => {
     const handlers = createHandlers(() => BrowserWindow.fromWebContents(e.sender))
     const fn = handlers[name] as (...a: unknown[]) => unknown
     if (!fn) throw new Error(`Unbekannte Methode ${name}`)
+    const started = Date.now()
     try {
-      return await fn(...args)
+      const result = await fn(...args)
+      trackApiCall(name, args, result, Date.now() - started, usage)
+      return result
     } catch (err) {
       log.warn(`api ${name} failed`, (err as Error).message)
+      trackApiFailure(name, err)
       throw err
     }
   })
@@ -468,15 +514,31 @@ function buildMenu(): void {
 
 app.on('second-instance', () => showMain())
 app.on('activate', () => showMain())
+app.on('browser-window-focus', (_e, win) => trackFocus(win, isUiContents))
 // Bei SIGTERM sauber beenden, damit Cookies und Speicher geschrieben werden
 process.on('SIGTERM', () => app.quit())
 process.on('SIGINT', () => app.quit())
 
 app.on('before-quit', () => {
+  // Nach dem Senden der Nutzungsdaten ruft will-quit app.quit() ein zweites Mal
+  if (quitting) return
   quitting = true
   for (const a of accounts.values()) void a.engine.ses.cookies.flushStore().catch(() => undefined)
   for (const a of accounts.values()) a.stop()
   void mcp?.stop()
+})
+// Wartende Nutzungsdaten noch senden, höchstens zwei Sekunden lang. Ohne PostHog-Client
+// (kein Schlüssel, keine Zustimmung) beendet sich die App wie bisher in einem Durchgang.
+let analyticsDrain: 'idle' | 'running' | 'done' = 'idle'
+app.on('will-quit', (e) => {
+  if (analyticsDrain === 'done' || (analyticsDrain === 'idle' && !analytics.needsDrain)) return
+  e.preventDefault()
+  if (analyticsDrain === 'running') return
+  analyticsDrain = 'running'
+  void analytics.shutdown().finally(() => {
+    analyticsDrain = 'done'
+    app.quit()
+  })
 })
 app.on('window-all-closed', () => {
   /* App bleibt aktiv wie Teams */
@@ -499,10 +561,18 @@ void app.whenReady().then(() => {
   if (variant === 'dev' && !app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon-dev.png'))
   settings = store.loadSettings()
   nativeTheme.themeSource = settings.theme
+  const launch = analytics.init({ variant, consent: settings.usageData, dynamic: () => ({ account_count: accounts.size }) })
+  setupCrashReporting(isUiContents)
+  let lastUpdate: UpdateState | undefined
   updater = new Updater(
-    (state) => broadcast('update-state', state),
+    (state) => {
+      if (lastUpdate) for (const ev of updateEvents(lastUpdate, state)) analytics.track(ev.event, ev.props)
+      lastUpdate = state
+      broadcast('update-state', state)
+    },
     () => app.quit()
   )
+  lastUpdate = updater.state
   buildMenu()
   setupIpc()
   calls = new CallManager(() => [...accounts.values()], broadcast, () => quitting)
@@ -515,6 +585,17 @@ void app.whenReady().then(() => {
   }
   startMcp()
   showMain()
+
+  if (launch.updatedFrom) analytics.track('app_updated', { from_version: launch.updatedFrom })
+  analytics.track(
+    'app_started',
+    { launch_ms: Math.round(process.uptime() * 1000), first_launch: launch.firstLaunch, updated_from: launch.updatedFrom, notifications: settings.notifications },
+    {
+      active: true,
+      set: { app_version: app.getVersion(), app_channel: variant, os_version: process.getSystemVersion(), arch: process.arch, account_count: accounts.size },
+      setOnce: { first_version: app.getVersion() }
+    }
+  )
 
   // Aktivität an die Web-Apps weitergeben, damit die Präsenz nicht auf "Abwesend" fällt.
   setInterval(() => {

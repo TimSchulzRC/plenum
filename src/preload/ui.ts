@@ -17,6 +17,8 @@ const bridge: TeamsBridge & { setFocusContext(ctx: { accountId?: string; convers
     return () => listeners.get(event)?.delete(cb)
   }) as TeamsBridge['on'],
   bridgeSend: (msg: BridgeMessage) => ipcRenderer.send('bridge:send', msg),
+  track: (event, props) => ipcRenderer.send('analytics:track', event, props),
+  reportError: (report) => ipcRenderer.send('analytics:error', report),
   webContentsId: 0,
   platform: process.platform,
   route: '',

@@ -44,6 +44,7 @@
     "electron": "45.3.4",
     "electron-builder": "^26.0.0",
     "electron-vite": "^6.0.0",
+    "posthog-node": "6.0.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "typescript": "~5.9.3",

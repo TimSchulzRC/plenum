@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { AccountInfo, AccountSnapshot, AppSettings, CallState, Presence, UpdateState } from '@shared/types'
 import { api, onEvent } from './api'
+import { track } from './analytics'
 
 export type View = 'activity' | 'chat' | 'teams' | 'calendar' | 'calls' | 'settings'
 
@@ -117,10 +118,35 @@ export function personName(snapshot: AccountSnapshot | undefined, mri: string, f
   return snapshot?.people[mri]?.displayName || fallback || 'Unbekannt'
 }
 
+// Welche Ansichten und Unterhaltungen geöffnet werden. Nur die Art, nie Namen oder IDs.
+function trackNavigation(): void {
+  let lastScreen: string | undefined
+  let lastConversation: string | undefined
+  useStore.subscribe((s, prev) => {
+    if (!s.settings) return
+    const screen = s.accounts.length === 0 ? 'welcome' : s.view
+    if (screen !== lastScreen) {
+      lastScreen = screen
+      track('$screen', { $screen_name: screen })
+    }
+    const id = s.activeAccountId
+    const sel = id ? s.selection[id] : undefined
+    const prevSel = id ? prev.selection[id] : undefined
+    if (sel?.newChat && !prevSel?.newChat) track('new_chat_opened')
+    const conv = sel?.channelId ?? sel?.chatId
+    if (conv && conv !== lastConversation) {
+      const kind = sel?.channelId ? 'channel' : (id && s.snapshots[id]?.chats.find((c) => c.id === conv)?.kind) || 'unknown'
+      track('conversation_opened', { kind, view: s.view })
+    }
+    lastConversation = conv
+  })
+}
+
 let initialized = false
 export function initStore(): void {
   if (initialized) return
   initialized = true
+  trackNavigation()
   void Promise.all([api.listAccounts(), api.getSettings(), api.getCallState()]).then(([accounts, settings, call]) => {
     const active = accounts.find((a) => a.id === settings.activeAccountId)?.id ?? accounts[0]?.id
     useStore.setState({ accounts, settings, activeAccountId: active, callState: call })
