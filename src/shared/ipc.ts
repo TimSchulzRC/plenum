@@ -20,6 +20,7 @@ import type {
   CallDevices,
   UpdateState
 } from './types'
+import type { McpClient, McpInfo } from './mcp'
 
 // Methoden, die die Oberfläche über ipcRenderer.invoke('api', name, ...args) aufruft.
 export interface ApiMethods {
@@ -100,6 +101,12 @@ export interface ApiMethods {
   checkForUpdates(): UpdateState
   downloadUpdate(): void
   installUpdate(): void
+
+  // Lokaler MCP-Server für Claude Code und Codex
+  getMcpInfo(): McpInfo
+  setMcpEnabled(on: boolean): McpInfo
+  resetMcpToken(): McpInfo
+  installMcp(client: McpClient): { ok: boolean; message: string }
 }
 
 export type ApiName = keyof ApiMethods
@@ -120,6 +127,7 @@ export interface EventMap {
   typing: { accountId: string; conversationId: string; mri: string; name: string }
   'activity-updated': { accountId: string }
   'update-state': UpdateState
+  mcp: McpInfo
 }
 
 export type EventName = keyof EventMap

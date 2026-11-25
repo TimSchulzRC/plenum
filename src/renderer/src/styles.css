@@ -1543,6 +1543,39 @@ button {
   color: var(--fg-3);
 }
 
+/* MCP-Server */
+.settings .mcp-client {
+  align-items: flex-start;
+}
+.settings .mcp-command {
+  display: block;
+  margin: 6px 0 0;
+  padding: 7px 9px;
+  border-radius: var(--radius);
+  background: var(--content);
+  border: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.settings .mcp-ok {
+  margin-top: 6px;
+  color: var(--fg-2);
+}
+.settings .mcp-error {
+  margin-top: 6px;
+  color: var(--danger-fg);
+}
+.settings .mcp-more {
+  border-bottom: 1px solid var(--border);
+}
+.settings .mcp-more summary {
+  padding: 11px 0;
+  cursor: pointer;
+}
+
 /* ---------- Aktivität ---------- */
 .activity-item {
   display: flex;

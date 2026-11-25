@@ -13,6 +13,12 @@ import { migrateLegacyUserData } from './legacy-data'
 import { LiveNotifications } from './live-notifications'
 import { appVariant, dataName, displayName } from './variant'
 import { dockBadge } from '@shared/badge'
+import { McpServer } from './mcp/server'
+import { McpProtocol } from './mcp/protocol'
+import { createTools, SERVER_INSTRUCTIONS } from './mcp/tools'
+import { mcpAccount } from './mcp/source'
+import { installMcp } from './mcp/install'
+import { saveMcpFile } from './mcp/files'
 import type { ApiMethods } from '@shared/ipc'
 import type { AppSettings, DebugInfo, NavigateRequest } from '@shared/types'
 
@@ -56,6 +62,7 @@ let settings: AppSettings
 const accounts = new Map<string, AccountService>()
 let calls: CallManager
 let updater: Updater
+let mcp: McpServer
 let quitting = false
 let focusContext: { accountId?: string; conversationId?: string } = {}
 
@@ -331,8 +338,39 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     getUpdateState: () => updater.state,
     checkForUpdates: () => updater.check(),
     downloadUpdate: () => void updater.download(),
-    installUpdate: () => updater.install()
+    installUpdate: () => updater.install(),
+    getMcpInfo: () => mcp.info(),
+    setMcpEnabled: (on) => mcp.setEnabled(on),
+    resetMcpToken: () => mcp.resetToken(),
+    installMcp: (client) => {
+      const info = mcp.info()
+      if (!info.url) return { ok: false, message: 'Der MCP-Server ist aus.' }
+      return installMcp(client, info.name, info.url)
+    }
   }
+}
+
+// Lokaler MCP-Server: Claude Code, Codex & Co. lesen darüber Chats, Dateien, Anrufe und Kalender aller Konten.
+// Stable und Nightly teilen sich Daten und Port, Dev hat beides getrennt und läuft daneben.
+function startMcp(): void {
+  const tools = createTools({
+    accounts: () => [...accounts.values()].map(mcpAccount),
+    saveFile: (name, data) => saveMcpFile(name, data)
+  })
+  const protocol = new McpProtocol(
+    { name: variant === 'dev' ? 'teams-everywhere-dev' : 'teams-everywhere', title: appName, version: app.getVersion(), instructions: SERVER_INSTRUCTIONS },
+    tools,
+    (tool, err) => log.warn(`[mcp] ${tool} fehlgeschlagen`, err.message)
+  )
+  mcp = new McpServer({
+    file: join(app.getPath('userData'), 'mcp.json'),
+    defaultPort: variant === 'dev' ? 47312 : 47311,
+    name: variant === 'dev' ? 'teams-everywhere-dev' : 'teams-everywhere',
+    protocol,
+    onChange: (info) => broadcast('mcp', info),
+    log: (level, msg) => log[level](msg)
+  })
+  void mcp.start()
 }
 
 function pushPrefs(): void {
@@ -438,6 +476,7 @@ app.on('before-quit', () => {
   quitting = true
   for (const a of accounts.values()) void a.engine.ses.cookies.flushStore().catch(() => undefined)
   for (const a of accounts.values()) a.stop()
+  void mcp?.stop()
 })
 app.on('window-all-closed', () => {
   /* App bleibt aktiv wie Teams */
@@ -474,6 +513,7 @@ void app.whenReady().then(() => {
     const isActive = r.id === settings.activeAccountId || records.length === 1
     addAccountService(r, isActive)
   }
+  startMcp()
   showMain()
 
   // Aktivität an die Web-Apps weitergeben, damit die Präsenz nicht auf "Abwesend" fällt.

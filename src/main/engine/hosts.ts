@@ -25,3 +25,22 @@ export function isTeamsUrl(rawUrl: string): boolean {
   const h = hostOf(rawUrl)
   return !!h && TEAMS_HOSTS.test(h)
 }
+
+// Nachrichtenseite einer Unterhaltung im Chat-Dienst (z. B. der Cursor für ältere Seiten im MCP-Server):
+// <region>.ng.msg.teams.microsoft.com/v1/… oder teams.microsoft.com/api/chatsvc/<region>/v1/…
+export function isChatMessagesPage(rawUrl: string): boolean {
+  if (!mayReceiveTokens(rawUrl)) return false
+  const u = new URL(rawUrl)
+  const page = /^\/v1\/users\/[^/]+\/conversations\/[^/]+\/messages$/
+  if (/(^|\.)msg\.teams\.microsoft\.com$/.test(u.hostname)) return page.test(u.pathname)
+  const m = u.pathname.match(/^\/api\/chatsvc\/[^/]+(\/.*)$/)
+  return TEAMS_HOSTS.test(u.hostname) && !!m && page.test(m[1])
+}
+
+// Ansicht eines Bildes im Async Media Service von Teams
+const AMS_HOSTS = /(^|\.)(asm\.skype\.com|asyncgw\.teams\.microsoft\.com)$|\.ams\./
+export function isAmsView(rawUrl: string): boolean {
+  if (!mayReceiveTokens(rawUrl)) return false
+  const u = new URL(rawUrl)
+  return AMS_HOSTS.test(u.hostname) && /^\/v1\/objects\/[^/]+\/views\/[^/]+$/.test(u.pathname)
+}

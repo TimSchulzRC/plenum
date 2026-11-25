@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { isTeamsUrl, mayReceiveTokens } from '../src/main/engine/hosts.ts'
+import { isAmsView, isChatMessagesPage, isTeamsUrl, mayReceiveTokens } from '../src/main/engine/hosts.ts'
 import { classify } from '../src/main/engine/tokens.ts'
 
 test('Bild-URLs fremder Hosts bekommen keine Tokens, auch wenn der Pfad nach Teams-API aussieht', () => {
@@ -32,4 +32,23 @@ test('Nur Teams-Links öffnen sich in der Web-App', () => {
   assert.equal(isTeamsUrl('https://teams.microsoft.com.evil.example/l/meetup-join/x'), false)
   assert.equal(isTeamsUrl('javascript:alert(1)'), false)
   assert.equal(isTeamsUrl('not a url'), false)
+})
+
+test('MCP: Cursor nur auf Nachrichtenseiten des Chat-Dienstes', () => {
+  assert.equal(isChatMessagesPage('https://emea.ng.msg.teams.microsoft.com/v1/users/ME/conversations/19%3Aabc%40thread.v2/messages?startTime=1&syncState=x'), true)
+  assert.equal(isChatMessagesPage('https://teams.microsoft.com/api/chatsvc/emea/v1/users/ME/conversations/19%3Aabc%40thread.tacv2%3Bmessageid%3D1/messages?pageSize=20'), true)
+  assert.equal(isChatMessagesPage('https://emea.ng.msg.teams.microsoft.com/v1/users/ME/properties'), false)
+  assert.equal(isChatMessagesPage('https://emea.ng.msg.teams.microsoft.com/v1/users/ME/conversations/19%3Aabc/messages/123'), false)
+  assert.equal(isChatMessagesPage('https://evil.example/v1/users/ME/conversations/19%3Aabc/messages'), false)
+  // Andere Microsoft-Hosts mit passendem Pfad sind nicht der Chat-Dienst
+  assert.equal(isChatMessagesPage('https://login.microsoftonline.com/api/chatsvc/emea/v1/users/ME/conversations/19%3Aabc/messages'), false)
+  assert.equal(isChatMessagesPage('https://graph.microsoft.com/v1/users/ME/conversations/19%3Aabc/messages'), false)
+})
+
+test('MCP: Bilder nur als Ansicht eines AMS-Objekts auf Microsoft-Hosts', () => {
+  assert.equal(isAmsView('https://eu-api.asm.skype.com/v1/objects/0-weu-d1-abc/views/imgo'), true)
+  assert.equal(isAmsView('https://eu-prod.asyncgw.teams.microsoft.com/v1/objects/0-weu-d1-abc/views/imgpsh_fullsize'), true)
+  assert.equal(isAmsView('https://eu-api.asm.skype.com/v1/objects/0-weu-d1-abc/content/imgpsh'), false)
+  assert.equal(isAmsView('https://x.ams.evil.example/v1/objects/a/views/imgo'), false)
+  assert.equal(isAmsView('https://graph.microsoft.com/v1.0/me/messages'), false)
 })

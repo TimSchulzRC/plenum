@@ -42,12 +42,28 @@ Das Update braucht Schreibrechte auf die App und ihren Ordner und klappt nicht, 
 - Status setzen, Benachrichtigungen, Dock-Badge
 - Besprechungen und Anrufe: Vorschau, Kamera, Mikrofon, Hand heben, Reaktionen, Hintergrundbilder (inkl. eigener Bilder), Geräteauswahl, Bildschirm teilen, Pop-out einzelner Videos in eigene Fenster, Kompaktansicht immer im Vordergrund, eingehende Anrufe
 - macOS-Videoeffekte (Menüleiste) stehen zur Verfügung, solange die App im Vordergrund ist
+- Lokaler MCP-Server für Claude Code, Codex und andere MCP-Clients, nur lesend (siehe unten)
+
+## Claude Code und Codex (MCP)
+
+Teams Everywhere bringt einen lokalen MCP-Server mit. Claude Code, Codex und andere MCP-Clients auf demselben Gerät können darüber deine Teams-Daten lesen, in allen angemeldeten Konten: Chats, Kanäle, Nachrichten, geteilte Dateien und Bilder, Anrufverlauf, Aktivität, Kalender und das Personenverzeichnis. Senden, ändern oder als gelesen markieren kann der Server nichts.
+
+1. Einstellungen → Claude Code und Codex → MCP-Server einschalten.
+2. Bei Claude Code oder Codex auf „Eintragen“ klicken. Die App ruft dann `claude mcp add` bzw. `codex mcp add` auf und trägt den Server für alle Projekte ein. Alternativ den angezeigten Befehl kopieren und im Terminal ausführen. Für andere Clients stehen dort auch der JSON-Eintrag und der Abschnitt für `~/.codex/config.toml`.
+3. Laufende Sitzungen von Claude Code oder Codex neu starten.
+
+Danach reicht eine Frage wie „Was gab es heute Neues in Teams?“ oder „Welche Anrufe habe ich verpasst?“.
+
+Der Server lauscht nur auf `127.0.0.1`, Port 47311 (Dev: 47312), und läuft, solange die App offen ist. Die Adresse enthält einen geheimen Schlüssel. „Neuer Schlüssel“ in den Einstellungen macht alte Einträge ungültig, danach den Server neu eintragen. Ist der Port belegt, nimmt die App einen freien Port und zeigt die neue Adresse an.
+
+Werkzeuge: `list_accounts`, `list_conversations`, `list_teams`, `get_messages`, `search_messages`, `list_files`, `read_file`, `get_call_history`, `get_activity`, `get_calendar`, `search_people`. `search_messages` und `list_files` lesen die zuletzt aktiven Unterhaltungen ab einem Datum (Standard: 30 Tage) und durchsuchen sie lokal, eine Volltextsuche über das ganze Archiv ist das nicht. `read_file` legt jede Datei zusätzlich im Temp-Ordner unter „Teams Everywhere MCP“ ab, damit der Agent auch PDFs und Office-Dateien lesen kann. Dateien aus SharePoint und OneDrive holt die App über Microsoft Graph mit dem Token der Teams-Web-App.
 
 ## Aufbau
 
 - **Engine pro Konto** (`src/main/engine/`): ein verstecktes Fenster mit `teams.microsoft.com` in einer eigenen Sitzung (`persist:acct-<id>`). Die App liest die Auth-Header der Web-App mit (`tokens.ts`) und ruft dieselben internen Dienste auf wie sie: Chat-Dienst, CSA (Teams, Kanäle, Ordner), Middle Tier (Personen, Kalender), Präsenz.
 - **Skript in der Web-App** (`src/preload/engine-main.ts`): hält die Seite „sichtbar“, liest Anrufzustand, Teilnehmer und Videostreams aus, bedient Knöpfe (Stummschalten, Kamera, Hand, Hintergründe, Geräte) und schickt Video über eine lokale WebRTC-Verbindung an die eigenen Fenster.
 - **Oberfläche** (`src/renderer/`): React mit Fluent UI. Hauptfenster, Anruffenster, Pop-out-Fenster für einzelne Videos, Klingelfenster.
+- **MCP-Server** (`src/main/mcp/`): HTTP-Server auf 127.0.0.1 mit JSON-RPC nach MCP (Streamable HTTP, ohne SSE). `tools.ts` enthält die lesenden Werkzeuge, `source.ts` verbindet sie mit den Konten. Einstellungen und Schlüssel liegen in `mcp.json` im Datenordner.
 
 ## Entwickeln und bauen
 
