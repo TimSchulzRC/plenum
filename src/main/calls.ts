@@ -68,7 +68,7 @@ export class CallManager {
   private normalBounds?: Electron.Rectangle
   private closeTimer?: NodeJS.Timeout
   private pendingDisplay?: { cb: (s: any) => void; sources: DesktopCapturerSource[] }
-  private loadingDisplay?: { cancelled: boolean }
+  private loadingDisplay?: { cb: (s: any) => void }
   private probes = new Map<string, (r: unknown) => void>()
   // Zählt Anrufstarts, damit alte Zeitgeber einen neueren Start nicht beenden
   private pendingSeq = 0
@@ -97,7 +97,8 @@ export class CallManager {
           this.denyPendingDisplay()
           const t0 = Date.now()
           // Die Quellen zu lesen dauert ein paar Sekunden. So lange zeigt die Auswahl, dass sie lädt.
-          const req = { cancelled: false }
+          // Wer währenddessen abbricht, lehnt die Anfrage sofort ab (denyPendingDisplay).
+          const req = { cb }
           this.loadingDisplay = req
           const target = this.callWindow && !this.callWindow.isDestroyed() ? this.callWindow : BrowserWindow.getFocusedWindow()
           if (target) {
@@ -106,29 +107,23 @@ export class CallManager {
             target.focus()
           }
           this.broadcast('display-sources-loading', true)
-          // Ohne Freigabe in den Systemeinstellungen liefert macOS keine Quellen. Die Auswahl zeigt
-          // dann einen Hinweis statt nichts. Ohne Antwort hinge die Freigabe in der Web-App.
+          // Ohne Freigabe in den Systemeinstellungen liefert macOS keine Quellen. Die Auswahl zeigt dann
+          // einen Hinweis. getSources trotzdem aufrufen: Erst das fragt beim ersten Mal nach der
+          // Berechtigung und trägt die App in die Liste ein. Vorher meldet macOS schon "denied".
           const access = process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('screen') : 'granted'
           log.info('display media requested, screen access', access)
           let sources: DesktopCapturerSource[] = []
-          if (access === 'denied' || access === 'restricted') {
-            analytics.track('screen_share_failed', { reason: 'permission' })
-          } else {
-            try {
-              sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
-              log.info(`display sources: ${sources.length} after ${Date.now() - t0} ms`)
-            } catch (e) {
-              // Electron lehnt hier mit einem String ab, nicht mit einem Error
-              log.warn('desktopCapturer.getSources failed', e instanceof Error ? e.message : String(e))
-              analytics.track('screen_share_failed', { reason: 'sources' })
-            }
+          try {
+            sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
+            log.info(`display sources: ${sources.length} after ${Date.now() - t0} ms`)
+          } catch (e) {
+            // Electron lehnt hier mit einem String ab, nicht mit einem Error
+            log.warn('desktopCapturer.getSources failed', e instanceof Error ? e.message : String(e))
           }
-          if (this.loadingDisplay === req) this.loadingDisplay = undefined
-          // Während des Ladens abgebrochen, das Anruffenster geschlossen oder eine neue Anfrage
-          if (req.cancelled) {
-            denyDisplay(cb)
-            return
-          }
+          if (!sources.length) analytics.track('screen_share_failed', { reason: access === 'granted' ? 'sources' : 'permission' })
+          // Während des Ladens abgebrochen, das Anruffenster geschlossen oder eine neue Anfrage: schon abgelehnt
+          if (this.loadingDisplay !== req) return
+          this.loadingDisplay = undefined
           this.pendingDisplay = { cb, sources }
           this.broadcast(
             'display-sources',
@@ -141,8 +136,9 @@ export class CallManager {
   }
 
   private denyPendingDisplay(): void {
-    if (this.loadingDisplay) this.loadingDisplay.cancelled = true
+    const l = this.loadingDisplay
     this.loadingDisplay = undefined
+    if (l) denyDisplay(l.cb)
     const p = this.pendingDisplay
     this.pendingDisplay = undefined
     if (p) denyDisplay(p.cb)
@@ -153,8 +149,7 @@ export class CallManager {
     this.pendingDisplay = undefined
     if (!p) {
       // Abbrechen, solange die Quellen noch laden
-      if (this.loadingDisplay) this.loadingDisplay.cancelled = true
-      this.loadingDisplay = undefined
+      this.denyPendingDisplay()
       return
     }
     const src = id ? p.sources.find((s) => s.id === id) : undefined

@@ -84,7 +84,7 @@ Aktionen aus der Oberfläche tragen zusätzlich `duration_ms`, die Dauer des Auf
 | `incoming_call_received`, `incoming_call_missed` | eingehender Anruf | `video` |
 | `incoming_call_answered` | angenommen oder abgelehnt | `mode` |
 | `screen_share_source_picked` | Freigabe gewählt | `kind` (`screen`, `window`, `cancelled`) |
-| `screen_share_failed` | Teilen gescheitert | `reason`: `permission` (macOS-Berechtigung fehlt), `sources` (Quellen nicht lesbar), `disabled` (Teams sperrt Teilen, Anruf noch nicht verbunden), `no_tray` (Teams öffnet sein Teilen-Menü nicht), `no_request` (Teams fragt keine Quelle an) |
+| `screen_share_failed` | Teilen gescheitert | `reason`: `permission` (keine Quellen, macOS-Berechtigung fehlt), `sources` (keine Quellen trotz Berechtigung), `disabled` (Teams sperrt Teilen, Anruf noch nicht verbunden), `no_tray` (Teams öffnet sein Teilen-Menü nicht), `no_request` (Teams fragt keine Quelle an) |
 | `screen_capture_settings_opened` | Systemeinstellungen für Bildschirmaufnahme aus der Quellenauswahl geöffnet | |
 | `call_background_changed`, `call_background_uploaded`, `call_device_changed` | Hintergrund und Geräte | `kind` |
 | `call_video_popped_out`, `call_compact_view`, `call_opened_in_web_view`, `call_window_close_prompt` | Fenster des Anrufs | `on`, `choice` |

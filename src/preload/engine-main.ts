@@ -977,17 +977,16 @@ export function engineMainWorld(): void {
   // Zählt abgebrochene Anrufstarts. Ein Start, der beim Warten eine neue Zahl sieht, gibt auf.
   let startSeq = 0
 
-  // Für das Log: welche Anrufknöpfe Teams gerade zeigt. Nur technische Kennungen: Kacheln tragen
-  // den Namen im data-tid, Telefon-Einträge die Nummer.
+  // Für das Log: welche der bekannten Anruf- und Teilen-Knöpfe Teams gerade zeigt. Nur diese
+  // Kennungen, denn Teams schreibt auch Namen in data-tid.
   function callButtonIds(): string {
-    const ids = new Set<string>()
-    for (const el of Array.from(document.querySelectorAll('[data-tid]'))) {
-      const tid = el.getAttribute('data-tid') || ''
-      if (tid.length > 60 || !/^[a-z][a-z0-9-]*$/i.test(tid) || /\d{3}/.test(tid) || tid.startsWith(CONTAINER_PREFIX)) continue
-      if (/call|video|audio|share/i.test(tid) && visible(el)) ids.add(tid)
-      if (ids.size >= 20) break
+    const known = [...CALL_DIRECT.video, ...CALL_DIRECT.audio, ...CALL_MORE, ...SEL.share, ...SHARE_ENTRY_SEL, '[data-tid="share-popup"]', '[data-tid="share-tray-picker"]']
+    const out: string[] = []
+    for (const s of known) {
+      const el = document.querySelector(s)
+      if (el && visible(el)) out.push(s.replace(/^\[data-tid="(.*)"\]$/, '$1') + (disabled(el) ? ' (disabled)' : ''))
     }
-    return [...ids].join(' ') || '-'
+    return out.join(' ') || '-'
   }
 
   // Anrufknöpfe im Chatkopf (aus dem Code der Teams-Web-App, Stand November 2026). Standard ist ein
