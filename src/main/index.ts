@@ -310,6 +310,9 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     setCallCompact: (on) => calls.setCompact(on),
     showCallInTeams: () => calls.showInTeams(),
     pickDisplaySource: (sid) => calls.pickDisplaySource(sid),
+    openScreenCaptureSettings: () => {
+      if (process.platform === 'darwin') void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+    },
     getBackgrounds: () => calls.getBackgrounds(),
     setBackground: (bid) => calls.setBackground(bid),
     addBackground: () => calls.addBackground(sender()),

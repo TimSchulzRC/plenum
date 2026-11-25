@@ -100,6 +100,8 @@ export function engineMainWorld(): void {
   const remoteTracks = new Map<string, { track: MediaStreamTrack; at: number }>()
   const teamsPcs = new Set<RTCPeerConnection>()
   const prefs: { camera?: string; mic?: string; speaker?: string } = {}
+  // Zählt Aufrufe von getDisplayMedia. So sieht "Teilen", ob Teams nach dem Klick eine Quelle anfragt.
+  let displayRequests = 0
 
   function withDevice(c: any, id: string | undefined): any {
     if (!id || !c) return c
@@ -142,8 +144,16 @@ export function engineMainWorld(): void {
     const origGDM = proto.getDisplayMedia
     if (origGDM) {
       proto.getDisplayMedia = async function (constraints: any) {
+        displayRequests++
         post({ ch: 'display-media-requested' })
-        const s: MediaStream = await origGDM.call(this, constraints)
+        let s: MediaStream
+        try {
+          s = await origGDM.call(this, constraints)
+        } catch (e) {
+          // NotAllowedError heißt meist: Auswahl abgebrochen oder keine Quellen
+          log('getDisplayMedia failed', (e as Error)?.name || String(e))
+          throw e
+        }
         for (const t of s.getVideoTracks()) {
           localTracks.set(t.id, { track: t, kind: 'screen' })
           t.addEventListener('ended', () => scheduleScan())
@@ -294,7 +304,6 @@ export function engineMainWorld(): void {
     lowerHand: RX('^(lower|lower hand|hand senken|senken)'),
     lobby: RX('(someone in the meeting should let you in|jemand in der besprechung sollte sie|wartebereich|lobby)'),
     continueBrowser: RX('(continue on this browser|in diesem browser fortfahren|auf diesem browser fortfahren|use the web app instead|stattdessen.*web)'),
-    videoCall: RX('^(video call|videoanruf)'),
     audioCall: RX('^(audio call|audioanruf|anrufen|call)$')
   }
 
@@ -915,7 +924,8 @@ export function engineMainWorld(): void {
         toggleMute: !!mic,
         toggleCamera: !!cam,
         hangup: !!hangup,
-        share: !!share,
+        // Teams sperrt "Teilen", bis ein 1:1-Anruf verbunden ist
+        share: !!share && !disabled(share),
         stopShare: !!stopShare || anyScreen,
         raiseHand: !!raise,
         join: !!joinNow,
@@ -967,33 +977,146 @@ export function engineMainWorld(): void {
   // Zählt abgebrochene Anrufstarts. Ein Start, der beim Warten eine neue Zahl sieht, gibt auf.
   let startSeq = 0
 
-  async function startCall(video: boolean, seq: number): Promise<void> {
-    const wanted = () => seq === startSeq
-    const fail = (why: string) => {
-      log(why)
-      post({ ch: 'call-start-failed' })
+  // Für das Log: welche Anrufknöpfe Teams gerade zeigt. Nur technische Kennungen: Kacheln tragen
+  // den Namen im data-tid, Telefon-Einträge die Nummer.
+  function callButtonIds(): string {
+    const ids = new Set<string>()
+    for (const el of Array.from(document.querySelectorAll('[data-tid]'))) {
+      const tid = el.getAttribute('data-tid') || ''
+      if (tid.length > 60 || !/^[a-z][a-z0-9-]*$/i.test(tid) || /\d{3}/.test(tid) || tid.startsWith(CONTAINER_PREFIX)) continue
+      if (/call|video|audio|share/i.test(tid) && visible(el)) ids.add(tid)
+      if (ids.size >= 20) break
     }
-    if (video) {
-      const direct = await waitFor(() => q(['[data-tid="chat-call-video-button"]']), 500)
-      if (!wanted()) return
-      if (direct) {
-        click(direct)
-        return
+    return [...ids].join(' ') || '-'
+  }
+
+  // Anrufknöpfe im Chatkopf (aus dem Code der Teams-Web-App, Stand November 2026). Standard ist ein
+  // Hauptknopf für die zuletzt gewählte Anrufart, daneben ein Menü mit "Videoanruf" und "Audioanruf".
+  // Je nach Feature-Flag zeigt Teams beide Arten auch direkt im Kopf oder als geteilten Knopf.
+  const CALL_DIRECT = {
+    video: ['[data-tid="default-chat-call-video-button"]', '[data-tid="chat-call-video-button"]', '[data-tid="dropdown-video-call-btn"]'],
+    audio: ['[data-tid="default-chat-call-audio-button"]', '[data-tid="chat-call-audio-button"]', '[data-tid="dropdown-audio-call-primary-btn"]', '[data-tid="dropdown-audio-call-btn"]']
+  }
+  const CALL_MORE = ['[data-tid="dropdown-calling-toggle-more-options-btn"]']
+  const CALL_ITEM_LABEL = { video: RX('^(video call|videoanruf)$'), audio: RX('^(audio call|audioanruf)$') }
+  function disabled(el: Element): boolean {
+    return el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true'
+  }
+  function usable(selectors: string[]): HTMLElement | null {
+    for (const s of selectors) for (const el of Array.from(document.querySelectorAll<HTMLElement>(s))) if (!disabled(el) && visible(el)) return el
+    return null
+  }
+  // Eintrag im geöffneten Anrufmenü. Nur im Menü suchen: Seitenweit trifft die Beschriftung auch
+  // anderes, das mit "Videoanruf" beginnt.
+  function callMenuItem(kind: 'video' | 'audio'): HTMLElement | null {
+    for (const menu of Array.from(document.querySelectorAll('[role="menu"]'))) {
+      if (!visible(menu)) continue
+      for (const s of CALL_DIRECT[kind]) {
+        const el = menu.querySelector<HTMLElement>(s)
+        if (el && visible(el)) return el
       }
-      const dd = await waitFor(() => (wanted() ? q(['[data-tid="dropdown-calling-toggle-more-options-btn"]']) : document.body), 30000)
-      if (!wanted()) return
-      if (!dd) return fail('video call button not found')
-      click(dd)
-      const item = await waitFor(() => q(['[data-tid="chat-call-video-button"]']) || byLabel(LBL.videoCall), 4000)
-      if (!wanted()) return
-      if (item) click(item)
-      else fail('video call menu item not found')
-      return
+      const el = byLabel(CALL_ITEM_LABEL[kind], menu, '[role="menuitem"]')
+      if (el) return el
     }
-    const b = await waitFor(() => (wanted() ? q(['[data-tid="default-chat-call-audio-button"]', '[data-tid="chat-call-audio-button"]']) || byLabel(LBL.audioCall) : document.body), 30000)
+    return null
+  }
+
+  async function startCall(video: boolean, seq: number): Promise<void> {
+    const kind = video ? 'video' : 'audio'
+    const t0 = Date.now()
+    const wanted = () => seq === startSeq
+    const step = (what: string) => log(`start call: ${what} after ${Date.now() - t0} ms`)
+    const fail = (why: string, reason?: string) => {
+      log(`${why} after ${Date.now() - t0} ms, buttons: ${callButtonIds()}`)
+      post({ ch: 'call-start-failed', reason })
+    }
+    // Teams braucht nach dem Laden einige Sekunden, bis der Chatkopf steht. Bis dahin auf einen
+    // direkten Knopf für diese Anrufart oder auf das Anrufmenü warten, beides nur, wenn es klickbar ist.
+    // Bisher galt der direkte Videoknopf nur in den ersten 0,5 s, und Audio fand nach einem
+    // Videoanruf keinen Knopf mehr, weil Teams dann den Videoknopf als Hauptknopf zeigt.
+    const byText = (): HTMLElement | null => {
+      const el = video ? null : byLabel(LBL.audioCall)
+      return el && !disabled(el) ? el : null
+    }
+    const first = await waitFor(() => (wanted() ? usable(CALL_DIRECT[kind]) || byText() || usable(CALL_MORE) : document.body), 30000)
     if (!wanted()) return
-    if (b) click(b)
-    else fail('audio call button not found')
+    if (!first) return fail(`${kind} call button not found`)
+    let target = first
+    if (first.matches(CALL_MORE[0])) {
+      step('call menu')
+      click(first)
+      const item = await waitFor(() => (wanted() ? callMenuItem(kind) : document.body), 4000)
+      if (!wanted()) return
+      if (!item) return fail(`${kind} call menu item not found`)
+      // Direkt nach dem Laden sperrt Teams "Videoanruf", bis es weiß, ob Video geht. Ein Klick auf den
+      // gesperrten Eintrag verpufft ohne Fehler, so hing der Start bisher. Deshalb warten, bis er frei ist.
+      const enabledItem = (): HTMLElement | null => {
+        const el = callMenuItem(kind)
+        return el && !disabled(el) ? el : null
+      }
+      const ready = await waitFor(() => (wanted() ? enabledItem() : document.body), 10000)
+      if (!wanted()) return
+      if (!ready) {
+        // Teams schreibt den Grund ins aria-label, z.B. "Keine verfügbare Kamera gefunden". Ohne Grund
+        // steht dort nur "Videoanruf".
+        const label = attrLabel(callMenuItem(kind) ?? item).slice(0, 120)
+        await closeFlyouts()
+        return fail(`${kind} call menu item disabled (${label})`, CALL_ITEM_LABEL[kind].test(label) ? undefined : label)
+      }
+      target = ready
+    }
+    step(`${kind} call ${target.getAttribute('data-tid') || 'button'}`)
+    click(target)
+    // Nur fürs Log: erscheint der Anrufbildschirm?
+    const shown = await waitFor(() => q(SEL.hangup), 15000)
+    if (wanted()) log(shown ? `start call: call screen after ${Date.now() - t0} ms` : `start call: no call screen 15 s after click, buttons: ${callButtonIds()}`)
+  }
+
+  // ---------- Bildschirm teilen ----------
+  // "Teilen" in Teams öffnet nur ein Menü im versteckten Fenster. Erst dessen Eintrag "Bildschirm,
+  // Fenster oder Registerkarte" fragt mit getDisplayMedia eine Quelle an, die man dann im
+  // Anruffenster wählt. Deshalb klickt die Engine den Eintrag selbst.
+  const SHARE_ENTRY_SEL = ['[data-tid="share-screen-window-or-tab"]', '[data-tid="share-tray-picker-screen"]']
+  const SHARE_ENTRY = RX('^((share a )?screen, window,? (or|and) tab|bildschirm, fenster oder registerkarte|geben sie einen bildschirm)')
+  function shareEntry(): HTMLElement | null {
+    const tray = Array.from(document.querySelectorAll('[data-tid="share-popup"],[data-tid="share-tray"],[data-tid="share-tray-picker"]')).find(visible)
+    return usable(SHARE_ENTRY_SEL) || (tray ? byLabel(SHARE_ENTRY, tray, 'button,[role="button"],[role="menuitem"]') : null)
+  }
+  let shareRun = 0
+  async function share(): Promise<boolean> {
+    const btn = q(SEL.share)
+    if (!btn) return false
+    const run = ++shareRun
+    const before = displayRequests
+    const t0 = Date.now()
+    const asked = () => displayRequests !== before
+    const done = () => asked() || run !== shareRun
+    const failed = (why: string) => {
+      log(`share: ${why} after ${Date.now() - t0} ms, dialogs: ${document.getElementsByClassName('ui-dialog').length}, buttons: ${callButtonIds()}`)
+      post({ ch: 'share-failed', reason: why.split(' ')[0] })
+    }
+    // Teams sperrt "Teilen", solange der Anruf nicht verbunden ist (1:1-Anruf klingelt noch)
+    if (disabled(btn)) {
+      failed('disabled')
+      return true
+    }
+    // Ein zweiter Klick schlösse das Menü wieder
+    if (btn.getAttribute('aria-expanded') !== 'true') click(btn)
+    const entry = await waitFor(() => (done() ? document.body : shareEntry()), 3000)
+    if (run !== shareRun) return true
+    if (!asked()) {
+      if (!entry) {
+        failed('no_tray')
+        return true
+      }
+      log(`share: tray entry ${entry.getAttribute('data-tid') || 'by label'} after ${Date.now() - t0} ms`)
+      click(entry)
+      await waitFor(() => (done() ? document.body : null), 5000)
+      if (run !== shareRun) return true
+    }
+    if (asked()) log(`share: display requested after ${Date.now() - t0} ms`)
+    else failed('no_request')
+    return true
   }
 
   function doAction(action: string, arg?: string): boolean {
@@ -1014,7 +1137,9 @@ export function engineMainWorld(): void {
       case 'hangup':
         return click(q(SEL.hangup))
       case 'share':
-        return click(q(SEL.share))
+        if (!q(SEL.share)) return false
+        void share()
+        return true
       case 'stopShare': {
         const b = byLabel(LBL.stopShare)
         if (b) return click(b)

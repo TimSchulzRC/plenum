@@ -89,6 +89,7 @@ const MAPPERS: { [K in ApiName]?: Mapper<K> } = {
   setCallCompact: ([compact]) => ({ event: 'call_compact_view', props: { on: compact } }),
   showCallInTeams: () => ({ event: 'call_opened_in_web_view' }),
   pickDisplaySource: ([sourceId]) => ({ event: 'screen_share_source_picked', props: { kind: displaySourceKind(sourceId) } }),
+  openScreenCaptureSettings: () => ({ event: 'screen_capture_settings_opened' }),
   setBackground: () => ({ event: 'call_background_changed' }),
   addBackground: () => ({ event: 'call_background_uploaded', onlyWithResult: true }),
   setCallDevice: ([kind]) => ({ event: 'call_device_changed', props: { kind } }),

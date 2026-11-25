@@ -78,6 +78,8 @@ export interface ApiMethods {
   setCallCompact(compact: boolean): void
   showCallInTeams(): void
   pickDisplaySource(sourceId: string | null): void
+  // macOS: Systemeinstellungen › Bildschirmaufnahme öffnen
+  openScreenCaptureSettings(): void
   getBackgrounds(): BackgroundList
   setBackground(id: string): void
   addBackground(): BackgroundList | null
@@ -129,6 +131,10 @@ export interface EventMap {
   navigate: NavigateRequest
   settings: AppSettings
   'display-sources': { id: string; name: string; thumbnail: string; kind: 'screen' | 'window' }[]
+  // Teams hat eine Quelle angefragt, die Liste lädt noch
+  'display-sources-loading': true
+  // Kurzer Hinweis im Anruffenster, z.B. wenn Teams das Teilen nicht startet
+  'call-notice': string
   typing: { accountId: string; conversationId: string; mri: string; name: string }
   'activity-updated': { accountId: string }
   'update-state': UpdateState
