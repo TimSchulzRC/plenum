@@ -337,7 +337,7 @@ async function configureProject(project) {
   // Vorhandene Filter, etwa die Kohorte interner Nutzer, bleiben.
   const devFilter = { key: 'app_channel', value: ['dev'], operator: 'is_not', type: 'event' }
   const filters = project.test_account_filters ?? []
-  const hasDev = filters.some((f) => f.key === 'app_channel' && f.operator === 'is_not' && [f.value].flat().includes('dev'))
+  const hasDev = filters.some((f) => f.type === 'event' && f.key === 'app_channel' && f.operator === 'is_not' && [f.value].flat().includes('dev'))
   await api('PATCH', `/api/environments/${project.id}/`, {
     // IP-Adressen nicht speichern
     anonymize_ips: true,

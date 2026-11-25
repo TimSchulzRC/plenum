@@ -397,7 +397,14 @@ function startMcp(): void {
     tools,
     (tool, err) => {
       log.warn(`[mcp] ${tool} fehlgeschlagen`, err.message)
-      analytics.captureError(err, { source: 'mcp', handled: true, props: { tool } })
+      // Meldungen aus Werkzeugen können Dateinamen oder Inhalte tragen. In die Fehlerberichte gehen
+      // nur Werkzeug, Fehlerart, ein Code wie ENOENT und die Stackframes, nie die Meldung.
+      const code = (err as NodeJS.ErrnoException).code
+      const safe = new Error(`MCP-Werkzeug ${tool} fehlgeschlagen${typeof code === 'string' && /^[A-Z0-9_]{2,40}$/.test(code) ? ` (${code})` : ''}`)
+      safe.name = err.name
+      const frames = (err.stack ?? '').split('\n').filter((l) => /^\s+at /.test(l))
+      safe.stack = [`${safe.name}: ${safe.message}`, ...frames].join('\n')
+      analytics.captureError(safe, { source: 'mcp', handled: true, props: { tool } })
     }
   )
   mcp = new McpServer({

@@ -47,6 +47,9 @@ const REPLACEMENTS: [RegExp, string][] = [
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<id>'],
   // Benutzerordner in Pfaden, auch in Stacktraces
   [/(\/Users\/|\/home\/|[A-Z]:\\Users\\)[^/\\\s"'<>]+/g, '$1<user>'],
+  // Zitierte Pfade in Fehlern von fs (open '/Users/…/Anhang von Max.pdf'). Pfade in Stackframes
+  // stehen nicht in Anführungszeichen und bleiben.
+  [/(['"])(?:\/|~\/|[A-Za-z]:\\)[^'"\n]*\1/g, '$1<path>$1'],
   // JSON.parse zitiert die Eingabe unverändert, auch mit Anführungszeichen darin:
   // Unexpected token 'H', "Hallo "Max"" is not valid JSON
   [/"[\s\S]*?"(?:\.\.\.)?(?= is not valid JSON)/g, '"<text>"'],

@@ -40,6 +40,13 @@ test('JSON.parse-Fehler verlieren die zitierte Eingabe', () => {
   }
 })
 
+test('Zitierte Pfade aus fs-Fehlern fallen weg, Stackframes bleiben', () => {
+  const out = scrubText("ENAMETOOLONG: name too long, open '/Users/max/Library/Application Support/Teams Everywhere/mcp/Angebot Müller GmbH.pdf'\n    at saveMcpFile (/Applications/Teams Everywhere.app/Contents/Resources/app.asar/out/main/index.js:120:7)")
+  assert.doesNotMatch(out, /Angebot|Müller/)
+  assert.match(out, /open '<path>'/)
+  assert.match(out, /app\.asar\/out\/main\/index\.js:120:7/)
+})
+
 test('Texte werden gekürzt', () => {
   assert.equal(scrubText('x'.repeat(10) + ' ' + 'y'.repeat(10), 5), 'xxxxx…')
 })
