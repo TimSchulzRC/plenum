@@ -448,7 +448,8 @@ export default function CallApp(): JSX.Element {
 
   useEffect(() => {
     const offCompact = (window.teams.on as unknown as (e: string, cb: (p: unknown) => void) => () => void)('call-compact', (p) => setCompact(!!p))
-    const offSources = onEvent('display-sources', (list) => setSources(list))
+    // Die Liste gehört zur Ladeanzeige davor. Nach "Abbrechen" kommt sie nicht mehr an.
+    const offSources = onEvent('display-sources', (list) => setSources((cur) => (cur === 'loading' ? list : cur)))
     const offLoading = onEvent('display-sources-loading', () => setSources('loading'))
     const offNotice = onEvent('call-notice', (text) => setNotice(text))
     return () => {

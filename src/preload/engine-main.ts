@@ -979,10 +979,15 @@ export function engineMainWorld(): void {
 
   // Für das Log: welche der bekannten Anruf- und Teilen-Knöpfe Teams gerade zeigt. Nur diese
   // Kennungen, denn Teams schreibt auch Namen in data-tid.
+  const knownButtons = (): string[] => [...CALL_DIRECT.video, ...CALL_DIRECT.audio, ...CALL_MORE, ...SEL.share, ...SHARE_ENTRY_SEL, '[data-tid="share-popup"]', '[data-tid="share-tray-picker"]']
+  // Kennung eines geklickten Knopfs fürs Log, nur wenn sie bekannt ist
+  function knownId(el: Element): string {
+    const s = knownButtons().find((k) => el.matches(k))
+    return s ? s.replace(/^\[data-tid="(.*)"\]$/, '$1') : 'by label'
+  }
   function callButtonIds(): string {
-    const known = [...CALL_DIRECT.video, ...CALL_DIRECT.audio, ...CALL_MORE, ...SEL.share, ...SHARE_ENTRY_SEL, '[data-tid="share-popup"]', '[data-tid="share-tray-picker"]']
     const out: string[] = []
-    for (const s of known) {
+    for (const s of knownButtons()) {
       const el = document.querySelector(s)
       if (el && visible(el)) out.push(s.replace(/^\[data-tid="(.*)"\]$/, '$1') + (disabled(el) ? ' (disabled)' : ''))
     }
@@ -1064,7 +1069,7 @@ export function engineMainWorld(): void {
       }
       target = ready
     }
-    step(`${kind} call ${target.getAttribute('data-tid') || 'button'}`)
+    step(`${kind} call ${knownId(target)}`)
     click(target)
     // Nur fürs Log: erscheint der Anrufbildschirm?
     const shown = await waitFor(() => q(SEL.hangup), 15000)
@@ -1108,7 +1113,7 @@ export function engineMainWorld(): void {
         failed('no_tray')
         return true
       }
-      log(`share: tray entry ${entry.getAttribute('data-tid') || 'by label'} after ${Date.now() - t0} ms`)
+      log(`share: tray entry ${knownId(entry)} after ${Date.now() - t0} ms`)
       click(entry)
       await waitFor(() => (done() ? document.body : null), 5000)
       if (run !== shareRun) return true
