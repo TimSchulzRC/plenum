@@ -58,6 +58,9 @@ jobs:
         env:
           # Ohne Apple-Zertifikat signiert electron-builder ad hoc (mac.identity "-").
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # In Pull Requests lässt electron-builder das Signieren sonst weg. Ohne gültige
+          # Signatur lehnt macOS die Mitteilungen ab. Ad hoc braucht keine Secrets.
+          CSC_FOR_PULL_REQUEST: "true"
         run: pnpm run dist
 
       # ditto behält Symlinks und Signatur der Electron-Frameworks.
