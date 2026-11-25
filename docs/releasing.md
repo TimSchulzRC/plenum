@@ -62,7 +62,7 @@ Installieren: ZIP laden, entpacken, „Teams Everywhere (dev)“ in den Ordner P
 xattr -dr com.apple.quarantine "/Applications/Teams Everywhere (dev).app"
 ```
 
-Pull Requests aus Forks bekommen den Build als Artefakt am Workflow-Lauf, aber keinen Kommentar, weil ihr Token keine Schreibrechte hat.
+Pull Requests aus Forks und von Dependabot bekommen den Build als Artefakt am Workflow-Lauf, aber keinen Kommentar, weil ihr Token keine Schreibrechte hat.
 
 ## Signierung
 

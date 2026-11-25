@@ -67,7 +67,8 @@ jobs:
         run: |
           set -euo pipefail
           app="release/mac-arm64/Teams Everywhere (dev).app"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist"
+          id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
+          [[ "$id" == "io.github.timschulzrc.teamseverywhere.dev" ]] || { echo "::error::Falsche Bundle-ID: $id"; exit 1; }
           ditto -c -k --sequesterRsrc --keepParent "$app" "release/$FILE"
           ls -la "release/$FILE"
 
@@ -83,8 +84,8 @@ jobs:
   comment:
     name: Download-Link in den Pull Request
     needs: build
-    # Pull Requests aus Forks bekommen kein Token mit Schreibrecht.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Pull Requests aus Forks und von Dependabot bekommen kein Token mit Schreibrecht.
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
