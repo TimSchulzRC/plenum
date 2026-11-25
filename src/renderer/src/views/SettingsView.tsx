@@ -174,7 +174,7 @@ export function SettingsView(): JSX.Element {
           <div className="row">
             <div className="grow">
               <div>
-                Version {update.currentVersion} · {update.channel === 'nightly' ? 'Nightly' : 'Stable'}
+                Version {update.currentVersion} · {update.channel === 'nightly' ? 'Nightly' : update.channel === 'dev' ? 'Dev' : 'Stable'}
               </div>
               <div className="hint">
                 {updateStatusText(update)}

@@ -65,6 +65,8 @@ pnpm run dist:release # baut DMG und ZIP für arm64 und x64 wie die Release-Pipe
 
 Jede Ausgabe hat ein eigenes Icon mit derselben Marke: Stable dunkel mit Amber-Punkt, Nightly unter einem Nachthimmel, Dev auf einer Blaupause. Im Dev-Modus setzt die App das Dev-Icon beim Start ins Dock. `pnpm run icons` erzeugt alle Icons aus `scripts/icons.mjs` neu: die SVGs unter `assets/icons` (dunkel und hell), `build/icon.icns`, `build/icon-nightly.icns` und `build/icon-dev.png`.
 
+Zu jedem Pull Request gibt es einen fertigen Dev-Build zum Herunterladen. Er läuft ebenfalls als „Teams Everywhere (dev)“ mit demselben Datenordner, Anmeldungen aus Dev gelten also auch dort (siehe [docs/releasing.md](docs/releasing.md#pr-builds)).
+
 Stable und Nightly teilen sich den Ordner `~/Library/Application Support/Teams Everywhere`. Mit `TE_USER_DATA_DIR=<Ordner>` startet jede Ausgabe mit einem anderen Datenordner.
 
 Mit `TM_DEBUG_PORT=9339` startet die App mit Remote-Debugging. Nur dann ist die Diagnose-Schnittstelle `debugRaw` aktiv.

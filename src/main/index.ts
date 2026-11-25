@@ -11,7 +11,6 @@ import { Updater } from './updater'
 import { log } from './log'
 import { migrateLegacyUserData } from './legacy-data'
 import { LiveNotifications } from './live-notifications'
-import { channelOf } from './update/releases'
 import { appVariant, dataName, displayName } from './variant'
 import { dockBadge } from '@shared/badge'
 import type { ApiMethods } from '@shared/ipc'
@@ -29,7 +28,7 @@ if (process.env.TM_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-po
 // Dev läuft mit eigenem Namen und eigenem Datenordner neben der installierten App:
 // eigene Konten, Einstellungen, Anmeldungen, Logs und Instanzsperre.
 // app.setName muss vor app.ready laufen, Electron leitet daraus auch den Keychain-Eintrag ab.
-const variant = appVariant(app.isPackaged, channelOf(app.getVersion()))
+const variant = appVariant(app.isPackaged, app.getVersion())
 const appName = displayName(variant)
 app.setName(dataName(variant))
 
@@ -321,8 +320,8 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     testNotification: () => testNotification(),
     openNotificationSettings: () => {
       // Öffnet Systemeinstellungen › Mitteilungen direkt beim Eintrag der App
-      // Dev läuft mit eigener Bundle-ID, siehe scripts/dev-app.mjs
-      const id = app.isPackaged ? BUNDLE_ID : `${BUNDLE_ID}.dev`
+      // Dev läuft mit eigener Bundle-ID, siehe scripts/dev-app.mjs und .github/workflows/pr-build.yml
+      const id = variant === 'dev' ? `${BUNDLE_ID}.dev` : BUNDLE_ID
       void shell.openExternal(`x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=${id}`)
     },
     closeWindow: () => sender()?.close(),
@@ -457,7 +456,8 @@ void app.whenReady().then(() => {
   app.setAboutPanelOptions({ applicationName: appName, applicationVersion: app.getVersion() })
   // Dev läuft als Electron.app aus node_modules und hätte sonst deren Icon. Das Dev-Icon
   // zeigen Dock, App-Umschalter und Über-Fenster. Erzeugt von `pnpm run icons`.
-  if (variant === 'dev') app.dock?.setIcon(join(app.getAppPath(), 'build/icon-dev.png'))
+  // PR-Builds bringen das Dev-Icon im Bundle mit.
+  if (variant === 'dev' && !app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon-dev.png'))
   settings = store.loadSettings()
   nativeTheme.themeSource = settings.theme
   updater = new Updater(

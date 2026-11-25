@@ -363,7 +363,8 @@ export type UpdateStatus = 'disabled' | 'idle' | 'checking' | 'up-to-date' | 'av
 export interface UpdateState {
   status: UpdateStatus
   currentVersion: string
-  channel: 'nightly' | 'stable'
+  // Dev: pnpm run dev oder ein PR-Build, beide ohne Updates.
+  channel: 'nightly' | 'stable' | 'dev'
   availableVersion: string | null
   downloadedVersion: string | null
   releaseUrl: string | null

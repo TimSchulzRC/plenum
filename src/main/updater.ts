@@ -13,7 +13,8 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web'
 import { promisify } from 'node:util'
 import type { UpdateState } from '@shared/types'
 import { log } from './log'
-import { channelOf, checksumFor, pickUpdate, type GithubAsset, type GithubRelease, type UpdateCandidate } from './update/releases'
+import { appVariant } from './variant'
+import { checksumFor, pickUpdate, type GithubAsset, type GithubRelease, type UpdateCandidate } from './update/releases'
 
 const execFileAsync = promisify(execFile)
 
@@ -85,17 +86,23 @@ export class Updater {
     this.emit = emit
     this.quit = quit
     const currentVersion = app.getVersion()
-    const supported = app.isPackaged && process.platform === 'darwin'
+    const variant = appVariant(app.isPackaged, currentVersion)
+    // Dev-Builds aus Pull Requests ersetzt kein Release, den nächsten gibt es im Pull Request.
+    const supported = app.isPackaged && process.platform === 'darwin' && variant !== 'dev'
     this.state = {
       status: supported ? 'idle' : 'disabled',
       currentVersion,
-      channel: channelOf(currentVersion),
+      channel: variant,
       availableVersion: null,
       downloadedVersion: null,
       releaseUrl: null,
       downloadPercent: null,
       errorContext: null,
-      message: supported ? null : 'Updates gibt es nur in der installierten App für macOS.',
+      message: supported
+        ? null
+        : app.isPackaged && variant === 'dev'
+          ? 'PR-Builds aktualisieren sich nicht selbst. Den neuesten Build gibt es im Pull Request.'
+          : 'Updates gibt es nur in der installierten App für macOS.',
       lastChecked: null
     }
   }

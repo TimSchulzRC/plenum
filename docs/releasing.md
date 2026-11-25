@@ -45,6 +45,25 @@ gh workflow run release.yml -f channel=nightly
 
 Für Minor- und Major-Sprünge erhöhst du die Version in `package.json` schon vorher. Die Nightlies heißen dann z. B. `0.3.0-nightly.…`.
 
+## PR-Builds
+
+Zu jedem Pull Request baut [.github/workflows/pr-build.yml](../.github/workflows/pr-build.yml) die App für Apple Silicon und schreibt einen Kommentar mit dem Download-Link in den Pull Request. Jeder neue Push ersetzt Build und Link im selben Kommentar. Die ZIP liegt 14 Tage als Artefakt am Workflow-Lauf, der Link braucht eine Anmeldung bei GitHub.
+
+Ein PR-Build ist die Dev-Ausgabe, kein Release:
+
+- Er heißt „Teams Everywhere (dev)“, hat das Dev-Icon und die Bundle-ID `io.github.timschulzrc.teamseverywhere.dev` wie `pnpm run dev`. Stable und Nightly bleiben daneben installiert, macOS fragt Mitteilungen getrennt ab.
+- Die Version endet auf `-dev.pr<Nummer>.<Lauf-Nr.>`, z. B. `0.1.0-dev.pr31.4`. Daran erkennt die gepackte App, dass sie Dev ist (`src/main/variant.ts`).
+- Er nutzt den Datenordner `~/Library/Application Support/Teams Everywhere (dev)`, denselben wie `pnpm run dev`. Konten und Anmeldungen bleiben über neue PR-Builds hinweg erhalten. Dev-Build und `pnpm run dev` können deshalb nicht gleichzeitig laufen.
+- Er sucht keine Updates. Einen neueren Stand gibt es nur über den nächsten Build im Pull Request.
+
+Installieren: ZIP laden, entpacken, „Teams Everywhere (dev)“ in den Ordner Programme ziehen und die Quarantäne entfernen:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Teams Everywhere (dev).app"
+```
+
+Pull Requests aus Forks und von Dependabot bekommen den Build als Artefakt am Workflow-Lauf, aber keinen Kommentar, weil ihr Token keine Schreibrechte hat.
+
 ## Signierung
 
 Die Builds sind ad hoc signiert und nicht notarisiert. macOS blockiert sie deshalb nach dem Download, Nutzer entfernen die Quarantäne mit `xattr` (siehe README). Für eine echte Signierung braucht es ein Apple-Developer-Konto. Dann kommen das Zertifikat (`CSC_LINK`, `CSC_KEY_PASSWORD`) und die Notarisierungsdaten (`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`) als Secrets ins Repo, und `mac.identity` in `package.json` fällt weg.
