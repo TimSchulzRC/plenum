@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { PostHog } from 'posthog-node'
 import { log } from './log'
-import { FEEDBACK_MAX_LENGTH, SessionClock, Throttle, sanitizeProps, scrubText, type AnalyticsProps, type AnalyticsValue, type FeedbackKind } from '@shared/analytics'
+import { FEEDBACK_MAX_LENGTH, SessionClock, Throttle, sanitizeProps, scrubError, scrubText, type AnalyticsProps, type AnalyticsValue, type FeedbackKind } from '@shared/analytics'
 import type { AppVariant } from './variant'
 
 // Von electron.vite.config.ts beim Bauen ersetzt
@@ -53,15 +53,6 @@ function osName(platform: NodeJS.Platform): string {
   if (platform === 'win32') return 'Windows'
   if (platform === 'linux') return 'Linux'
   return platform
-}
-
-// Kopie des Fehlers ohne Personenbezug in Meldung und Stacktrace
-function scrubError(err: unknown): Error {
-  const src = err instanceof Error ? err : new Error(typeof err === 'string' ? err : safeString(err))
-  const out = new Error(scrubText(src.message, 1000))
-  out.name = scrubText(src.name || 'Error', 100)
-  out.stack = src.stack ? scrubText(src.stack, 8000) : undefined
-  return out
 }
 
 function safeString(v: unknown): string {

@@ -47,15 +47,49 @@ const REPLACEMENTS: [RegExp, string][] = [
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<id>'],
   // Benutzerordner in Pfaden, auch in Stacktraces
   [/(\/Users\/|\/home\/|[A-Z]:\\Users\\)[^/\\\s"'<>]+/g, '$1<user>'],
-  // Zitierte Pfade in Fehlern von fs (open '/Users/…/Anhang von Max.pdf'). Pfade in Stackframes
+  // Zitierte Pfade in Fehlern von fs (open '/Users/…/Anhang von Max.pdf'). Bis zum letzten passenden
+  // Anführungszeichen der Zeile, damit auch O'Connor.pdf ganz verschwindet. Pfade in Stackframes
   // stehen nicht in Anführungszeichen und bleiben.
-  [/(['"])(?:\/|~\/|[A-Za-z]:\\)[^'"\n]*\1/g, '$1<path>$1'],
+  [/(['"])(?:\/|~\/|[A-Za-z]:\\)[^\n]*\1/g, '$1<path>$1'],
   // JSON.parse zitiert die Eingabe unverändert, auch mit Anführungszeichen darin:
   // Unexpected token 'H', "Hallo "Max"" is not valid JSON
   [/"[\s\S]*?"(?:\.\.\.)?(?= is not valid JSON)/g, '"<text>"'],
   // Lange Zeichenfolgen ohne Punkt sind fast immer Schlüssel oder Tokens
   [/\b[A-Za-z0-9+_-]{40,}={0,2}/g, '<secret>']
 ]
+
+// Nur die Zeilen eines Stacktraces, die auf Code zeigen („    at …“), ohne die Meldung davor
+function stackFrames(stack: string | undefined): string[] {
+  return (stack ?? '').split('\n').filter((l) => /^\s+at /.test(l))
+}
+
+// Kopie eines Fehlers ohne Personenbezug in Meldung und Stacktrace. Fehler des Dateisystems tragen
+// den Pfad samt Dateinamen in der Meldung: Von ihnen bleiben nur Code und Operation (ENOENT, open).
+export function scrubError(err: unknown): Error {
+  const src = err instanceof Error ? err : new Error(typeof err === 'string' ? err : safeJson(err))
+  const name = scrubText(src.name || 'Error', 100)
+  const sys = src as Error & { code?: unknown; syscall?: unknown; path?: unknown; dest?: unknown }
+  if (typeof sys.path === 'string' || typeof sys.dest === 'string') {
+    const code = typeof sys.code === 'string' && /^[A-Z0-9_]{2,40}$/.test(sys.code) ? sys.code : 'Dateifehler'
+    const syscall = typeof sys.syscall === 'string' && /^[a-z_]{2,20}$/.test(sys.syscall) ? ` (${sys.syscall})` : ''
+    const out = new Error(`${code}${syscall}`)
+    out.name = name
+    out.stack = [`${name}: ${out.message}`, ...stackFrames(src.stack).map((l) => scrubText(l, 500))].join('\n')
+    return out
+  }
+  const out = new Error(scrubText(src.message, 1000))
+  out.name = name
+  out.stack = src.stack ? scrubText(src.stack, 8000) : undefined
+  return out
+}
+
+function safeJson(v: unknown): string {
+  try {
+    return JSON.stringify(v) ?? String(v)
+  } catch {
+    return String(v)
+  }
+}
 
 export function scrubText(text: string, max = 2000): string {
   let out = text

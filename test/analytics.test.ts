@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { SessionClock, Throttle, sanitizeProps, scrubText, settingsChanges, updateEvents, uuidv7 } from '../src/shared/analytics.ts'
+import { readFile } from 'node:fs/promises'
+import { SessionClock, Throttle, sanitizeProps, scrubError, scrubText, settingsChanges, updateEvents, uuidv7 } from '../src/shared/analytics.ts'
 import type { AppSettings, UpdateState } from '../src/shared/types.ts'
 
 test('Fehlertexte verlieren Mailadressen, Personen, Unterhaltungen und Tokens', () => {
@@ -45,6 +46,34 @@ test('Zitierte Pfade aus fs-Fehlern fallen weg, Stackframes bleiben', () => {
   assert.doesNotMatch(out, /Angebot|Müller/)
   assert.match(out, /open '<path>'/)
   assert.match(out, /app\.asar\/out\/main\/index\.js:120:7/)
+})
+
+test('Pfade mit Anführungszeichen im Dateinamen verschwinden ganz', () => {
+  for (const q of ["'", '"']) {
+    const out = scrubText(`ENOENT: no such file or directory, open ${q}/Users/max/Downloads/O'Connor "Max" Angebot.pdf${q}`)
+    assert.doesNotMatch(out, /Connor|Max|Angebot/)
+    assert.match(out, new RegExp(`open ${q}<path>${q}$`))
+  }
+  const rename = scrubText("EXDEV: cross-device link not permitted, rename '/tmp/a/O'Connor.pdf' -> '/Users/max/O\"Brien.pdf'")
+  assert.doesNotMatch(rename, /Connor|Brien/)
+})
+
+test('Fehler des Dateisystems: nur Code und Operation, Stackframes bleiben', async () => {
+  for (const name of ["O'Connor Angebot.pdf", 'Max "Mustermann".pdf']) {
+    let err: unknown
+    try {
+      await readFile(`/nicht/vorhanden/${name}`)
+    } catch (e) {
+      err = e
+    }
+    const out = scrubError(err)
+    assert.equal(out.message, 'ENOENT (open)')
+    assert.doesNotMatch(`${out.message}\n${out.stack}`, /Connor|Angebot|Mustermann|vorhanden/)
+  }
+  const plain = scrubError(new TypeError('Fehler bei max@firma.de'))
+  assert.equal(plain.name, 'TypeError')
+  assert.equal(plain.message, 'Fehler bei <email>')
+  assert.match(plain.stack ?? '', /analytics\.test\.ts:\d+:\d+/)
 })
 
 test('Texte werden gekürzt', () => {
