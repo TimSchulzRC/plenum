@@ -535,9 +535,12 @@ app.on('will-quit', (e) => {
   e.preventDefault()
   if (analyticsDrain === 'running') return
   analyticsDrain = 'running'
+  // Ist nichts mehr zu senden, löst shutdown() noch während dieses Ereignisses auf. Ein app.quit()
+  // an dieser Stelle ignoriert Electron, weil es das Beenden gerade erst abbricht. Deshalb erst
+  // in der nächsten Runde der Ereignisschleife.
   void analytics.shutdown().finally(() => {
     analyticsDrain = 'done'
-    app.quit()
+    setImmediate(() => app.quit())
   })
 })
 app.on('window-all-closed', () => {
