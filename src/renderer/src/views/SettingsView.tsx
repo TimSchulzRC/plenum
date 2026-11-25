@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { AppSettings, DebugInfo } from '@shared/types'
 import { api } from '../api'
 import { PersonAvatar } from '../components/Avatars'
+import { McpSettings } from '../components/McpSettings'
 import { statusText } from '../components/TitleBar'
 import { confirmInstall, resolveUpdateAction, updateLastChecked, updateStatusText } from '../update'
 import { useStore } from '../store'
@@ -206,6 +207,8 @@ export function SettingsView(): JSX.Element {
           </div>
         </section>
       )}
+
+      <McpSettings />
 
       <section>
         <h2>Diagnose</h2>
