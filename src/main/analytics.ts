@@ -1,9 +1,8 @@
 // Nutzungsdaten und Fehlerberichte über PostHog. Was gesendet wird, steht in docs/analytics.md.
 //
 // - Der Projektschlüssel kommt beim Bauen aus POSTHOG_KEY (Release-Workflow). Ohne Schlüssel,
-//   etwa bei `pnpm run dev` oder in Forks, ist alles aus und die Oberfläche fragt nicht.
-// - Gesendet wird erst, wenn die Person zugestimmt hat (Einstellung usageData). Bis zur Antwort
-//   sammelt die App Ereignisse nur im Speicher und verwirft sie bei „Nein“.
+//   etwa bei `pnpm run dev` oder in Forks, ist alles aus.
+// - Mit Schlüssel sendet die App immer. Sie fragt nicht und hat keinen Schalter dafür.
 // - Kennung ist eine zufällige ID pro Installation, nie Name, Mailadresse oder Konto.
 import { app, net } from 'electron'
 import { randomUUID } from 'node:crypto'
@@ -18,7 +17,6 @@ import type { AppVariant } from './variant'
 declare const __POSTHOG_KEY__: string
 declare const __POSTHOG_HOST__: string
 
-const MAX_PENDING = 500
 const SHUTDOWN_TIMEOUT = 2000
 // Derselbe Fehler höchstens einmal pro Minute, sonst flutet eine Schleife das Projekt
 const ERROR_THROTTLE = 60_000
@@ -44,7 +42,7 @@ export interface ErrorOptions {
   props?: AnalyticsProps
 }
 
-type Pending =
+type Outgoing =
   | { kind: 'event'; event: string; properties: Record<string, unknown>; timestamp: Date }
   | { kind: 'error'; error: Error; properties: Record<string, unknown>; level: 'fatal' | 'error' | 'warning' }
 
@@ -67,8 +65,6 @@ class Analytics {
   readonly key = (typeof __POSTHOG_KEY__ === 'string' ? __POSTHOG_KEY__ : '').trim()
   readonly host = (typeof __POSTHOG_HOST__ === 'string' && __POSTHOG_HOST__.trim()) || 'https://eu.i.posthog.com'
   private client: PostHog | null = null
-  private consent: boolean | undefined
-  private pending: Pending[] = []
   private state: StoredState | null = null
   private session = new SessionClock()
   private throttle = new Throttle()
@@ -86,8 +82,7 @@ class Analytics {
   }
 
   // Nach app.ready. Liefert, ob die App zum ersten Mal läuft und von welcher Version sie kommt.
-  init(opts: { variant: AppVariant; consent: boolean | undefined; dynamic: () => AnalyticsProps }): { firstLaunch: boolean; updatedFrom?: string } {
-    this.consent = opts.consent
+  init(opts: { variant: AppVariant; dynamic: () => AnalyticsProps }): { firstLaunch: boolean; updatedFrom?: string } {
     this.dynamic = opts.dynamic
     const version = app.getVersion()
     this.base = {
@@ -124,31 +119,11 @@ class Analytics {
     } catch (e) {
       log.warn('analytics.json nicht geschrieben', (e as Error).message)
     }
-    if (this.available) log.info(`Nutzungsdaten: ${this.consent === true ? 'an' : this.consent === false ? 'aus' : 'noch nicht gefragt'}`)
     return { firstLaunch, updatedFrom }
   }
 
-  setConsent(on: boolean, source: string): void {
-    if (!this.available || this.consent === on) return
-    this.consent = on
-    log.info(`Nutzungsdaten ${on ? 'eingeschaltet' : 'ausgeschaltet'} (${source})`)
-    if (!on) {
-      // Auch was schon in der Warteschlange von PostHog liegt, geht nicht mehr raus.
-      // disable() verwirft sie, shutdown() räumt danach die Zeitgeber ab.
-      this.pending = []
-      const client = this.client
-      this.client = null
-      if (client) void client.disable().then(() => client.shutdown(0)).catch(() => undefined)
-      return
-    }
-    const queued = this.pending
-    this.pending = []
-    for (const p of queued) this.send(p)
-    this.track('usage_data_enabled', { source }, { active: true })
-  }
-
   track(event: string, props?: AnalyticsProps, opts: TrackOptions = {}): void {
-    if (!this.available || this.consent === false || this.shutDown) return
+    if (!this.available || this.shutDown) return
     if (opts.throttle && !this.throttle.allow(opts.throttle.key, opts.throttle.ms)) return
     const now = Date.now()
     const properties: Record<string, unknown> = {
@@ -159,11 +134,11 @@ class Analytics {
     }
     if (opts.set) properties.$set = sanitizeProps(opts.set)
     if (opts.setOnce) properties.$set_once = sanitizeProps(opts.setOnce)
-    this.enqueue({ kind: 'event', event, properties, timestamp: new Date(now) })
+    this.send({ kind: 'event', event, properties, timestamp: new Date(now) })
   }
 
   captureError(err: unknown, opts: ErrorOptions): void {
-    if (!this.available || this.consent === false || this.shutDown) return
+    if (!this.available || this.shutDown) return
     const error = scrubError(err)
     if (!this.throttle.allow(`${opts.source}|${error.name}|${error.message.slice(0, 120)}`, ERROR_THROTTLE)) return
     const properties: Record<string, unknown> = {
@@ -174,34 +149,30 @@ class Analytics {
       handled: opts.handled,
       $session_id: this.session.current(Date.now(), false)
     }
-    this.enqueue({ kind: 'error', error, properties, level: opts.level ?? (opts.handled ? 'error' : 'fatal') })
+    this.send({ kind: 'error', error, properties, level: opts.level ?? (opts.handled ? 'error' : 'fatal') })
   }
 
-  // Feedback aus den Einstellungen. Geht auch ohne Zustimmung zu Nutzungsdaten, weil die Person
-  // es selbst abschickt. Dann mit einer Wegwerf-ID, damit es nicht mit früheren Daten verknüpft ist.
+  // Feedback aus den Einstellungen, mit der ID der Installation
   async sendFeedback(kind: FeedbackKind, message: string): Promise<void> {
     if (!this.available) throw new Error('Feedback ist in dieser Ausgabe nicht aktiv')
     const text = message.trim().slice(0, FEEDBACK_MAX_LENGTH)
     if (!text) throw new Error('Leeres Feedback')
-    // Eigener Client: unabhängig von Zustimmung und Warteschlange der Nutzungsdaten.
+    // Eigener Client: unabhängig von der Warteschlange der Nutzungsdaten.
     // captureImmediate meldet Fehler nur über das error-Ereignis, nicht über das Promise.
     const client = this.createClient()
     let failed = false
     client.on('error', () => (failed = true))
-    const consented = this.consent === true
     try {
       await client.captureImmediate({
-        distinctId: consented && this.state ? this.state.installId : randomUUID(),
+        distinctId: this.state?.installId ?? randomUUID(),
         event: 'feedback_sent',
         properties: {
           ...this.base,
-          ...(consented ? { $session_id: this.session.current(Date.now(), true) } : {}),
+          $session_id: this.session.current(Date.now(), true),
           kind: ['bug', 'idea', 'other'].includes(kind) ? kind : 'other',
           message: text,
-          message_length: text.length,
-          usage_data: consented
-        },
-        options: consented ? undefined : { process_person_profile: false }
+          message_length: text.length
+        }
       })
     } finally {
       await client.shutdown(1000).catch(() => undefined)
@@ -222,14 +193,7 @@ class Analytics {
     if (client) await client.shutdown(SHUTDOWN_TIMEOUT).catch(() => undefined)
   }
 
-  private enqueue(p: Pending): void {
-    if (this.consent === true) return this.send(p)
-    // Noch nicht gefragt: im Speicher halten, bis die Antwort kommt
-    if (this.pending.length >= MAX_PENDING) this.pending.shift()
-    this.pending.push(p)
-  }
-
-  private send(p: Pending): void {
+  private send(p: Outgoing): void {
     if (!this.state) return
     try {
       const client = this.ensureClient()

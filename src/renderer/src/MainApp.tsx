@@ -3,7 +3,6 @@ import { Video20Filled, Warning20Regular } from '@fluentui/react-icons'
 import { useEffect, useState } from 'react'
 import { api } from './api'
 import { track } from './analytics'
-import { UsageDataPrompt } from './components/UsageDataPrompt'
 import { ImageViewer } from './components/ImageViewer'
 import { Rail } from './components/Rail'
 import { UpdateButton } from './components/UpdateButton'
@@ -70,7 +69,6 @@ export default function MainApp(): JSX.Element {
       <Rail />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
         <CallBanner />
-        <UsageDataPrompt />
         {account && account.status === 'login-required' && (
           <div className="banner warn">
             <Warning20Regular />
@@ -133,7 +131,6 @@ function Welcome(): JSX.Element {
         <Button appearance="primary" size="large" onClick={() => void api.addAccount()}>
           Anmelden
         </Button>
-        <UsageDataPrompt card />
       </div>
     </div>
   )

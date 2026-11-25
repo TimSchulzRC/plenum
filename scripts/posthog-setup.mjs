@@ -289,15 +289,14 @@ LIMIT 50`
       },
       {
         name: 'Feedback',
-        description: 'Aus Einstellungen › Feedback. Mit usage_data = false kam es ohne Zustimmung zu Nutzungsdaten und ohne Bezug zur Installation.',
+        description: 'Aus Einstellungen › Feedback.',
         query: table(
           `SELECT
   timestamp AS zeit,
   properties.kind AS art,
   properties.message AS nachricht,
   properties.$app_version AS version,
-  properties.app_channel AS kanal,
-  properties.usage_data AS usage_data
+  properties.app_channel AS kanal
 FROM events
 WHERE event = 'feedback_sent' AND {filters}
 ORDER BY timestamp DESC

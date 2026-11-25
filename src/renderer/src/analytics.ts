@@ -1,5 +1,5 @@
-// Nutzungsereignisse und Fehler der Oberfläche. Der Hauptprozess entscheidet, ob gesendet wird
-// (Zustimmung, Projektschlüssel), und entfernt Personenbezogenes. Siehe docs/analytics.md.
+// Nutzungsereignisse und Fehler der Oberfläche. Der Hauptprozess sendet sie, wenn die App einen
+// Projektschlüssel hat, und entfernt Personenbezogenes. Siehe docs/analytics.md.
 import type { AnalyticsProps } from '@shared/analytics'
 import { routeInfo } from './api'
 

@@ -1,13 +1,12 @@
 # Nutzungsdaten und Fehlerberichte
 
-Teams Everywhere kann anonyme Nutzungsdaten und Fehlerberichte an [PostHog](https://posthog.com) senden, ein Analysewerkzeug mit Rechenzentrum in der EU. Damit sehe ich, welche Funktionen genutzt werden, wo Anrufe scheitern und welche Fehler bei wem auftreten. Ohne Zustimmung sendet die App nichts.
+Teams Everywhere sendet anonyme Nutzungsdaten und Fehlerberichte an [PostHog](https://posthog.com), ein Analysewerkzeug mit Rechenzentrum in der EU. Damit sehe ich, welche Funktionen genutzt werden, wo Anrufe scheitern und welche Fehler bei wem auftreten.
 
 ## Wann die App sendet
 
-- Nur Builds mit Projektschlüssel senden. Die Release-Pipeline setzt ihn aus den Repository-Variablen. `pnpm run dev` und Builds aus Forks haben keinen Schlüssel, fragen nicht und senden nichts.
-- Beim ersten Start fragt die App einmal: im Willkommensbildschirm oder als Hinweis über dem Inhalt. Bis zur Antwort hält sie Ereignisse nur im Speicher. Bei „Nein, danke“ verwirft sie sie, bei „Ja, senden“ gehen sie mit.
-- Unter Einstellungen › Datenschutz lässt sich das jederzeit ein- und ausschalten. Dort steht auch die anonyme ID der Installation. Wer einen Fehler meldet, kann sie nennen, dann lassen sich die passenden Fehlermeldungen finden.
-- Feedback unter Einstellungen › Feedback geht auch ohne Zustimmung. Dann trägt es eine Wegwerf-ID und hängt an keiner Installation.
+- Builds mit Projektschlüssel senden immer, ohne Abfrage und ohne Schalter. Die Release-Pipeline setzt den Schlüssel aus den Repository-Variablen. `pnpm run dev` und Builds aus Forks haben keinen Schlüssel und senden nichts.
+- Unter Einstellungen › Datenschutz steht die anonyme ID der Installation. Wer einen Fehler meldet, kann sie nennen, dann lassen sich die passenden Fehlermeldungen finden.
+- Feedback unter Einstellungen › Feedback trägt dieselbe ID.
 
 ## Was nie gesendet wird
 
@@ -38,8 +37,7 @@ Aktionen aus der Oberfläche tragen zusätzlich `duration_ms`, die Dauer des Auf
 | `$screen` | Ansicht gewechselt | `$screen_name`: `welcome`, `chat`, `teams`, `activity`, `calendar`, `calls`, `settings` |
 | `keyboard_shortcut` | Tastenkürzel im Hauptfenster | `shortcut` |
 | `setting_changed` | Einstellung geändert | `setting`, `value` |
-| `usage_data_enabled` | Zustimmung gegeben | `source`: `prompt` oder `settings` |
-| `feedback_sent` | Feedback abgeschickt | `kind`, `message`, `message_length`, `usage_data` |
+| `feedback_sent` | Feedback abgeschickt | `kind`, `message`, `message_length` |
 
 ### Konten und Verbindung
 
