@@ -2,9 +2,17 @@ import { resolve } from 'node:path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 
+// Nutzungsdaten (PostHog): Projektschlüssel und Host kommen beim Bauen aus der Umgebung,
+// im Release-Workflow aus den Repository-Variablen. Ohne Schlüssel sendet die App nichts.
+const posthog = {
+  __POSTHOG_KEY__: JSON.stringify(process.env.POSTHOG_KEY?.trim() ?? ''),
+  __POSTHOG_HOST__: JSON.stringify(process.env.POSTHOG_HOST?.trim() ?? '')
+}
+
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    define: posthog,
     resolve: { alias: { '@shared': resolve('src/shared') } },
     build: {
       rollupOptions: {

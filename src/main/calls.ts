@@ -4,6 +4,7 @@ import type { AccountService } from './account'
 import type { BackgroundList, BridgeMessage, CallAction, CallDevices, CallParticipant, CallState, IncomingCall, MediaStreamInfo } from '@shared/types'
 import { createCallWindow, createIncomingWindow, createPopoutWindow, uiWindows } from './windows'
 import { log } from './log'
+import { analytics } from './analytics'
 import { isTeamsUrl } from './engine/hosts'
 import { cleanCallName } from '@shared/call-names'
 
@@ -32,6 +33,22 @@ function cleanParticipants(list: CallParticipant[] | undefined): CallParticipant
   return out
 }
 
+type CallOrigin = 'meeting' | 'call' | 'incoming' | 'web_view'
+
+// Ein Anruf von Start bis Ende, nur für die Nutzungsdaten
+interface CallStats {
+  origin: CallOrigin
+  requestedAt: number
+  connectedAt?: number
+  lastPhase: string
+  maxParticipants: number
+  sharedScreen: boolean
+  cameraUsed: boolean
+  lobby: boolean
+  // Start gescheitert oder abgebrochen, schon gemeldet
+  reported: boolean
+}
+
 export class CallManager {
   state: CallState | null = null
   incoming: IncomingCall | null = null
@@ -49,6 +66,9 @@ export class CallManager {
   private pendingSeq = 0
   // Nach einem abgebrochenen Start: Klickt die Web-App doch noch auf "Anrufen", sofort wieder auflegen
   private cancelled?: { accountId: string; until: number }
+  private stats?: CallStats
+  // Zuletzt angenommener eingehender Anruf: verschwindet ein anderer, war er verpasst
+  private answeredIncoming?: string
   private rpcSeq = 0
   private rpcPending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>()
 
@@ -71,6 +91,7 @@ export class CallManager {
           } catch (e) {
             // z.B. ohne Berechtigung zur Bildschirmaufnahme. Ohne Antwort hinge die Freigabe in der Web-App.
             log.warn('desktopCapturer.getSources failed', (e as Error).message)
+            analytics.track('screen_share_failed', { reason: 'sources' })
             denyDisplay(cb)
             return
           }
@@ -145,7 +166,7 @@ export class CallManager {
         break
       }
       case 'call-start-failed':
-        if (this.activeAccountId === acct.id && this.state?.phase === 'connecting') this.failPending()
+        if (this.activeAccountId === acct.id && this.state?.phase === 'connecting') this.failPending('web_app')
         break
       case 'display-media-requested':
         break
@@ -185,6 +206,8 @@ export class CallManager {
     if (phase === 'idle' && this.activeAccountId === acct.id && this.state?.phase === 'connecting') return
     if (phase === 'idle') {
       if (this.activeAccountId === acct.id) {
+        // Ein angenommener Anruf meldet „idle“, bis Teams verbunden hat: dann noch kein Ende
+        if (this.state) this.finishStats()
         this.activeAccountId = undefined
         this.conversationId = undefined
         this.state = null
@@ -204,13 +227,16 @@ export class CallManager {
     clearTimeout(this.closeTimer)
     const wasIdle = !this.state
     this.activeAccountId = acct.id
-    this.state = { accountId: acct.id, ...raw, participants: cleanParticipants(raw?.participants), conversationId: this.conversationId }
-    this.broadcast('call-state', this.state)
+    const state: CallState = { accountId: acct.id, ...raw, participants: cleanParticipants(raw?.participants), conversationId: this.conversationId }
+    this.state = state
+    this.updateStats(state)
+    this.broadcast('call-state', state)
     if (wasIdle) this.openCallWindow()
   }
 
   private onIncoming(acct: AccountService, call: any): void {
     if (call) {
+      if (this.incoming?.id !== call.id) analytics.track('incoming_call_received', { video: !!call.isVideo })
       this.incoming = { accountId: acct.id, ...call }
       if (!this.incomingWindow || this.incomingWindow.isDestroyed()) {
         const win = createIncomingWindow()
@@ -225,6 +251,9 @@ export class CallManager {
       }
       this.broadcast('incoming-call', this.incoming)
     } else if (this.incoming && this.incoming.accountId === acct.id) {
+      if (this.incoming.id !== this.answeredIncoming) analytics.track('incoming_call_missed', { video: !!this.incoming.isVideo })
+      // Die ID ist der Name des Anrufers: gilt nur für dieses Klingeln
+      this.answeredIncoming = undefined
       this.incoming = null
       this.broadcast('incoming-call', null)
       if (this.incomingWindow && !this.incomingWindow.isDestroyed()) this.incomingWindow.close()
@@ -242,9 +271,16 @@ export class CallManager {
     if (!acct) return
     const action = mode === 'video' ? 'acceptVideo' : mode === 'audio' ? 'acceptAudio' : 'decline'
     acct.engine.send('engine:cmd', { ch: 'action', action })
+    this.answeredIncoming = call.id
     if (mode !== 'decline') {
       this.cancelled = undefined
       this.activeAccountId = acct.id
+      this.beginStats('incoming')
+      // Verbindet Teams den angenommenen Anruf nicht, zählt er als nicht beigetreten
+      const st = this.stats
+      setTimeout(() => {
+        if (this.stats === st && !st?.connectedAt && !this.state) this.finishStats()
+      }, 60_000)
     }
   }
 
@@ -263,6 +299,7 @@ export class CallManager {
     // Zoom- oder Webex-Links aus dem Kalender gehören in den Browser, nicht in die Teams-Web-App
     if (!isTeamsUrl(joinUrl)) {
       if (/^https:/.test(joinUrl)) void shell.openExternal(joinUrl)
+      analytics.track('meeting_opened_in_browser', {}, { active: true })
       return
     }
     if (this.state && this.activeAccountId) {
@@ -273,6 +310,7 @@ export class CallManager {
     this.activeAccountId = acct.id
     this.conversationId = CallManager.threadFromJoinUrl(joinUrl)
     acct.engine.navigate(joinUrl)
+    this.beginStats('meeting')
     this.openCallWindow()
     this.setPending(acct.id, 'Besprechung wird geöffnet …', false)
   }
@@ -303,11 +341,13 @@ export class CallManager {
     // Der Befehl reist im Link mit: Teams leitet beim Laden um, die endgültige Seite führt ihn aus.
     const action = video ? 'startVideoCall' : 'startAudioCall'
     acct.engine.navigate(`${url}${url.includes('?') ? '&' : '?'}tmAction=${action}`)
+    this.beginStats('call')
     this.openCallWindow()
     this.setPending(acct.id, 'Anruf wird gestartet …', video)
   }
 
   private resetCall(): void {
+    this.finishStats()
     this.conversationId = undefined
     this.state = null
     this.activeAccountId = undefined
@@ -321,13 +361,17 @@ export class CallManager {
     this.broadcast('call-state', this.state)
     // Falls nichts passiert, Fehler zeigen und das Fenster schließen
     setTimeout(() => {
-      if (seq === this.pendingSeq && this.state?.phase === 'connecting' && !this.state.error) this.failPending()
+      if (seq === this.pendingSeq && this.state?.phase === 'connecting' && !this.state.error) this.failPending('timeout')
     }, 46_000)
   }
 
   // Start gescheitert: Fehler kurz zeigen, dann wie "Verlassen"
-  private failPending(): void {
+  private failPending(reason: 'timeout' | 'web_app'): void {
     if (!this.state) return
+    if (this.stats && !this.stats.reported) {
+      analytics.track('call_start_failed', { origin: this.stats.origin, reason, seconds: Math.round((Date.now() - this.stats.requestedAt) / 1000) })
+      this.stats.reported = true
+    }
     const seq = this.pendingSeq
     this.state = { ...this.state, error: 'Der Anruf konnte nicht gestartet werden.' }
     this.broadcast('call-state', this.state)
@@ -338,6 +382,10 @@ export class CallManager {
 
   // Anruf, der noch nicht verbunden ist, abbrechen. Die Web-App bricht ihren Start ab.
   private cancelPending(closeWindow: boolean): void {
+    if (this.stats && !this.stats.reported) {
+      analytics.track('call_start_cancelled', { origin: this.stats.origin, seconds: Math.round((Date.now() - this.stats.requestedAt) / 1000) }, { active: true })
+      this.stats.reported = true
+    }
     const acct = this.activeAccount()
     if (acct) {
       acct.engine.send('engine:cmd', { ch: 'action', action: 'cancelJoin' })
@@ -383,6 +431,7 @@ export class CallManager {
         message: 'Besprechung verlassen?',
         detail: 'Du kannst die Besprechung verlassen oder sie in einem kleinen Fenster weiterlaufen lassen.'
       })
+      analytics.track('call_window_close_prompt', { choice: ['leave', 'compact', 'cancel'][choice] ?? 'cancel' }, { active: true })
       if (choice === 0) {
         this.action('hangup')
         setTimeout(() => {
@@ -397,6 +446,53 @@ export class CallManager {
       this.callWindow = null
       this.compact = false
     })
+  }
+
+  // ---------- Nutzungsdaten ----------
+
+  private beginStats(origin: CallOrigin): void {
+    // Ein angenommener Anruf, der nie verbunden hat, zählt vor dem nächsten als nicht beigetreten
+    if (this.stats) this.finishStats()
+    this.stats = { origin, requestedAt: Date.now(), lastPhase: 'connecting', maxParticipants: 0, sharedScreen: false, cameraUsed: false, lobby: false, reported: false }
+  }
+
+  private updateStats(state: CallState): void {
+    // Anruf, den die Web-App selbst gestartet hat (z. B. in der Webansicht)
+    if (!this.stats) this.beginStats('web_view')
+    const st = this.stats!
+    st.lastPhase = state.phase
+    st.maxParticipants = Math.max(st.maxParticipants, state.participants.length)
+    st.sharedScreen ||= state.sharing
+    st.cameraUsed ||= state.cameraOn
+    if (state.phase === 'lobby') st.lobby = true
+    if (state.phase === 'in-call' && !st.connectedAt) {
+      st.connectedAt = Date.now()
+      analytics.track('call_connected', {
+        origin: st.origin,
+        seconds_to_connect: Math.round((st.connectedAt - st.requestedAt) / 1000),
+        waited_in_lobby: st.lobby,
+        camera_on: state.cameraOn,
+        participants: state.participants.length
+      })
+    }
+  }
+
+  private finishStats(): void {
+    const st = this.stats
+    this.stats = undefined
+    if (!st) return
+    if (st.connectedAt) {
+      analytics.track('call_ended', {
+        origin: st.origin,
+        duration_s: Math.round((Date.now() - st.connectedAt) / 1000),
+        max_participants: st.maxParticipants,
+        shared_screen: st.sharedScreen,
+        camera_used: st.cameraUsed
+      })
+    } else if (!st.reported) {
+      // Vorschau geschlossen, im Wartebereich aufgegeben oder vor dem Verbinden beendet
+      analytics.track('call_not_joined', { origin: st.origin, last_phase: st.lastPhase, seconds: Math.round((Date.now() - st.requestedAt) / 1000) })
+    }
   }
 
   setCompact(on: boolean): void {

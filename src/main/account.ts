@@ -37,6 +37,8 @@ import type {
 } from '@shared/types'
 import { unreadChats, unreadTeams } from '@shared/badge'
 import { log } from './log'
+import { analytics } from './analytics'
+import { errorSummary } from '@shared/analytics'
 import { parseRealtimeFrame } from './engine/realtime'
 import { OlderCursors } from './older-cursors'
 
@@ -178,6 +180,12 @@ export class AccountService extends EventEmitter<AccountEvents> {
 
   // ---------- Start & Synchronisierung ----------
 
+  // Synchronisierung läuft alle 12 s: ein Ereignis je Art und Konto reicht für eine halbe Stunde
+  private trackSyncFailure(kind: 'full' | 'delta', e: unknown): void {
+    const status = e instanceof ApiError ? e.status : undefined
+    analytics.track('sync_failed', { kind, status, error: errorSummary(e) }, { throttle: { key: `sync-${kind}-${this.id}`, ms: 30 * 60_000 } })
+  }
+
   private onReady(): void {
     const me = this.engine.tokens.me
     if (me.oid) {
@@ -220,6 +228,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
       void this.refreshActivityCount()
     } catch (e) {
       log.warn(`[${this.id}] fullSync failed`, (e as Error).message)
+      this.trackSyncFailure('full', e)
     } finally {
       this.syncing = false
       if (this.started) {
@@ -481,6 +490,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
     } catch (e) {
       if (e instanceof ApiError && (e.status === 400 || e.status === 404)) this.syncStateUrl = undefined
       log.warn(`[${this.id}] deltaSync failed`, (e as Error).message)
+      this.trackSyncFailure('delta', e)
       if (this.started && touched.length > 0) this.emit('conversation-updated', touched)
       return
     }

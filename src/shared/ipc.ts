@@ -21,6 +21,7 @@ import type {
   UpdateState
 } from './types'
 import type { McpClient, McpInfo } from './mcp'
+import type { AnalyticsProps, FeedbackKind, UiErrorReport } from './analytics'
 
 // Methoden, die die Oberfläche über ipcRenderer.invoke('api', name, ...args) aufruft.
 export interface ApiMethods {
@@ -107,6 +108,11 @@ export interface ApiMethods {
   setMcpEnabled(on: boolean): McpInfo
   resetMcpToken(): McpInfo
   installMcp(client: McpClient): { ok: boolean; message: string }
+
+  // Nutzungsdaten und Feedback (PostHog). available: die App wurde mit Projektschlüssel gebaut.
+  getAnalyticsInfo(): { available: boolean; installId?: string }
+  setUsageData(on: boolean, source: 'prompt' | 'settings'): AppSettings
+  sendFeedback(kind: FeedbackKind, message: string): void
 }
 
 export type ApiName = keyof ApiMethods
@@ -139,6 +145,9 @@ export interface TeamsBridge {
   ): Promise<ReturnType<ApiMethods[K]>>
   on<K extends EventName>(event: K, cb: (payload: EventMap[K]) => void): () => void
   bridgeSend(msg: BridgeMessage): void
+  // Nutzungsereignis und Fehler der Oberfläche, ohne Antwort
+  track(event: string, props?: AnalyticsProps): void
+  reportError(report: UiErrorReport): void
   webContentsId: number
   platform: string
   route: string

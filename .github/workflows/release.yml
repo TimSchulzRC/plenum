@@ -178,6 +178,10 @@ jobs:
         env:
           # Ohne Apple-Zertifikat signiert electron-builder ad hoc (mac.identity "-").
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # Nutzungsdaten (PostHog), siehe docs/analytics.md. Ohne die Variablen, etwa in
+          # Forks, baut die App ohne Schlüssel und sendet nichts.
+          POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
+          POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
         run: pnpm run dist:release
 
       # Kleine Update-Pakete ohne Electron-Frameworks, siehe scripts/patch-zip.sh.

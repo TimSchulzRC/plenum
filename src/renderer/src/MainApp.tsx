@@ -2,6 +2,8 @@ import { Button, Spinner } from '@fluentui/react-components'
 import { Video20Filled, Warning20Regular } from '@fluentui/react-icons'
 import { useEffect, useState } from 'react'
 import { api } from './api'
+import { track } from './analytics'
+import { UsageDataPrompt } from './components/UsageDataPrompt'
 import { ImageViewer } from './components/ImageViewer'
 import { Rail } from './components/Rail'
 import { UpdateButton } from './components/UpdateButton'
@@ -32,13 +34,17 @@ export default function MainApp(): JSX.Element {
       if (KEYS[e.key] && !e.shiftKey) {
         e.preventDefault()
         useStore.getState().setView(KEYS[e.key])
+        track('keyboard_shortcut', { shortcut: `cmd+${e.key}` })
       } else if (e.key === 'n' && !e.shiftKey) {
         e.preventDefault()
         useStore.getState().select({ newChat: true }, 'chat')
+        track('keyboard_shortcut', { shortcut: 'cmd+n' })
       } else if (e.key === '[') {
         useStore.getState().goBack()
+        track('keyboard_shortcut', { shortcut: 'cmd+[' })
       } else if (e.key === ']') {
         useStore.getState().goForward()
+        track('keyboard_shortcut', { shortcut: 'cmd+]' })
       }
     }
     window.addEventListener('keydown', h)
@@ -64,6 +70,7 @@ export default function MainApp(): JSX.Element {
       <Rail />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
         <CallBanner />
+        <UsageDataPrompt />
         {account && account.status === 'login-required' && (
           <div className="banner warn">
             <Warning20Regular />
@@ -126,6 +133,7 @@ function Welcome(): JSX.Element {
         <Button appearance="primary" size="large" onClick={() => void api.addAccount()}>
           Anmelden
         </Button>
+        <UsageDataPrompt card />
       </div>
     </div>
   )

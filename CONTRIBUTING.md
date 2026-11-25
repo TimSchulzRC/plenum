@@ -32,6 +32,7 @@ Die CI prüft beides bei jedem Pull Request.
 - Beschreibe, was sich ändert und wie du es getestet hast.
 - Änderst du die Steuerung der Web-App in `src/preload/engine-main.ts`, teste einen echten Anruf oder eine Besprechung.
 - Neue Abhängigkeiten nur, wenn es ohne sie deutlich aufwendiger wäre.
+- Neue Nutzungsereignisse tragen nie Inhalte, Namen oder IDs und stehen in [docs/analytics.md](docs/analytics.md).
 
 ## Releases
 

@@ -58,6 +58,10 @@ Der Server lauscht nur auf `127.0.0.1`, Port 47311 (Dev: 47312), und läuft, sol
 
 Werkzeuge: `list_accounts`, `list_conversations`, `list_teams`, `get_messages`, `search_messages`, `list_files`, `read_file`, `get_call_history`, `get_activity`, `get_calendar`, `search_people`. `search_messages` und `list_files` lesen die zuletzt aktiven Unterhaltungen ab einem Datum (Standard: 30 Tage) und durchsuchen sie lokal, eine Volltextsuche über das ganze Archiv ist das nicht. `read_file` legt jede Datei zusätzlich im Temp-Ordner unter „Teams Everywhere MCP“ ab, damit der Agent auch PDFs und Office-Dateien lesen kann. Dateien aus SharePoint und OneDrive holt die App über Microsoft Graph mit dem Token der Teams-Web-App.
 
+## Datenschutz
+
+Beim ersten Start fragt die App, ob sie anonyme Nutzungsdaten und Fehlerberichte an PostHog (EU) senden darf. Ohne Zustimmung sendet sie nichts. Nachrichten, Namen, Mailadressen, Kontodaten und IP-Adressen gehen nie mit. Unter Einstellungen › Datenschutz lässt sich das jederzeit ändern, unter Einstellungen › Feedback kannst du Probleme und Ideen direkt schicken. Welche Ereignisse die App sendet, steht in [docs/analytics.md](docs/analytics.md).
+
 ## Aufbau
 
 - **Engine pro Konto** (`src/main/engine/`): ein verstecktes Fenster mit `teams.microsoft.com` in einer eigenen Sitzung (`persist:acct-<id>`). Die App liest die Auth-Header der Web-App mit (`tokens.ts`) und ruft dieselben internen Dienste auf wie sie: Chat-Dienst, CSA (Teams, Kanäle, Ordner), Middle Tier (Personen, Kalender), Präsenz.

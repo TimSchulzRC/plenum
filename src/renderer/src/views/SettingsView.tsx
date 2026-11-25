@@ -1,7 +1,9 @@
-import { Button, Dropdown, Option, Radio, RadioGroup, Switch, Badge } from '@fluentui/react-components'
+import { Button, Dropdown, Option, Radio, RadioGroup, Switch, Badge, Textarea } from '@fluentui/react-components'
 import { useEffect, useState } from 'react'
+import { FEEDBACK_MAX_LENGTH, type FeedbackKind } from '@shared/analytics'
 import type { AppSettings, DebugInfo } from '@shared/types'
 import { api } from '../api'
+import { USAGE_DATA_DOC } from '../analytics'
 import { PersonAvatar } from '../components/Avatars'
 import { McpSettings } from '../components/McpSettings'
 import { statusText } from '../components/TitleBar'
@@ -17,6 +19,7 @@ export function SettingsView(): JSX.Element {
   const [debug, setDebug] = useState<DebugInfo | null>(null)
   // Ergebnis der letzten Testmitteilung bzw. Fehler, den macOS beim Anzeigen gemeldet hat
   const [notifyState, setNotifyState] = useState<{ testing?: boolean; ok?: boolean; error?: string }>({})
+  const [analyticsInfo, setAnalyticsInfo] = useState<{ available: boolean; installId?: string } | null>(null)
 
   const set = (patch: Partial<AppSettings>) => void api.setSettings(patch)
 
@@ -33,6 +36,7 @@ export function SettingsView(): JSX.Element {
   useEffect(() => {
     void navigator.mediaDevices.enumerateDevices().then(setDevices)
     void api.getNotificationStatus().then((s) => s.error && setNotifyState({ ok: false, error: s.error }))
+    void api.getAnalyticsInfo().then(setAnalyticsInfo)
   }, [])
 
   const testNotification = async () => {
@@ -210,6 +214,43 @@ export function SettingsView(): JSX.Element {
 
       <McpSettings />
 
+      {analyticsInfo?.available && (
+        <section>
+          <h2>Datenschutz</h2>
+          <div className="row">
+            <div className="grow">
+              Anonyme Nutzungsdaten und Fehlerberichte senden
+              <div className="hint">
+                Zeigt, welche Funktionen genutzt werden und wo Fehler auftreten. Nachrichten, Namen, Mailadressen und Kontodaten gehen nie mit.{' '}
+                <a
+                  href={USAGE_DATA_DOC}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    void api.openExternal(USAGE_DATA_DOC)
+                  }}
+                >
+                  Was genau gesendet wird
+                </a>
+              </div>
+            </div>
+            <Switch checked={settings.usageData === true} onChange={(_e, d) => void api.setUsageData(d.checked, 'settings')} />
+          </div>
+          {settings.usageData === true && analyticsInfo.installId && (
+            <div className="row">
+              <div className="grow">
+                Anonyme ID dieser Installation
+                <div className="hint">Nenne sie bei einem Fehlerbericht, dann lassen sich die passenden Fehlermeldungen finden.</div>
+              </div>
+              <code className="selectable" style={{ fontSize: 12 }}>
+                {analyticsInfo.installId}
+              </code>
+            </div>
+          )}
+        </section>
+      )}
+
+      {analyticsInfo?.available && <FeedbackSection />}
+
       <section>
         <h2>Diagnose</h2>
         {accounts.map((a) => (
@@ -229,5 +270,79 @@ export function SettingsView(): JSX.Element {
         ))}
       </section>
     </div>
+  )
+}
+
+const FEEDBACK_KINDS: { value: FeedbackKind; label: string }[] = [
+  { value: 'bug', label: 'Problem' },
+  { value: 'idea', label: 'Idee' },
+  { value: 'other', label: 'Sonstiges' }
+]
+
+const ISSUES_URL = 'https://github.com/TimSchulzRC/teams-everywhere/issues/new/choose'
+
+// Problem melden oder Idee schicken, ohne GitHub-Konto. Geht als Ereignis an PostHog.
+function FeedbackSection(): JSX.Element {
+  const [kind, setKind] = useState<FeedbackKind>('bug')
+  const [text, setText] = useState('')
+  const [state, setState] = useState<{ sending?: boolean; sent?: boolean; error?: string }>({})
+
+  const send = async () => {
+    setState({ sending: true })
+    try {
+      await api.sendFeedback(kind, text)
+      setText('')
+      setState({ sent: true })
+    } catch (e) {
+      // Electron setzt „Error invoking remote method 'api': Error: “ vor die Meldung
+      setState({ error: (e as Error).message.replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, '') })
+    }
+  }
+
+  return (
+    <section>
+      <h2>Feedback</h2>
+      <div className="row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 10 }}>
+        <RadioGroup layout="horizontal" value={kind} onChange={(_e, d) => setKind(d.value as FeedbackKind)}>
+          {FEEDBACK_KINDS.map((k) => (
+            <Radio key={k.value} value={k.value} label={k.label} />
+          ))}
+        </RadioGroup>
+        <Textarea
+          value={text}
+          maxLength={FEEDBACK_MAX_LENGTH}
+          resize="vertical"
+          rows={4}
+          placeholder={kind === 'bug' ? 'Was ist passiert, und was hast du erwartet?' : kind === 'idea' ? 'Was fehlt dir, oder was würde dir die Arbeit leichter machen?' : 'Was möchtest du loswerden?'}
+          onChange={(_e, d) => {
+            setText(d.value)
+            if (state.sent || state.error) setState({})
+          }}
+        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hint grow">
+            {state.sent
+              ? 'Danke, dein Feedback ist angekommen.'
+              : state.error
+                ? `Senden fehlgeschlagen: ${state.error}`
+                : 'Mit dem Text gehen App-Version und macOS-Version mit. Schreib bitte keine vertraulichen Inhalte hinein.'}{' '}
+            {!state.sent && (
+              <a
+                href={ISSUES_URL}
+                onClick={(e) => {
+                  e.preventDefault()
+                  void api.openExternal(ISSUES_URL)
+                }}
+              >
+                Lieber als GitHub-Issue
+              </a>
+            )}
+          </div>
+          <Button appearance="primary" disabled={!text.trim() || state.sending} onClick={() => void send()}>
+            {state.sending ? 'Wird gesendet …' : 'Senden'}
+          </Button>
+        </div>
+      </div>
+    </section>
   )
 }
