@@ -72,6 +72,7 @@ jobs:
           app="release/mac-arm64/Teams Everywhere (dev).app"
           id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
           [[ "$id" == "io.github.timschulzrc.teamseverywhere.dev" ]] || { echo "::error::Falsche Bundle-ID: $id"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$app"
           ditto -c -k --sequesterRsrc --keepParent "$app" "release/$FILE"
           ls -la "release/$FILE"
 
