@@ -201,11 +201,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     setSending(true)
     // Sofort leeren: Was während des Sendens getippt wird, gehört zur nächsten Nachricht.
     const draft = el.innerHTML
+    const draftSubject = subject
     el.innerHTML = ''
     setEmpty(true)
+    setSubject('')
     try {
-      await onSend({ html, text, subject: withSubject && subject.trim() ? subject.trim() : undefined, importance: important ? 'high' : undefined })
-      setSubject('')
+      await onSend({ html, text, subject: withSubject && showFormat && draftSubject.trim() ? draftSubject.trim() : undefined, importance: important ? 'high' : undefined })
       setImportant(false)
       onCancelReply?.()
     } catch (e) {
@@ -213,6 +214,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       const typed = el.innerText.trim() || el.querySelector('img') ? el.innerHTML : ''
       el.innerHTML = typed ? `${draft}<br>${typed}` : draft
       setEmpty(false)
+      setSubject((s) => s || draftSubject)
       alert(`Nachricht konnte nicht gesendet werden: ${(e as Error).message}`)
     } finally {
       setSending(false)
@@ -254,7 +256,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             </button>
           </div>
         )}
-        {withSubject && <input className="subject-input" placeholder="Betreff hinzufügen" value={subject} onChange={(e) => setSubject(e.target.value)} />}
+        {/* Wie in Teams: Der Betreff erscheint erst mit der Formatierung */}
+        {withSubject && showFormat && <input className="subject-input" placeholder="Betreff hinzufügen" value={subject} onChange={(e) => setSubject(e.target.value)} />}
         <div
           ref={editor}
           className="editor"

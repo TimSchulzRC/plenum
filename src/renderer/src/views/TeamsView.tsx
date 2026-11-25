@@ -1,5 +1,5 @@
-import { Button, Spinner } from '@fluentui/react-components'
-import { ChevronDown16Regular, ChevronRight16Regular, Compose20Regular, LockClosed12Regular, ArrowReply16Regular } from '@fluentui/react-icons'
+import { Spinner } from '@fluentui/react-components'
+import { ChevronDown16Regular, ChevronRight16Regular, LockClosed12Regular, ArrowReply16Regular } from '@fluentui/react-icons'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Channel, ChannelThread, Message, Team } from '@shared/types'
 import { api, onEvent } from '../api'
@@ -119,7 +119,6 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
   const [threads, setThreads] = useState<ChannelThread[]>(() => channelCache.peek(cacheKey(accountId, channel.id)) ?? [])
   const [loading, setLoading] = useState(() => !channelCache.peek(cacheKey(accountId, channel.id)))
   const [error, setError] = useState<string>()
-  const [newPost, setNewPost] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const names = useCallback((m: string) => personName(snapshot, m), [snapshot])
@@ -193,26 +192,15 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
           <Post key={t.id} thread={t} accountId={accountId} channelId={channel.id} myMri={me?.mri} myName={me?.displayName} names={names} onChanged={() => void load()} />
         ))}
       </div>
-      {newPost ? (
-        <Composer
-          withSubject
-          autoFocus
-          onCancel={() => setNewPost(false)}
-          placeholder="Neuen Beitrag verfassen"
-          onSend={async (p) => {
-            await api.sendMessage(accountId, channel.id, p.html, { subject: p.subject, importance: p.importance })
-            setNewPost(false)
-            stick.current = true
-            setTimeout(() => void load(), 800)
-          }}
-        />
-      ) : (
-        <div className="composer-wrap" style={{ maxWidth: 1000 }}>
-          <Button appearance="primary" icon={<Compose20Regular />} onClick={() => setNewPost(true)}>
-            Beitrag verfassen
-          </Button>
-        </div>
-      )}
+      <Composer
+        withSubject
+        placeholder="Neuen Beitrag verfassen"
+        onSend={async (p) => {
+          await api.sendMessage(accountId, channel.id, p.html, { subject: p.subject, importance: p.importance })
+          stick.current = true
+          setTimeout(() => void load(), 800)
+        }}
+      />
     </div>
   )
 }
