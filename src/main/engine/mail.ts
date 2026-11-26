@@ -164,8 +164,8 @@ export function newDraftBody(d: MailDraft): Record<string, unknown> {
 
 // POST …/messages/{id}/createReply | createReplyAll | createForward. Graph und Outlook setzen comment
 // über das Zitat der ursprünglichen Nachricht. Die Empfänger setzt danach ein PATCH (recipientsPatch),
-// so wie die Oberfläche sie zeigt: Outlook nimmt beim Anlegen nur den Kommentar.
-// Weiterleiten braucht die Empfänger schon beim Anlegen (Graph antwortet sonst mit 400).
+// so wie die Oberfläche sie zeigt: Antworten legt Outlook nur mit dem Kommentar an. Weiterleiten
+// braucht die Empfänger schon beim Anlegen (Graph antwortet sonst mit 400).
 export function replyDraftBody(d: MailDraft, kind: 'reply' | 'replyAll' | 'forward'): Record<string, unknown> {
   return { comment: textToHtml(d.text), ...(kind === 'forward' ? { toRecipients: recipients(d.to) } : {}) }
 }
