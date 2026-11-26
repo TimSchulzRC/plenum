@@ -7,6 +7,7 @@ import { log } from './log'
 import { analytics } from './analytics'
 import { isTeamsUrl } from './engine/hosts'
 import { cleanCallName } from '@shared/call-names'
+import { displayResponse } from './display-response'
 
 type Broadcast = (event: string, payload: unknown) => void
 
@@ -37,6 +38,7 @@ function cleanParticipants(list: CallParticipant[] | undefined): CallParticipant
 const SHARE_FAILED: Record<string, string> = {
   disabled: 'Teilen geht erst, wenn der Anruf verbunden ist.',
   no_tray: 'Teams hat das Teilen-Menü nicht geöffnet. Versuch es gleich noch einmal.',
+  source: 'Diese Quelle ließ sich nicht teilen. Nimm ein anderes Fenster oder den ganzen Bildschirm.',
   unknown: 'Teams hat das Teilen nicht gestartet. Versuch es gleich noch einmal.'
 }
 
@@ -157,7 +159,14 @@ export class CallManager {
       denyDisplay(p.cb)
       return
     }
-    p.cb({ video: src, audio: src.id.startsWith('screen') ? 'loopback' : undefined })
+    try {
+      p.cb(displayResponse(src))
+    } catch (e) {
+      // Electron hat die Anfrage dann schon abgelehnt, getDisplayMedia scheitert in Teams
+      log.warn(`display source ${src.id.startsWith('screen') ? 'screen' : 'window'} rejected`, e instanceof Error ? e.message : String(e))
+      analytics.track('screen_share_failed', { reason: 'source' })
+      this.broadcast('call-notice', SHARE_FAILED.source)
+    }
   }
 
   private accountByWc(id: number): AccountService | undefined {
