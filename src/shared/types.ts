@@ -242,6 +242,8 @@ export interface MailAttachment {
 
 export interface MailMessage extends MailSummary {
   cc: MailAddress[]
+  // Antwortadresse, wenn der Absender eine andere als From angibt
+  replyTo: MailAddress[]
   bodyType: 'html' | 'text'
   body: string
   attachments: MailAttachment[]

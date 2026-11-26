@@ -118,3 +118,14 @@ test('Dateigröße lesbar', () => {
   assert.equal(fileSize(2048), '2 KB')
   assert.equal(fileSize(3.5 * 1024 * 1024), '3,5 MB')
 })
+
+test('Folgeseite auf anderem Port zählt nicht als Graph', () => {
+  assert.equal(isGraphPage('https://graph.microsoft.com:8443/v1.0/me/mailFolders/AAMk/messages'), false)
+})
+
+test('Antwortadresse (Reply-To) statt Absender', () => {
+  const withReplyTo = { ...src, replyTo: [{ address: 'support@fabrikam.de' }] }
+  assert.deepEqual(replyDraft(withReplyTo, 'reply', ['alex@contoso.com']).to, ['support@fabrikam.de'])
+  assert.deepEqual(replyDraft(withReplyTo, 'replyAll', ['alex@contoso.com']).to, ['support@fabrikam.de', 'sam@contoso.com'])
+  assert.deepEqual(replyDraft({ ...src, replyTo: [] }, 'reply', ['alex@contoso.com']).to, ['kim@fabrikam.de'])
+})

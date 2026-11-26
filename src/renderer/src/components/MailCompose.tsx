@@ -10,8 +10,8 @@ import { fmt } from '../lib/format'
 export type ComposeState = { kind: 'new'; accountId: string } | { kind: MailReplyKind; accountId: string; source: MailMessage }
 
 const TITLES: Record<ComposeState['kind'], string> = { new: 'Neue E-Mail', reply: 'Antworten', replyAll: 'Allen antworten', forward: 'Weiterleiten' }
-// Graph nimmt höchstens 4 MB je Anfrage, Base64 macht ein Drittel mehr daraus
-const MAX_BYTES = 3 * 1024 * 1024
+// Graph nimmt Anhänge direkt nur unter 3 MB, jede Datei in einer eigenen Anfrage
+const MAX_BYTES = 3_000_000
 
 function readFile(file: File): Promise<MailFile> {
   return new Promise((resolve, reject) => {
@@ -51,29 +51,41 @@ export function MailCompose({
   const [text, setText] = useState('')
   const [files, setFiles] = useState<(MailFile & { size: number })[]>([])
   const [busy, setBusy] = useState(false)
+  // Dateien werden noch eingelesen: so lange kein Senden, sonst fehlten sie in der Mail
+  const [reading, setReading] = useState(0)
   const [error, setError] = useState<string>()
   const picker = useRef<HTMLInputElement>(null)
 
   const toList = parseAttendees(to)
   const ccList = parseAttendees(cc)
-  const total = files.reduce((n, f) => n + f.size, 0)
+  const big = files.find((f) => f.size > MAX_BYTES)
   const problem = !toList.valid.length && !ccList.valid.length
     ? 'Empfänger fehlt'
     : toList.invalid.length || ccList.invalid.length
       ? `Keine E-Mail-Adresse: ${[...toList.invalid, ...ccList.invalid].join(', ')}`
-      : total > MAX_BYTES
-        ? 'Anhänge zusammen höchstens 3 MB'
-        : account && account.status !== 'ready'
+      : big
+        ? `${big.name} ist größer als 3 MB`
+        : reading
+          ? 'Dateien werden noch gelesen'
+          : account && account.status !== 'ready'
           ? `${calendarAccountName(account)} ist nicht verbunden`
           : undefined
 
   const addFiles = async (list: FileList | null) => {
-    if (!list) return
+    if (!list?.length) return
+    const all = [...list]
+    const tooBig = all.filter((f) => f.size > MAX_BYTES)
+    if (tooBig.length) setError(`Größer als 3 MB, nicht angehängt: ${tooBig.map((f) => f.name).join(', ')}`)
+    const ok = all.filter((f) => f.size <= MAX_BYTES)
+    if (!ok.length) return
+    setReading((n) => n + 1)
     try {
-      const read = await Promise.all([...list].map(async (f) => ({ ...(await readFile(f)), size: f.size })))
+      const read = await Promise.all(ok.map(async (f) => ({ ...(await readFile(f)), size: f.size })))
       setFiles((cur) => [...cur, ...read])
     } catch (e) {
       setError(ipcErrorText(e))
+    } finally {
+      setReading((n) => n - 1)
     }
   }
 

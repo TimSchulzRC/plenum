@@ -73,6 +73,7 @@ export function MailView(): JSX.Element {
   const [loadingMore, setLoadingMore] = useState(false)
   const [open, setOpen] = useState<Open | null>(null)
   const [compose, setCompose] = useState<ComposeState | null>(null)
+  const [reload, setReload] = useState(0)
 
   // Ordner aller Konten, beim Öffnen und alle zwei Minuten
   const loadFolders = useCallback(() => {
@@ -132,27 +133,31 @@ export function MailView(): JSX.Element {
       clearInterval(t)
     }
     // wantedKey fasst wanted zusammen, wanted selbst ändert sich bei jedem Render
-  }, [wantedKey])
+  }, [wantedKey, reload])
 
   const items = useMemo(() => mergeMail((sources ?? []).map((s) => s.items)), [sources])
   const errors = (sources ?? []).filter((s) => s.error)
   const hasMore = (sources ?? []).some((s) => s.next)
 
+  // Ältere Mails nachladen. Jede Seite landet nur in ihrer Quelle, und nur, wenn die noch denselben
+  // Cursor hat: Nach einem Ordnerwechsel oder Neuladen fällt die Antwort weg, und zwischendurch
+  // gelesene oder gelöschte Mails bleiben, wie sie sind.
   const loadMore = async () => {
     if (!sources || loadingMore) return
     setLoadingMore(true)
-    const next = await Promise.all(
-      sources.map(async (s) => {
-        if (!s.next) return s
-        try {
-          const p = await api.listMail(s.accountId, s.folderId, s.next)
-          return { ...s, items: [...s.items, ...p.items.filter((i) => !s.items.some((x) => x.id === i.id))], next: p.next }
-        } catch (e) {
-          return { ...s, error: ipcErrorText(e) }
-        }
-      })
+    await Promise.all(
+      sources
+        .filter((s) => s.next)
+        .map(async ({ accountId, folderId, next: cursor }) => {
+          const same = (s: Source) => s.accountId === accountId && s.folderId === folderId && s.next === cursor
+          try {
+            const p = await api.listMail(accountId, folderId, cursor)
+            setSources((prev) => prev && prev.map((s) => (same(s) ? { ...s, items: [...s.items, ...p.items.filter((i) => !s.items.some((x) => x.id === i.id))], next: p.next } : s)))
+          } catch (e) {
+            setSources((prev) => prev && prev.map((s) => (same(s) ? { ...s, error: ipcErrorText(e) } : s)))
+          }
+        })
     )
-    setSources(next)
     setLoadingMore(false)
   }
 
@@ -221,7 +226,7 @@ export function MailView(): JSX.Element {
             </button>
           </Tooltip>
           <Tooltip content="Neu laden" relationship="label">
-            <button className="icon-btn" onClick={() => (loadFolders(), setSel({ ...sel }))}>
+            <button className="icon-btn" onClick={() => (loadFolders(), setReload((n) => n + 1))}>
               <ArrowSync20Regular />
             </button>
           </Tooltip>
@@ -357,11 +362,11 @@ export function MailView(): JSX.Element {
             multi={multi}
             color={color}
             onReply={(m, kind) => setCompose({ kind, accountId: m.accountId, source: m })}
-            onUnread={(m) => {
+            onUnread={async (m) => {
+              await api.setMailRead(m.accountId, m.id, false)
               patchItem(m, { isRead: false })
               bumpUnread(m.accountId, 1)
               setOpen(null)
-              void api.setMailRead(m.accountId, m.id, false).catch(() => {})
             }}
             onDelete={async (m) => {
               await api.deleteMail(m.accountId, m.id)
@@ -401,7 +406,7 @@ function MailReader({
   multi: boolean
   color: (id: string) => string
   onReply: (m: MailMessage, kind: MailReplyKind) => void
-  onUnread: (m: MailMessage) => void
+  onUnread: (m: MailMessage) => Promise<void>
   onDelete: (m: MailMessage) => Promise<void>
 }): JSX.Element {
   const [m, setM] = useState<MailMessage | null>(null)
@@ -467,7 +472,7 @@ function MailReader({
         </Button>
         <div style={{ flex: 1 }} />
         <Tooltip content="Als ungelesen markieren" relationship="label">
-          <Button size="small" appearance="subtle" icon={<MailUnread20Regular />} disabled={busy} onClick={() => onUnread(m)} />
+          <Button size="small" appearance="subtle" icon={<MailUnread20Regular />} disabled={busy} onClick={() => void run(() => onUnread(m))} />
         </Tooltip>
         <Tooltip content="Löschen" relationship="label">
           <Button size="small" appearance="subtle" icon={<Delete20Regular />} disabled={busy} onClick={() => void run(() => onDelete(m))} />

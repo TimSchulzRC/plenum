@@ -24,7 +24,7 @@ export function messagesUrl(folderId: string, top = 40): string {
 }
 
 export function messageUrl(id: string): string {
-  return `${GRAPH}/me/messages/${encodeURIComponent(id)}?$select=${SUMMARY_FIELDS},ccRecipients,body`
+  return `${GRAPH}/me/messages/${encodeURIComponent(id)}?$select=${SUMMARY_FIELDS},ccRecipients,replyTo,body`
 }
 
 export function attachmentsUrl(id: string): string {
@@ -40,7 +40,7 @@ export function isGraphPage(url: string | undefined): url is string {
   if (!url) return false
   try {
     const u = new URL(url)
-    return u.protocol === 'https:' && u.hostname === 'graph.microsoft.com' && /^\/v1\.0\/me\/mailFolders\/[^/]+\/messages$/.test(u.pathname)
+    return u.origin === 'https://graph.microsoft.com' && /^\/v1\.0\/me\/mailFolders\/[^/]+\/messages$/.test(u.pathname)
   } catch {
     return false
   }
@@ -90,6 +90,7 @@ export function mapMessage(m: any, accountId: string, attachments: MailAttachmen
   return {
     ...mapSummary(m, accountId),
     cc: addresses(m.ccRecipients),
+    replyTo: addresses(m.replyTo),
     bodyType: type,
     body: String(m.body?.content ?? ''),
     attachments,
@@ -143,5 +144,5 @@ export function textToHtml(text: string): string {
   return `<div style="font-family: Aptos, Calibri, Helvetica, sans-serif; font-size: 11pt">${esc.replace(/\r?\n/g, '<br>')}</div>`
 }
 
-// Höchstens so viel Anhang in einer Anfrage: Graph nimmt bis 4 MB, Base64 macht ein Drittel mehr daraus
-export const MAX_ATTACHMENT_BYTES = 3 * 1024 * 1024
+// Jeder Anhang geht in einer eigenen Anfrage an Graph, direkt nur unter 3 MB (größere bräuchten eine Upload-Sitzung)
+export const MAX_ATTACHMENT_BYTES = 3_000_000

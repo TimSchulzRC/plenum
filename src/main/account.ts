@@ -1344,8 +1344,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
 
   async sendMail(draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): Promise<void> {
     if (!draft.to.length && !draft.cc.length) throw new Error('Mindestens ein Empfänger fehlt')
-    const size = draft.attachments.reduce((n, f) => n + Math.floor((f.data.length * 3) / 4), 0)
-    if (size > MAX_ATTACHMENT_BYTES) throw new Error('Anhänge zusammen höchstens 3 MB')
+    const big = draft.attachments.find((f) => Buffer.from(f.data, 'base64').length > MAX_ATTACHMENT_BYTES)
+    if (big) throw new Error(`${big.name} ist größer als 3 MB`)
     const draftId = await this.api.createMailDraft(draft, reply)
     for (const f of draft.attachments) await this.api.addMailAttachment(draftId, f)
     const { source } = await this.api.sendMailDraft(draftId)
