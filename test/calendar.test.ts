@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ACCOUNT_COLORS, accountColor, allDayOn, calendarAccountName, ipcErrorText, localTime, mergeCalendars, parseAttendees, wallHours } from '../src/renderer/src/lib/calendar.ts'
+import { ACCOUNT_COLORS, accountColor, allDayOn, findMeetingChat, ipcErrorText, localTime, mergeCalendars, parseAttendees, wallHours } from '../src/renderer/src/lib/calendar.ts'
 
 process.env.TZ = 'Europe/Berlin'
 
@@ -110,10 +110,26 @@ test('Teilnehmer: Komma, Semikolon, Leerzeichen und „Name <adresse>“', () =>
   assert.deepEqual(parseAttendees('  '), { valid: [], invalid: [] })
 })
 
-test('Kontoname im Kalender: Organisation vor Domain vor Personenname', () => {
-  assert.equal(calendarAccountName({ label: 'Alex', upn: 'alex@contoso.com', tenantName: 'Contoso' }), 'Contoso')
-  assert.equal(calendarAccountName({ label: 'Alex', upn: 'alex@fabrikam.de' }), 'fabrikam.de')
-  assert.equal(calendarAccountName({ label: 'Alex' }), 'Alex')
+test('Besprechungschat: bevorzugtes Konto zuerst, dann die anderen, dann deren Gastmandanten', () => {
+  const join = 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=x'
+  const sources = [
+    { accountId: 'a', event: { joinUrl: join } },
+    { accountId: 'b', event: { threadId: '19:meeting_abc@thread.v2' } }
+  ]
+  const chats: Record<string, { id: string; meeting?: { joinUrl?: string } }[]> = {
+    a: [{ id: '19:meeting_abc@thread.v2', meeting: { joinUrl: 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=y' } }],
+    b: [{ id: '19:meeting_abc@thread.v2' }]
+  }
+  const none = () => []
+  assert.deepEqual(findMeetingChat(sources, 'b', none, (id) => chats[id]), { accountId: 'b', chatId: '19:meeting_abc@thread.v2' })
+  assert.deepEqual(findMeetingChat(sources, 'x', none, (id) => chats[id]), { accountId: 'a', chatId: '19:meeting_abc@thread.v2' })
+  // Nur der Gastmandant von a kennt den Chat
+  const guestChats: Record<string, { id: string; meeting?: { joinUrl?: string } }[]> = { a: [], b: [], 'a-g': [{ id: 'g-chat', meeting: { joinUrl: join } }] }
+  const guests = (id: string) => (id === 'a' ? ['a-g'] : [])
+  assert.deepEqual(findMeetingChat(sources, 'b', guests, (id) => guestChats[id]), { accountId: 'a-g', chatId: 'g-chat' })
+  // Ein eingeladenes Konto geht vor jedem Gastmandanten
+  assert.deepEqual(findMeetingChat(sources, 'a', guests, (id) => ({ ...guestChats, b: chats.b })[id]), { accountId: 'b', chatId: '19:meeting_abc@thread.v2' })
+  assert.equal(findMeetingChat([{ accountId: 'a', event: {} }], 'a', guests, (id) => guestChats[id]), undefined)
 })
 
 test('Fehlertext ohne Electron-Vorsatz', () => {

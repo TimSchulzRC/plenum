@@ -118,10 +118,23 @@ export function parseAttendees(text: string): { valid: string[]; invalid: string
   return { valid, invalid }
 }
 
-// Name eines Kontos im Kalender. Zwei Konten derselben Person heißen gleich, erst die Organisation
-// unterscheidet sie.
-export function calendarAccountName(a: { label: string; upn?: string; tenantName?: string }): string {
-  return a.tenantName || a.upn?.split('@')[1] || a.label
+// Besprechungschat zu einem Termin: zuerst im bevorzugten Konto, dann in den anderen eingeladenen.
+// Kennt keines den Chat, suchen deren Gastmandanten mit. Lädt ein fremder Mandant dich als Gast ein,
+// steht die Einladung im Kalender deines Kontos, den Chat gibt es aber womöglich nur im Gastmandanten.
+export function findMeetingChat(
+  sources: { accountId: string; event: { threadId?: string; joinUrl?: string } }[],
+  preferred: string,
+  guestsOf: (accountId: string) => string[],
+  chatsOf: (accountId: string) => { id: string; meeting?: { joinUrl?: string } }[] | undefined
+): { accountId: string; chatId: string } | undefined {
+  const ordered = [...sources.filter((s) => s.accountId === preferred), ...sources.filter((s) => s.accountId !== preferred)]
+  const candidates = [...ordered, ...ordered.flatMap((s) => guestsOf(s.accountId).map((accountId) => ({ accountId, event: s.event })))]
+  for (const { accountId, event } of candidates) {
+    const link = event.joinUrl && normalizeJoinUrl(event.joinUrl)
+    const chat = chatsOf(accountId)?.find((c) => (event.threadId && c.id === event.threadId) || (link && c.meeting?.joinUrl && normalizeJoinUrl(c.meeting.joinUrl) === link))
+    if (chat) return { accountId, chatId: chat.id }
+  }
+  return undefined
 }
 
 // Electron setzt „Error invoking remote method 'api': Error: “ vor jede Meldung aus dem Hauptprozess

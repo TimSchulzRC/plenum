@@ -16,7 +16,8 @@ import {
 import { useState, type CSSProperties } from 'react'
 import type { AccountInfo } from '@shared/types'
 import { api } from '../api'
-import { calendarAccountName, ipcErrorText, localTime as toMs, parseAttendees } from '../lib/calendar'
+import { accountTitle } from '@shared/accounts'
+import { ipcErrorText, localTime as toMs, parseAttendees } from '../lib/calendar'
 
 export interface EventDraft {
   accountId: string
@@ -73,7 +74,7 @@ export function NewEventDialog({
       : parsed.invalid.length
         ? `Keine E-Mail-Adresse: ${parsed.invalid.join(', ')}`
         : account && account.status !== 'ready'
-          ? `${calendarAccountName(account)} ist nicht verbunden`
+          ? `${accountTitle(account).name} ist nicht verbunden`
           : undefined
 
   const onStartTime = (v: string) => {
@@ -120,13 +121,13 @@ export function NewEventDialog({
               {accounts.length > 1 && (
                 <Field label="Kalender">
                   <Dropdown
-                    value={account ? calendarAccountName(account) : ''}
+                    value={account ? accountTitle(account).name : ''}
                     selectedOptions={[accountId]}
                     onOptionSelect={(_e, d) => d.optionValue && setAccountId(d.optionValue)}
                     button={{ children: <AccountLabel a={account} color={color} /> }}
                   >
                     {accounts.map((a) => (
-                      <Option key={a.id} value={a.id} text={calendarAccountName(a)} disabled={a.status !== 'ready'}>
+                      <Option key={a.id} value={a.id} text={accountTitle(a).name} disabled={a.status !== 'ready'}>
                         <AccountLabel a={a} color={color} />
                       </Option>
                     ))}
@@ -170,7 +171,7 @@ export function NewEventDialog({
                 />
                 <Switch label="Teams-Besprechung" checked={teams} onChange={(_e, d) => setTeams(d.checked)} />
               </div>
-              <Field label="Teilnehmer" hint={parsed.valid.length ? `${account ? calendarAccountName(account) : 'Das Konto'} verschickt Einladungen an ${parsed.valid.length === 1 ? '1 Person' : `${parsed.valid.length} Personen`}.` : 'E-Mail-Adressen, durch Komma getrennt. Leer lassen für einen Termin nur für dich.'}>
+              <Field label="Teilnehmer" hint={parsed.valid.length ? `${account ? accountTitle(account).name : 'Das Konto'} verschickt Einladungen an ${parsed.valid.length === 1 ? '1 Person' : `${parsed.valid.length} Personen`}.` : 'E-Mail-Adressen, durch Komma getrennt. Leer lassen für einen Termin nur für dich.'}>
                 <Input value={attendees} onChange={(_e, d) => setAttendees(d.value)} placeholder="name@firma.de, …" />
               </Field>
               <Field label="Ort">
@@ -201,7 +202,7 @@ function AccountLabel({ a, color }: { a?: AccountInfo; color: (id: string) => st
   return (
     <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', minWidth: 0 }}>
       <span className="acct-dot" style={{ background: color(a.id) } as CSSProperties} />
-      <span>{calendarAccountName(a)}</span>
+      <span>{accountTitle(a).name}</span>
       {a.upn && <span style={{ color: 'var(--fg-3)', fontSize: 12 }}>{a.upn}</span>}
     </span>
   )

@@ -15,7 +15,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEve
 import type { AccountInfo, CalendarEvent } from '@shared/types'
 import { api } from '../api'
 import { clock, fmt } from '../lib/format'
-import { accountColor, allDayOn, calendarAccountName, ipcErrorText, mergeCalendars, normalizeJoinUrl, wallHours, type MergedEvent } from '../lib/calendar'
+import { accountTitle } from '@shared/accounts'
+import { accountColor, allDayOn, findMeetingChat, ipcErrorText, mergeCalendars, wallHours, type MergedEvent } from '../lib/calendar'
 import { useStore } from '../store'
 import { NewEventDialog, type EventDraft } from '../components/NewEventDialog'
 
@@ -143,9 +144,8 @@ export function CalendarView(): JSX.Element {
   const preferred = (m: Merged) => m.sources.find((s) => s.accountId === activeAccountId) ?? m.sources[0]
 
   const openChat = (target: { accountId: string; chatId: string }) => {
-    const st = useStore.getState()
-    st.setActiveAccount(target.accountId)
-    st.select({ chatId: target.chatId, newChat: false }, 'chat')
+    // Konto und Chat in einem Schritt, damit „Zurück“ direkt in den Kalender führt
+    useStore.getState().open(target.accountId, { chatId: target.chatId, newChat: false }, 'chat')
     setOpen(null)
   }
 
@@ -231,7 +231,7 @@ export function CalendarView(): JSX.Element {
                 onClick={() => toggle(a.id)}
               >
                 <span className="dot" />
-                {calendarAccountName(a)}
+                {accountTitle(a).name}
                 {on && r?.error && !r.events && <span className="warn">!</span>}
               </button>
             )
@@ -243,14 +243,14 @@ export function CalendarView(): JSX.Element {
           <h2>Kalender nicht verfügbar</h2>
           {failed.map((a) => (
             <div key={a.id} style={{ maxWidth: 520 }}>
-              {multi ? `${calendarAccountName(a)}: ` : ''}
+              {multi ? `${accountTitle(a).name}: ` : ''}
               {results[a.id]?.error}
             </div>
           ))}
           <div style={{ fontSize: 12 }}>Der Kalender wird über die Teams-Web-App geladen. Öffne ihn dort einmal, damit die App die nötige Berechtigung mitliest.</div>
           {failed.map((a) => (
             <Button key={a.id} onClick={() => void api.showEngine(a.id)}>
-              Teams-Webansicht öffnen{multi ? ` (${calendarAccountName(a)})` : ''}
+              Teams-Webansicht öffnen{multi ? ` (${accountTitle(a).name})` : ''}
             </Button>
           ))}
         </div>
@@ -258,7 +258,7 @@ export function CalendarView(): JSX.Element {
         <>
           {failed.length > 0 && (
             <div className="banner cal-banner">
-              <span className="grow">Nicht geladen: {failed.map(calendarAccountName).join(', ')}. Die übrigen Konten sind zu sehen.</span>
+              <span className="grow">Nicht geladen: {failed.map((a) => accountTitle(a).name).join(', ')}. Die übrigen Konten sind zu sehen.</span>
               <Button size="small" onClick={() => setReload((n) => n + 1)}>
                 Erneut versuchen
               </Button>
@@ -404,24 +404,23 @@ function EventDetails({ m, multi, byId, color }: { m: Merged; multi: boolean; by
   )
 }
 
-// Besprechungschat: im bevorzugten Konto, sonst in einem anderen eingeladenen, das ihn kennt.
+// Besprechungschat: im bevorzugten Konto, sonst in einem anderen eingeladenen, sonst in deren Gastmandanten.
 // Hört auf die Snapshots, damit der Knopf erscheint, sobald ein Chat nachgeladen ist.
 function ChatButton({ m, preferred, onOpen }: { m: Merged; preferred: string; onOpen: (target: { accountId: string; chatId: string }) => void }): JSX.Element | null {
   const snapshots = useStore((s) => s.snapshots)
-  const sources = [...m.sources.filter((s) => s.accountId === preferred), ...m.sources.filter((s) => s.accountId !== preferred)]
-  for (const s of sources) {
-    const link = s.event.joinUrl && normalizeJoinUrl(s.event.joinUrl)
-    const chat = snapshots[s.accountId]?.chats.find((c) => c.id === s.event.threadId || (link && c.meeting?.joinUrl && normalizeJoinUrl(c.meeting.joinUrl) === link))
-    if (chat) {
-      const target = { accountId: s.accountId, chatId: chat.id }
-      return (
-        <Button icon={<Chat20Regular />} onClick={() => onOpen(target)}>
-          Chat
-        </Button>
-      )
-    }
-  }
-  return null
+  const accounts = useStore((s) => s.accounts)
+  const target = findMeetingChat(
+    m.sources,
+    preferred,
+    (id) => accounts.filter((a) => a.parentId === id).map((a) => a.id),
+    (id) => snapshots[id]?.chats
+  )
+  if (!target) return null
+  return (
+    <Button icon={<Chat20Regular />} onClick={() => onOpen(target)}>
+      Chat
+    </Button>
+  )
 }
 
 // Mit mehreren eingeladenen Konten lässt sich wählen, mit welchem man teilnimmt.
@@ -466,7 +465,7 @@ function JoinButton({
   )
 }
 
-const name = (a?: AccountInfo) => (a ? calendarAccountName(a) : 'Konto')
+const name = (a?: AccountInfo) => (a ? accountTitle(a).name : 'Konto')
 
 function nextHalfHour(): number {
   const d = new Date()
