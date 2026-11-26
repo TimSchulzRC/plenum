@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ACCOUNT_COLORS, accountColor, allDayOn, dragRange, findMeetingChat, ipcErrorText, localTime, mergeCalendars, parseAttendees, planEvents, wallHours } from '../src/renderer/src/lib/calendar.ts'
+import { ACCOUNT_COLORS, accountColor, allDayOn, dragRange, findMeetingChat, ipcErrorText, joinSources, localTime, mergeCalendars, parseAttendees, planEvents, wallHours } from '../src/renderer/src/lib/calendar.ts'
 
 process.env.TZ = 'Europe/Berlin'
 
@@ -179,14 +179,14 @@ const draft = { subject: 'Abstimmung', attendees: ['kunde@firma.de'], teamsMeeti
 const upn = (id: string) => ({ a: 'tim@a.de', b: 'tim@b.de' })[id]
 
 test('Ein Konto: Termin wie bisher', () => {
-  assert.deepEqual(planEvents(draft, ['a'], 'block', upn), [{ accountId: 'a', event: draft, copy: false }])
+  assert.deepEqual(planEvents(draft, ['a'], 'block', upn), [{ accountId: 'a', event: draft }])
 })
 
 test('Blocker: Organisator lädt ein, weitere Konten bekommen eine Kopie ohne Teilnehmer und Besprechung', () => {
   const plan = planEvents(draft, ['b', 'a'], 'block', upn)
   assert.deepEqual(plan, [
-    { accountId: 'b', event: draft, copy: false },
-    { accountId: 'a', event: { ...draft, attendees: [], teamsMeeting: false }, copy: true }
+    { accountId: 'b', event: draft },
+    { accountId: 'a', event: { ...draft, attendees: [], teamsMeeting: false } }
   ])
 })
 
@@ -230,4 +230,15 @@ test('Gleicher Titel und Zeit im selben Konto bleiben zwei Termine', () => {
   const start = Date.parse('2026-11-26T09:00:00Z')
   const merged = mergeCalendars([{ accountId: 'a', events: [{ id: '1', subject: 'Fokus', start, end: start + 1 }, { id: '2', subject: 'Fokus', start, end: start + 1 }] }])
   assert.equal(merged.length, 2)
+})
+
+test('Teilnehmen nur mit eingeladenen Konten, nicht mit dem Konto, das nur einen Blocker hat', () => {
+  const link = 'https://teams.microsoft.com/l/meetup-join/abc'
+  const organizer = { accountId: 'a', event: { iCalUId: 'X', joinUrl: link } }
+  const blocker = { accountId: 'b', event: { iCalUId: 'Y' } }
+  // Dieselbe Einladung, aber ohne Link geliefert
+  const invited = { accountId: 'c', event: { iCalUId: 'x' } }
+  assert.deepEqual(joinSources([blocker, organizer, invited]).map((s) => s.accountId), ['a', 'c'])
+  // Ohne Link: alle bleiben
+  assert.deepEqual(joinSources([blocker, invited]).map((s) => s.accountId), ['b', 'c'])
 })

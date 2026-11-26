@@ -81,7 +81,9 @@ export function NewEventDialog({
   const invites = parsed.valid.length + (others === 'invite' ? extra.length : 0)
   const start = allDay ? toMs(date) : toMs(date, startTime)
   // Ganztägig: Ende ist Mitternacht nach dem letzten Tag
-  const end = allDay ? toMs(endDate, '00:00', 1) : toMs(date, endTime)
+  // Ende 00:00 heißt Mitternacht am Ende des Tages, etwa nach Ziehen bis zum unteren Rand
+  const endAt = (t: string) => toMs(date, t, t === '00:00' ? 1 : 0)
+  const end = allDay ? toMs(endDate, '00:00', 1) : endAt(endTime)
   const problem = !subject.trim()
     ? 'Titel fehlt'
     : !(end > start)
@@ -98,7 +100,7 @@ export function NewEventDialog({
 
   const onStartTime = (v: string) => {
     // Dauer beibehalten, wie in Teams
-    const dur = toMs(date, endTime) - toMs(date, startTime)
+    const dur = endAt(endTime) - toMs(date, startTime)
     setStartTime(v)
     if (dur > 0) setEndTime(timeValue(toMs(date, v) + dur))
   }

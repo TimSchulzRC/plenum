@@ -159,6 +159,15 @@ export function findMeetingChat(
   return undefined
 }
 
+// Konten, die an einer Besprechung teilnehmen können: die mit eigenem Link und die mit derselben UID
+// (dieselbe Einladung, nur ohne Link geliefert). Ein Blocker hat weder das eine noch das andere, das
+// Konto ist nicht eingeladen. Hat keine Quelle einen Link, bleiben alle.
+export function joinSources<S extends { event: { joinUrl?: string; iCalUId?: string } }>(sources: S[]): S[] {
+  const uids = new Set(sources.flatMap((s) => (s.event.joinUrl && s.event.iCalUId ? [s.event.iCalUId.toLowerCase()] : [])))
+  const list = sources.filter((s) => s.event.joinUrl || (s.event.iCalUId && uids.has(s.event.iCalUId.toLowerCase())))
+  return list.length ? list : sources
+}
+
 // Electron setzt „Error invoking remote method 'api': Error: “ vor jede Meldung aus dem Hauptprozess
 export function ipcErrorText(e: unknown): string {
   return (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, '')
@@ -190,12 +199,6 @@ export function dragRange(day: Date, fromHours: number, toHours: number, step = 
 // werden vom ersten Konto eingeladen wie andere Teilnehmer auch.
 export type OtherAccountsMode = 'block' | 'invite'
 
-export interface PlannedEvent<E> {
-  accountId: string
-  event: E
-  copy: boolean
-}
-
 // Das erste Konto legt den Termin an, verschickt die Einladungen und erstellt die Teams-Besprechung.
 // Fehlt einem Konto die Adresse, kann es nicht eingeladen werden: Fehler statt stiller Lücke.
 export function planEvents<E extends { attendees: string[]; teamsMeeting: boolean }>(
@@ -203,7 +206,7 @@ export function planEvents<E extends { attendees: string[]; teamsMeeting: boolea
   accountIds: string[],
   mode: OtherAccountsMode,
   addressOf: (accountId: string) => string | undefined
-): PlannedEvent<E>[] {
+): { accountId: string; event: E }[] {
   const [first, ...others] = accountIds
   if (!first) return []
   if (mode === 'invite') {
@@ -214,7 +217,7 @@ export function planEvents<E extends { attendees: string[]; teamsMeeting: boolea
     })
     const attendees = [...ev.attendees]
     for (const a of invite) if (!attendees.some((x) => x.toLowerCase() === a.toLowerCase())) attendees.push(a)
-    return [{ accountId: first, event: { ...ev, attendees }, copy: false }]
+    return [{ accountId: first, event: { ...ev, attendees } }]
   }
-  return [{ accountId: first, event: ev, copy: false }, ...others.map((accountId) => ({ accountId, event: { ...ev, attendees: [], teamsMeeting: false }, copy: true }))]
+  return [{ accountId: first, event: ev }, ...others.map((accountId) => ({ accountId, event: { ...ev, attendees: [], teamsMeeting: false } }))]
 }

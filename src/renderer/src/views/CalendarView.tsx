@@ -16,7 +16,7 @@ import type { AccountInfo, CalendarEvent } from '@shared/types'
 import { api } from '../api'
 import { clock, fmt } from '../lib/format'
 import { accountTitle } from '@shared/accounts'
-import { accountColor, allDayOn, dragRange, findMeetingChat, ipcErrorText, mergeCalendars, wallHours, type MergedEvent } from '../lib/calendar'
+import { accountColor, allDayOn, dragRange, findMeetingChat, ipcErrorText, joinSources, mergeCalendars, wallHours, type MergedEvent } from '../lib/calendar'
 import { useStore } from '../store'
 import { NewEventDialog, type EventDraft } from '../components/NewEventDialog'
 
@@ -169,9 +169,9 @@ export function CalendarView(): JSX.Element {
 
   const newEvent = (start?: number, end?: number) => {
     const s = start ?? nextHalfHour()
-    // Der Dialog hat ein Datum für Beginn und Ende: Was bis Mitternacht reicht, endet um 23:55
-    const lastSlot = new Date(s).setHours(23, 55, 0, 0)
-    setDraft({ accountId: defaultAccount() ?? '', start: s, end: Math.min(end ?? s + 30 * 60_000, lastSlot) })
+    // Der Dialog hat ein Datum für Beginn und Ende, das Ende reicht höchstens bis Mitternacht
+    const midnight = new Date(s).setHours(24, 0, 0, 0)
+    setDraft({ accountId: defaultAccount() ?? '', start: s, end: Math.min(end ?? s + 30 * 60_000, midnight) })
   }
 
   // Ziehen in einer freien Stelle: Zeitraum in Viertelstunden wählen, beim Loslassen öffnet der Dialog.
@@ -385,7 +385,7 @@ export function CalendarView(): JSX.Element {
           <PopoverSurface style={{ width: 360 }}>
             <EventDetails m={open.m} multi={multi} byId={byId} color={color} />
             <div style={{ display: 'flex', gap: 8 }}>
-              {open.m.sources.some((s) => s.event.joinUrl) && <JoinButton m={open.m} preferred={preferred(open.m).accountId} byId={byId} onJoin={(id) => join(open.m, id)} />}
+              {open.m.sources.some((s) => s.event.joinUrl) && <JoinButton m={open.m} active={activeAccountId} byId={byId} onJoin={(id) => join(open.m, id)} />}
               <ChatButton m={open.m} preferred={preferred(open.m).accountId} onOpen={openChat} />
             </div>
           </PopoverSurface>
@@ -475,20 +475,22 @@ function ChatButton({ m, preferred, onOpen }: { m: Merged; preferred: string; on
   )
 }
 
-// Mit mehreren eingeladenen Konten lässt sich wählen, mit welchem man teilnimmt.
+// Mit mehreren eingeladenen Konten lässt sich wählen, mit welchem man teilnimmt. Konten mit nur einem
+// Blocker sind nicht eingeladen und fehlen hier.
 function JoinButton({
   m,
-  preferred,
+  active,
   byId,
   onJoin
 }: {
   m: Merged
-  preferred: string
+  active?: string | null
   byId: (id: string) => AccountInfo | undefined
   onJoin: (accountId: string) => void
 }): JSX.Element {
-  const main = m.sources.find((s) => s.accountId === preferred) ?? m.sources[0]
-  if (m.sources.length < 2) {
+  const sources = joinSources(m.sources)
+  const main = sources.find((s) => s.accountId === active) ?? sources[0]
+  if (sources.length < 2) {
     return (
       <Button appearance="primary" icon={<Video20Regular />} onClick={() => onJoin(main.accountId)}>
         Teilnehmen
@@ -506,7 +508,7 @@ function JoinButton({
       </MenuTrigger>
       <MenuPopover>
         <MenuList>
-          {m.sources.map((s) => (
+          {sources.map((s) => (
             <MenuItem key={s.accountId} onClick={() => onJoin(s.accountId)}>
               Mit {name(byId(s.accountId))} teilnehmen
             </MenuItem>
