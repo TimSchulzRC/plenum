@@ -423,7 +423,10 @@ export class Engine extends EventEmitter<EngineEvents> {
     headers['origin'] = origin
     headers['referer'] = origin + '/'
     headers[OWN_REQUEST_HEADER] = '1'
-    return this.ses.fetch(url, { method: init.method ?? 'GET', headers, body, credentials: 'include' } as RequestInit)
+    // Graph und Outlook antworten mit Access-Control-Allow-Origin: *. Mit Cookies lehnt Chromium das
+    // ab (net::ERR_FAILED), und sie brauchen nur den Bearer-Token.
+    const credentials = family === 'graph' || family === 'outlook' ? 'omit' : 'include'
+    return this.ses.fetch(url, { method: init.method ?? 'GET', headers, body, credentials } as RequestInit)
   }
 
   webOrigin(): string {

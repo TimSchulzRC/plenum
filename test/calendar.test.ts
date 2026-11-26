@@ -130,6 +130,12 @@ test('Besprechungschat: bevorzugtes Konto zuerst, dann die anderen, dann deren G
   // Ein eingeladenes Konto geht vor jedem Gastmandanten
   assert.deepEqual(findMeetingChat(sources, 'a', guests, (id) => ({ ...guestChats, b: chats.b })[id]), { accountId: 'b', chatId: '19:meeting_abc@thread.v2' })
   assert.equal(findMeetingChat([{ accountId: 'a', event: {} }], 'a', guests, (id) => guestChats[id]), undefined)
+  // Nur die Kopie von b trägt die Thread-ID, den Chat kennt aber nur der Gastmandant von a
+  const split = [
+    { accountId: 'a', event: {} },
+    { accountId: 'b', event: { threadId: 'g-chat' } }
+  ]
+  assert.deepEqual(findMeetingChat(split, 'a', guests, (id) => guestChats[id]), { accountId: 'a-g', chatId: 'g-chat' })
 })
 
 test('Fehlertext ohne Electron-Vorsatz', () => {

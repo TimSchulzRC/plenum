@@ -1572,7 +1572,8 @@ button {
   position: absolute;
   left: 2px;
   right: 4px;
-  border-radius: 7px;
+  /* Links gerade: Der Farbbalken soll nicht um die Ecke laufen */
+  border-radius: 0 6px 6px 0;
   background: var(--selected);
   border-left: 3px solid var(--brand-fg);
   padding: 4px 7px;
@@ -1699,6 +1700,7 @@ button {
 .allday .ev.acct {
   background: color-mix(in srgb, var(--acct) 16%, transparent);
   border-left: 3px solid var(--acct);
+  border-radius: 0 6px 6px 0;
 }
 .acct-dots {
   float: right;
@@ -1733,6 +1735,26 @@ button {
 .new-event-error {
   color: var(--danger-fg);
   font-size: 13px;
+}
+/* Felder im Dialog mit gleichmäßigem Rand. Fluent zeichnet die Unterkante dunkler und den Fokusstrich
+   unten entlang der Rundung, beides läuft sichtbar um die Ecken. Doppelte Klassen schlagen Griffel. */
+.new-event .fui-Input.fui-Input,
+.new-event .fui-Textarea.fui-Textarea,
+.new-event .fui-Dropdown.fui-Dropdown,
+.new-event .fui-Input.fui-Input:hover,
+.new-event .fui-Textarea.fui-Textarea:hover,
+.new-event .fui-Dropdown.fui-Dropdown:hover {
+  border-color: var(--colorNeutralStroke1);
+}
+.new-event .fui-Input.fui-Input:focus-within,
+.new-event .fui-Textarea.fui-Textarea:focus-within,
+.new-event .fui-Dropdown.fui-Dropdown:focus-within {
+  border-color: var(--colorCompoundBrandStroke);
+}
+.new-event .fui-Input::after,
+.new-event .fui-Textarea::after,
+.new-event .fui-Dropdown::after {
+  content: none;
 }
 
 /* ---------- Hinweise und Knöpfe ---------- */

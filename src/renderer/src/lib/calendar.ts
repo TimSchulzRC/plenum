@@ -128,7 +128,9 @@ export function findMeetingChat(
   chatsOf: (accountId: string) => { id: string; meeting?: { joinUrl?: string } }[] | undefined
 ): { accountId: string; chatId: string } | undefined {
   const ordered = [...sources.filter((s) => s.accountId === preferred), ...sources.filter((s) => s.accountId !== preferred)]
-  const candidates = [...ordered, ...ordered.flatMap((s) => guestsOf(s.accountId).map((accountId) => ({ accountId, event: s.event })))]
+  // Gastmandanten prüfen gegen alle Kopien, denn Link oder Thread-ID trägt womöglich nur eine davon
+  const guests = ordered.flatMap((s) => guestsOf(s.accountId).flatMap((accountId) => ordered.map((o) => ({ accountId, event: o.event }))))
+  const candidates = [...ordered, ...guests]
   for (const { accountId, event } of candidates) {
     const link = event.joinUrl && normalizeJoinUrl(event.joinUrl)
     const chat = chatsOf(accountId)?.find((c) => (event.threadId && c.id === event.threadId) || (link && c.meeting?.joinUrl && normalizeJoinUrl(c.meeting.joinUrl) === link))
