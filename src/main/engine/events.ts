@@ -57,8 +57,21 @@ export function mayTryNextWriter(status: number): boolean {
 export const NO_CALENDAR_TOKEN =
   'Termin nicht angelegt: Die Teams-Web-App hat für dieses Konto noch keinen Kalenderzugriff angefordert. Versuche es in ein paar Minuten erneut.'
 
+// Texte für die Fehlermeldungen von firstWriter, je nachdem, was angelegt oder verschickt wird
+export interface WriteTexts {
+  noToken: string
+  failed: string
+  unclear: string
+}
+
+export const EVENT_TEXTS: WriteTexts = {
+  noToken: NO_CALENDAR_TOKEN,
+  failed: 'Termin nicht angelegt',
+  unclear: 'Unklar, ob der Termin angelegt wurde ({errors}). Sieh im Kalender nach, bevor du es noch einmal versuchst.'
+}
+
 // Die Wege der Reihe nach versuchen. Fehler ohne HTTP-Status (Netz, Zeitüberschreitung) beenden die Reihe.
-export async function firstWriter<T>(tries: [string, () => Promise<T>][]): Promise<{ source: string; data: T }> {
+export async function firstWriter<T>(tries: [string, () => Promise<T>][], texts: WriteTexts = EVENT_TEXTS): Promise<{ source: string; data: T }> {
   const errors: string[] = []
   let status = 0
   for (const [name, run] of tries) {
@@ -71,12 +84,9 @@ export async function firstWriter<T>(tries: [string, () => Promise<T>][]): Promi
     }
   }
   // status: der des letzten Versuchs, damit der Fehler als Dienstfehler (ApiError) zählt
-  // Netzfehler, Zeitüberschreitung, Serverfehler: Der Termin kann trotzdem entstanden sein
+  // Netzfehler, Zeitüberschreitung, Serverfehler: Der Schreibvorgang kann trotzdem geklappt haben
   const unclear = status === -1 || status === 408 || status >= 500
-  const message = !errors.length
-    ? NO_CALENDAR_TOKEN
-    : unclear
-      ? `Unklar, ob der Termin angelegt wurde (${errors.join('; ')}). Sieh im Kalender nach, bevor du es noch einmal versuchst.`
-      : `Termin nicht angelegt (${errors.join('; ')})`
+  const list = errors.join('; ')
+  const message = !errors.length ? texts.noToken : unclear ? texts.unclear.replace('{errors}', list) : `${texts.failed} (${list})`
   throw Object.assign(new Error(message), { status })
 }

@@ -209,6 +209,16 @@ export class TokenStore {
     return best?.token
   }
 
+  // Neuester Token für genau diese Audiences (ohne Teilstring-Treffer wie bei findBearer)
+  bearerFor(auds: string[]): string | undefined {
+    let best: { token: string; exp?: number } | undefined
+    for (const aud of auds) {
+      const t = this.bearers.get(aud)
+      if (t && (!best || (t.exp ?? 0) > (best.exp ?? 0))) best = t
+    }
+    return best?.token
+  }
+
   expiry(family: Family): number | undefined {
     const h = this.headersFor(family)
     const auth = h['authorization']
@@ -226,3 +236,7 @@ export const FAMILY_AUDIENCE: Partial<Record<Family, string>> = {
   authsvc: 'api.spaces.skype.com',
   outlook: 'outlook.office'
 }
+
+// Outlook-Token für Mail und Kalender. Die Web-App ruft outlook.office.com auch mit einem eigenen
+// Such-Token auf, der nichts anderes darf. Deshalb zählt nur diese Audience.
+export const OUTLOOK_AUDIENCES = ['https://outlook.office.com/', 'https://outlook.office.com', 'https://outlook.office365.com/', 'https://outlook.office365.com']

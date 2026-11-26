@@ -6,6 +6,8 @@ import { copyLoginCookies, engineSession } from './engine/engine'
 import { CallManager } from './calls'
 import { handleMediaProtocol, registerMediaScheme } from './media-protocol'
 import { imageAction } from './image-actions'
+import { deliverAttachment } from './mail-files'
+import { OUTLOOK_AUDIENCES } from './engine/tokens'
 import { store } from './store'
 import { createMainWindow, uiWindows } from './windows'
 import { Updater } from './updater'
@@ -296,7 +298,10 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     debugRaw: async (id, family, url, method, body) => {
       if (!process.env.TM_DEBUG_PORT) throw new Error('Nur im Entwicklungsmodus')
       const a = get(id)
-      return a.api.json(family as Parameters<typeof a.api.json>[0], url.replace(/^(chatsvc|csa|mt):/, (_m, f: string) => a.api.base(f as 'chatsvc')), { method, body })
+      // Für Outlook der Mail-Token, nicht der Such-Token, den die Web-App ebenfalls an outlook.office.com schickt
+      const outlook = family === 'outlook' ? a.engine.tokens.bearerFor(OUTLOOK_AUDIENCES) : undefined
+      const headers = outlook ? { authorization: `Bearer ${outlook}` } : undefined
+      return a.api.json(family as Parameters<typeof a.api.json>[0], url.replace(/^(chatsvc|csa|mt):/, (_m, f: string) => a.api.base(f as 'chatsvc')), { method, body, headers })
     },
     getSnapshot: (id) => {
       const a = accounts.get(id)
@@ -328,6 +333,17 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     removeFromFolder: (id, folderId, itemId) => get(id).folderActions([{ action: 'RemoveItem', folderId, itemId }]),
     getCalendar: (id, s, e) => get(id).getCalendar(s, e),
     createEvent: (id, ev) => get(id).createEvent(ev),
+    getMailFolders: (id) => get(id).getMailFolders(),
+    getMailUnread: (id) => get(id).getMailUnread(),
+    listMail: (id, folderId, next) => get(id).listMail(folderId, next),
+    getMail: (id, mid) => get(id).getMail(mid),
+    openMailAttachment: async (id, mid, aid, mode) => {
+      const { name, data } = await get(id).getMailAttachment(mid, aid)
+      await deliverAttachment(sender(), name, data, mode)
+    },
+    setMailRead: (id, mid, isRead) => get(id).setMailRead(mid, isRead),
+    deleteMail: (id, mid) => get(id).deleteMail(mid),
+    sendMail: (id, draft, reply) => get(id).sendMail(draft, reply),
     getActivity: (id) => get(id).getActivity(),
     markActivityRead: (id) => get(id).markActivityRead(),
     getCallHistory: (id) => get(id).getCallHistory(),

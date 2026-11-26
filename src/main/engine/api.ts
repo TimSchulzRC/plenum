@@ -1,10 +1,25 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Engine } from './engine'
-import type { Family } from './tokens'
+import { OUTLOOK_AUDIENCES, type Family } from './tokens'
 import { log } from '../log'
 import { uploadAmsImage } from './ams'
 import { firstWriter, graphEventBody, outlookEventBody } from './events'
-import type { NewCalendarEvent } from '@shared/types'
+import {
+  attachmentBody,
+  attachmentUrl,
+  attachmentsUrl,
+  CREATE_REPLY,
+  folderListUrl,
+  GRAPH,
+  isGraphPage,
+  MAIL_TEXTS,
+  messageUrl,
+  messagesUrl,
+  newDraftBody,
+  replyDraftBody,
+  wellKnownUrl
+} from './mail'
+import type { MailDraft, MailFile, MailFolderKind, MailReplyKind, NewCalendarEvent } from '@shared/types'
 
 export class ApiError extends Error {
   constructor(
@@ -259,12 +274,90 @@ export class TeamsApi {
     if (tokens.has('graph') || tokens.findBearer('graph.microsoft.com')) {
       tries.push(['graph', () => this.json('graph', 'https://graph.microsoft.com/v1.0/me/events', { method: 'POST', body: graphEventBody(ev) })])
     }
-    if (tokens.has('outlook') || tokens.findBearer('outlook.office')) {
+    const outlook = tokens.bearerFor(OUTLOOK_AUDIENCES)
+    if (outlook) {
       const version = ev.teamsMeeting ? 'beta' : 'v2.0'
-      tries.push(['outlook', () => this.json('outlook', `https://outlook.office.com/api/${version}/me/events`, { method: 'POST', body: outlookEventBody(ev) })])
+      const headers = { authorization: `Bearer ${outlook}` }
+      tries.push(['outlook', () => this.json('outlook', `https://outlook.office.com/api/${version}/me/events`, { method: 'POST', body: outlookEventBody(ev), headers })])
     }
     try {
       return await firstWriter(tries)
+    } catch (e) {
+      throw new ApiError((e as { status?: number }).status ?? 0, (e as Error).message)
+    }
+  }
+
+  // ---------- E-Mail (Graph, Mail.ReadWrite) ----------
+  private graph<T = any>(url: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+    const tokens = this.engine.tokens
+    if (!tokens.has('graph') && !tokens.findBearer('graph.microsoft.com'))
+      throw new ApiError(0, 'Die Teams-Web-App hat für dieses Konto noch keinen Zugriff auf E-Mails angefordert. Versuche es in ein paar Minuten erneut.')
+    return this.json('graph', url, init)
+  }
+
+  mailFolders(): Promise<any> {
+    return this.graph(folderListUrl())
+  }
+
+  mailWellKnown(kind: MailFolderKind): Promise<any> {
+    return this.graph(wellKnownUrl(kind))
+  }
+
+  mailMessages(folderId: string, next?: string): Promise<any> {
+    if (next !== undefined && !isGraphPage(next)) throw new ApiError(0, 'Ungültige Folgeseite')
+    return this.graph(next ?? messagesUrl(folderId))
+  }
+
+  mailMessage(id: string): Promise<any> {
+    return this.graph(messageUrl(id))
+  }
+
+  mailAttachments(id: string): Promise<any> {
+    return this.graph(attachmentsUrl(id))
+  }
+
+  mailAttachment(id: string, attachmentId: string): Promise<any> {
+    return this.graph(attachmentUrl(id, attachmentId))
+  }
+
+  setMailRead(id: string, isRead: boolean): Promise<any> {
+    return this.graph(`${GRAPH}/me/messages/${encodeURIComponent(id)}`, { method: 'PATCH', body: { isRead } })
+  }
+
+  // In „Gelöschte Elemente“ verschieben, wie Entf in Outlook
+  moveMail(id: string, destination: MailFolderKind | string): Promise<any> {
+    return this.graph(`${GRAPH}/me/messages/${encodeURIComponent(id)}/move`, { method: 'POST', body: { destinationId: destination } })
+  }
+
+  // Entwurf über Graph (Mail.ReadWrite): neue Mail oder Antwort/Weiterleitung mit Zitat
+  async createMailDraft(draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): Promise<string> {
+    const res = reply
+      ? await this.graph(`${GRAPH}/me/messages/${encodeURIComponent(reply.id)}/${CREATE_REPLY[reply.kind]}`, { method: 'POST', body: replyDraftBody(draft) })
+      : await this.graph(`${GRAPH}/me/messages`, { method: 'POST', body: newDraftBody(draft) })
+    if (!res?.id) throw new ApiError(0, 'Graph hat keinen Entwurf angelegt')
+    return String(res.id)
+  }
+
+  addMailAttachment(draftId: string, file: MailFile): Promise<any> {
+    return this.graph(`${GRAPH}/me/messages/${encodeURIComponent(draftId)}/attachments`, { method: 'POST', body: attachmentBody(file) })
+  }
+
+  // Entwurf verschicken. Mail.Send hat nur der Outlook-Token der Web-App, Graph kommt nur dran, wenn
+  // Outlook sicher nichts verschickt hat (siehe firstWriter), etwa weil ein Token fehlt.
+  async sendMailDraft(draftId: string): Promise<{ source: string }> {
+    const tokens = this.engine.tokens
+    const id = encodeURIComponent(draftId)
+    const tries: [string, () => Promise<any>][] = []
+    const outlook = tokens.bearerFor(OUTLOOK_AUDIENCES)
+    if (outlook) {
+      const headers = { authorization: `Bearer ${outlook}` }
+      tries.push(['outlook', () => this.json('outlook', `https://outlook.office.com/api/v2.0/me/messages/${id}/send`, { method: 'POST', headers })])
+    }
+    if (tokens.has('graph') || tokens.findBearer('graph.microsoft.com')) {
+      tries.push(['graph', () => this.json('graph', `${GRAPH}/me/messages/${id}/send`, { method: 'POST' })])
+    }
+    try {
+      return await firstWriter(tries, MAIL_TEXTS)
     } catch (e) {
       throw new ApiError((e as { status?: number }).status ?? 0, (e as Error).message)
     }

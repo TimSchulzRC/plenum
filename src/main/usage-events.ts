@@ -77,6 +77,13 @@ const MAPPERS: { [K in ApiName]?: Mapper<K> } = {
   addToFolder: () => ({ event: 'chat_section_changed', props: { action: 'add' } }),
   removeFromFolder: () => ({ event: 'chat_section_changed', props: { action: 'remove' } }),
   markActivityRead: () => ({ event: 'activity_marked_read' }),
+  sendMail: ([, draft, reply]) => ({
+    event: 'mail_sent',
+    props: { kind: reply?.kind ?? 'new', recipients: draft.to.length + draft.cc.length, attachments: draft.attachments.length }
+  }),
+  deleteMail: () => ({ event: 'mail_deleted' }),
+  setMailRead: ([, , isRead]) => ({ event: 'mail_marked', props: { read: isRead } }),
+  openMailAttachment: ([, , , mode]) => ({ event: 'mail_attachment_opened', props: { mode } }),
   createEvent: ([, ev]) => ({
     event: 'calendar_event_created',
     props: { all_day: ev.isAllDay, teams_meeting: ev.teamsMeeting, attendees: ev.attendees.length, has_location: !!ev.location, has_body: !!ev.body }
