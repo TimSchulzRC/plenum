@@ -237,11 +237,13 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     removeAccount: async (id) => {
       const a = accounts.get(id)
       if (!a) return
-      // Gastmandanten melden sich über das Konto an und gehen mit ihm
-      for (const acct of [a, ...[...accounts.values()].filter((c) => c.record.parentId === id)]) {
+      // Gastmandanten melden sich über das Konto an und gehen mit ihm. Erst aus der Liste nehmen,
+      // dann aufräumen: Ein gleichzeitiges addTenant findet das Konto dann nicht mehr.
+      const gone = [a, ...[...accounts.values()].filter((c) => c.record.parentId === id)]
+      for (const acct of gone) accounts.delete(acct.id)
+      for (const acct of gone) {
         await acct.engine.clearData().catch(() => undefined)
         acct.stop()
-        accounts.delete(acct.id)
       }
       saveRecords()
       emitAccounts()

@@ -454,14 +454,15 @@ function AccountChats({
     return rows.sort((a, b) => lastOf(b) - lastOf(a))
   }
   const channelIsSelected = (c: Channel) => active && !selection.newChat && !selection.chatId && c.id === selection.channelId
+  // Die Filter Chats und Besprechungen blenden Kanäle aus Teams aus, außer dem offenen
+  const filterShowsChannels = filter !== 'meetings' && filter !== 'chats'
 
   let body: JSX.Element | null
   if (!snapshot) {
     body = mode === 'unread' ? null : <div style={{ padding: multi ? '6px 12px 10px' : 20, color: 'var(--fg-3)' }}>Chats werden geladen …</div>
   } else if (mode === 'unread') {
-    // Zugeklappt: nur Ungelesenes und der offene Chat. Die Filter Chats/Besprechungen blenden Kanäle aus,
-    // außer dem offenen.
-    const rows = collect((r) => isSelected(r) || (isUnreadRow(r) && matches(r)), filter !== 'meetings' && filter !== 'chats')
+    // Zugeklappt: nur Ungelesenes und der offene Chat
+    const rows = collect((r) => isSelected(r) || (isUnreadRow(r) && matches(r)), filterShowsChannels)
     body =
       rows.length === 0 ? null : (
         <>
@@ -510,8 +511,8 @@ function AccountChats({
   }
 
   if (!head) return body
-  // Zahl im Kopf aus denselben Zeilen, die der zugeklappte Block zeigt
-  const unread = snapshot ? collect(isUnreadRow, true).length : 0
+  // Zahl im Kopf aus denselben Zeilen, die der zugeklappte Block zeigt, also auch mit Filter
+  const unread = snapshot ? collect((r) => isUnreadRow(r) && matches(r), filterShowsChannels).length : 0
   return (
     <>
       {head(unread)}
