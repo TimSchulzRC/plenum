@@ -1282,31 +1282,32 @@ export class AccountService extends EventEmitter<AccountEvents> {
   // was es nicht gibt (404, z. B. kein Archiv), nicht mehr. Die Zuordnung ändert sich nicht.
   private mailKinds = new Map<string, MailFolderKind>()
   private mailKindsDone = new Set<MailFolderKind>()
-  private mailKindsRun?: Promise<void>
+  // Gleichzeitige Abrufe (Neu laden während des Zwei-Minuten-Abrufs) teilen sich einen
+  private mailFoldersRun?: Promise<MailFolder[]>
 
-  private resolveMailKinds(): Promise<void> {
-    this.mailKindsRun ??= (async () => {
-      for (const k of WELL_KNOWN) {
-        if (this.mailKindsDone.has(k)) continue
-        try {
-          const f = await this.api.mailWellKnown(k)
-          this.mailKinds.set(String(f.id), k)
-          this.mailKindsDone.add(k)
-        } catch (e) {
-          if (e instanceof ApiError && e.status === 404) this.mailKindsDone.add(k)
-        }
+  private async resolveMailKinds(): Promise<void> {
+    for (const k of WELL_KNOWN) {
+      if (this.mailKindsDone.has(k)) continue
+      try {
+        const f = await this.api.mailWellKnown(k)
+        this.mailKinds.set(String(f.id), k)
+        this.mailKindsDone.add(k)
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) this.mailKindsDone.add(k)
       }
-    })().finally(() => {
-      this.mailKindsRun = undefined
-    })
-    return this.mailKindsRun
+    }
   }
 
-  async getMailFolders(): Promise<MailFolder[]> {
-    const list = await this.api.mailFolders()
-    await this.resolveMailKinds()
-    const items: any[] = list?.value ?? []
-    return sortFolders(items.map((f) => mapFolder(f, this.mailKinds.get(String(f.id)))))
+  getMailFolders(): Promise<MailFolder[]> {
+    this.mailFoldersRun ??= (async () => {
+      const list = await this.api.mailFolders()
+      await this.resolveMailKinds()
+      const items: any[] = list?.value ?? []
+      return sortFolders(items.map((f) => mapFolder(f, this.mailKinds.get(String(f.id)))))
+    })().finally(() => {
+      this.mailFoldersRun = undefined
+    })
+    return this.mailFoldersRun
   }
 
   // null, solange die Web-App noch keinen Token für Mail angefordert hat (kein Fehler, nur noch nichts da)
