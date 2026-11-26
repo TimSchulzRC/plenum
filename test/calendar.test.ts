@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ACCOUNT_COLORS, accountColor, allDayOn, calendarAccountName, ipcErrorText, mergeCalendars, parseAttendees, wallHours } from '../src/renderer/src/lib/calendar.ts'
+import { ACCOUNT_COLORS, accountColor, allDayOn, calendarAccountName, ipcErrorText, localTime, mergeCalendars, parseAttendees, wallHours } from '../src/renderer/src/lib/calendar.ts'
 
 process.env.TZ = 'Europe/Berlin'
 
@@ -119,4 +119,14 @@ test('Kontoname im Kalender: Organisation vor Domain vor Personenname', () => {
 test('Fehlertext ohne Electron-Vorsatz', () => {
   assert.equal(ipcErrorText(new Error("Error invoking remote method 'api': Error: Termin nicht angelegt (graph: graph 403)")), 'Termin nicht angelegt (graph: graph 403)')
   assert.equal(ipcErrorText(new Error('schlicht')), 'schlicht')
+})
+
+test('Ganztägig am Tag der Zeitumstellung endet am nächsten Kalendertag', () => {
+  // 25.10.2026 hat 25 Stunden: lokale Mitternacht plus 24 h wäre noch der 25.10.
+  const start = localTime('2026-10-25')
+  const end = localTime('2026-10-25', '00:00', 1)
+  assert.equal(new Date(start + 86_400_000).getDate(), 25)
+  assert.equal(new Date(end).getDate(), 26)
+  assert.equal(new Date(end).getHours(), 0)
+  assert.equal(new Date(localTime('2026-11-26', '14:30')).getHours(), 14)
 })

@@ -71,5 +71,12 @@ export async function firstWriter<T>(tries: [string, () => Promise<T>][]): Promi
     }
   }
   // status: der des letzten Versuchs, damit der Fehler als Dienstfehler (ApiError) zählt
-  throw Object.assign(new Error(errors.length ? `Termin nicht angelegt (${errors.join('; ')})` : NO_CALENDAR_TOKEN), { status })
+  // Netzfehler, Zeitüberschreitung, Serverfehler: Der Termin kann trotzdem entstanden sein
+  const unclear = status === -1 || status === 408 || status >= 500
+  const message = !errors.length
+    ? NO_CALENDAR_TOKEN
+    : unclear
+      ? `Unklar, ob der Termin angelegt wurde (${errors.join('; ')}). Sieh im Kalender nach, bevor du es noch einmal versuchst.`
+      : `Termin nicht angelegt (${errors.join('; ')})`
+  throw Object.assign(new Error(message), { status })
 }

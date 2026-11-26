@@ -128,3 +128,11 @@ export function calendarAccountName(a: { label: string; upn?: string; tenantName
 export function ipcErrorText(e: unknown): string {
   return (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, '')
 }
+
+// Datum ("2026-11-26") und Uhrzeit ("14:30") aus Formularfeldern als Ortszeit. days zählt Kalendertage
+// weiter, nicht 24 Stunden, sonst endet ein ganztägiger Termin am Tag der Zeitumstellung am selben Datum.
+export function localTime(date: string, time = '00:00', days = 0): number {
+  const [y, m, d] = date.split('-').map(Number)
+  const [h, min] = time.split(':').map(Number)
+  return new Date(y, (m || 1) - 1, (d || 1) + days, h || 0, min || 0).getTime()
+}

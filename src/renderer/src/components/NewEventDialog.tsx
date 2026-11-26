@@ -16,7 +16,7 @@ import {
 import { useState, type CSSProperties } from 'react'
 import type { AccountInfo } from '@shared/types'
 import { api } from '../api'
-import { calendarAccountName, ipcErrorText, parseAttendees } from '../lib/calendar'
+import { calendarAccountName, ipcErrorText, localTime as toMs, parseAttendees } from '../lib/calendar'
 
 export interface EventDraft {
   accountId: string
@@ -33,13 +33,6 @@ const timeValue = (ms: number) => {
   const d = new Date(ms)
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
-// Datum und Uhrzeit aus den Feldern als Ortszeit
-const toMs = (date: string, time = '00:00') => {
-  const [y, m, d] = date.split('-').map(Number)
-  const [h, min] = time.split(':').map(Number)
-  return new Date(y, (m || 1) - 1, d || 1, h || 0, min || 0).getTime()
-}
-
 // Neuer Termin in einem Konto. Mit mehreren Konten wählt man oben, in welchem Kalender er landet.
 export function NewEventDialog({
   draft,
@@ -72,7 +65,7 @@ export function NewEventDialog({
   const parsed = parseAttendees(attendees)
   const start = allDay ? toMs(date) : toMs(date, startTime)
   // Ganztägig: Ende ist Mitternacht nach dem letzten Tag
-  const end = allDay ? toMs(endDate) + 86_400_000 : toMs(date, endTime)
+  const end = allDay ? toMs(endDate, '00:00', 1) : toMs(date, endTime)
   const problem = !subject.trim()
     ? 'Titel fehlt'
     : !(end > start)

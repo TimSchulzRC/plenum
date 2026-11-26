@@ -66,10 +66,14 @@ test('Serverfehler oder Netzfehler: kein zweiter Versuch, sonst droht ein doppel
         ['graph', fail(status, 'kaputt')],
         ['outlook', async () => ((outlook = true), {})]
       ]),
-      /Termin nicht angelegt \(graph: kaputt\)/
+      /Unklar, ob der Termin angelegt wurde \(graph: kaputt\)\. Sieh im Kalender nach/
     )
     assert.equal(outlook, false, String(status))
   }
+})
+
+test('Abgelehnt (400) heißt sicher nicht angelegt', async () => {
+  await assert.rejects(firstWriter([['graph', fail(400, 'graph 400')]]), /^Error: Termin nicht angelegt \(graph: graph 400\)$/)
 })
 
 test('Ohne Token eine verständliche Meldung', async () => {

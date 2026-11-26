@@ -147,17 +147,29 @@ export function CalendarView(): JSX.Element {
     return useStore.getState().snapshots[accountId]?.chats.find((c) => c.id === ev.threadId || (link && c.meeting?.joinUrl && normalizeJoinUrl(c.meeting.joinUrl) === link))
   }
 
-  const openChat = (m: Merged) => {
-    const src = [preferred(m), ...m.sources].find((s) => chatFor(s.accountId, s.event))
-    if (!src) return
-    const chat = chatFor(src.accountId, src.event)!
-    const st = useStore.getState()
-    st.setActiveAccount(src.accountId)
-    st.select({ chatId: chat.id, newChat: false }, 'chat')
+  // Besprechungschat: im bevorzugten Konto, sonst in einem anderen eingeladenen, das ihn kennt
+  const chatTarget = (m: Merged) => {
+    for (const s of [preferred(m), ...m.sources]) {
+      const chat = chatFor(s.accountId, s.event)
+      if (chat) return { accountId: s.accountId, chatId: chat.id }
+    }
+    return undefined
   }
 
-  const join = (accountId: string, ev: CalendarEvent) => {
-    if (ev.joinUrl) void api.joinMeeting(accountId, ev.joinUrl, { video: true, audio: true })
+  const openChat = (target: { accountId: string; chatId: string }) => {
+    const st = useStore.getState()
+    st.setActiveAccount(target.accountId)
+    st.select({ chatId: target.chatId, newChat: false }, 'chat')
+    setOpen(null)
+  }
+
+  // Hat die Kopie eines Kontos keinen Link, gilt der einer anderen Kopie derselben Besprechung
+  const joinUrlFor = (m: Merged, accountId: string) =>
+    m.sources.find((s) => s.accountId === accountId)?.event.joinUrl ?? m.sources.find((s) => s.event.joinUrl)?.event.joinUrl
+
+  const join = (m: Merged, accountId: string) => {
+    const url = joinUrlFor(m, accountId)
+    if (url) void api.joinMeeting(accountId, url, { video: true, audio: true })
     setOpen(null)
   }
 
@@ -168,7 +180,9 @@ export function CalendarView(): JSX.Element {
 
   const newEvent = (start?: number) => {
     const s = start ?? nextHalfHour()
-    setDraft({ accountId: defaultAccount() ?? '', start: s, end: s + 30 * 60_000 })
+    // Der Dialog hat ein Datum für Beginn und Ende: ab 23:30 endet der Vorschlag um 23:55
+    const lastSlot = new Date(s).setHours(23, 55, 0, 0)
+    setDraft({ accountId: defaultAccount() ?? '', start: s, end: Math.min(s + 30 * 60_000, lastSlot) })
   }
 
   // Doppelklick in eine freie Stelle: Termin ab der angeklickten halben Stunde
@@ -345,18 +359,17 @@ export function CalendarView(): JSX.Element {
           <PopoverSurface style={{ width: 360 }}>
             <EventDetails m={open.m} multi={multi} byId={byId} color={color} />
             <div style={{ display: 'flex', gap: 8 }}>
-              {open.m.event.joinUrl && <JoinButton m={open.m} preferred={preferred(open.m).accountId} byId={byId} onJoin={join} />}
-              {(open.m.event.threadId || open.m.event.joinUrl) && (
-                <Button
-                  icon={<Chat20Regular />}
-                  onClick={() => {
-                    openChat(open.m)
-                    setOpen(null)
-                  }}
-                >
-                  Chat
-                </Button>
-              )}
+              {open.m.sources.some((s) => s.event.joinUrl) && <JoinButton m={open.m} preferred={preferred(open.m).accountId} byId={byId} onJoin={(id) => join(open.m, id)} />}
+              {(() => {
+                const target = chatTarget(open.m)
+                return (
+                  target && (
+                    <Button icon={<Chat20Regular />} onClick={() => openChat(target)}>
+                      Chat
+                    </Button>
+                  )
+                )
+              })()}
             </div>
           </PopoverSurface>
         </Popover>
@@ -424,12 +437,12 @@ function JoinButton({
   m: Merged
   preferred: string
   byId: (id: string) => AccountInfo | undefined
-  onJoin: (accountId: string, ev: CalendarEvent) => void
+  onJoin: (accountId: string) => void
 }): JSX.Element {
   const main = m.sources.find((s) => s.accountId === preferred) ?? m.sources[0]
   if (m.sources.length < 2) {
     return (
-      <Button appearance="primary" icon={<Video20Regular />} onClick={() => onJoin(main.accountId, main.event)}>
+      <Button appearance="primary" icon={<Video20Regular />} onClick={() => onJoin(main.accountId)}>
         Teilnehmen
       </Button>
     )
@@ -438,7 +451,7 @@ function JoinButton({
     <Menu positioning="below-start">
       <MenuTrigger disableButtonEnhancement>
         {(triggerProps: MenuButtonProps) => (
-          <SplitButton appearance="primary" icon={<Video20Regular />} menuButton={triggerProps} primaryActionButton={{ onClick: () => onJoin(main.accountId, main.event) }}>
+          <SplitButton appearance="primary" icon={<Video20Regular />} menuButton={triggerProps} primaryActionButton={{ onClick: () => onJoin(main.accountId) }}>
             Teilnehmen
           </SplitButton>
         )}
@@ -446,7 +459,7 @@ function JoinButton({
       <MenuPopover>
         <MenuList>
           {m.sources.map((s) => (
-            <MenuItem key={s.accountId} onClick={() => onJoin(s.accountId, s.event)}>
+            <MenuItem key={s.accountId} onClick={() => onJoin(s.accountId)}>
               Mit {name(byId(s.accountId))} teilnehmen
             </MenuItem>
           ))}
