@@ -144,7 +144,7 @@ function loadExpanded(): Record<string, boolean> {
   }
 }
 
-// Ein Block je Konto bzw. Mandant. Zugeklappt zeigt er nur Ungelesenes und den offenen Chat.
+// Ein Block je Konto bzw. Mandant. Zugeklappt zeigt er nur den Kopf mit der Zahl der ungelesenen Einträge.
 // Die Köpfe stapeln sich oben und unten am Rand, so bleiben alle Konten mit ihren Zahlen sichtbar.
 function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: AccountInfo[]; activeId?: string; q: string; filter: Filter; limit: number }): JSX.Element {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(loadExpanded)
@@ -178,7 +178,7 @@ function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: Acc
               q={q}
               filter={filter}
               limit={limit}
-              mode={open ? 'full' : 'unread'}
+              mode={open ? 'full' : 'collapsed'}
               bodyRef={(el) => void (bodies.current[a.id] = el)}
               head={(unread) => (
                 <AccountHead account={a} unread={unread} open={open} style={{ top: i * HEAD_HEIGHT, bottom: (accounts.length - 1 - i) * HEAD_HEIGHT, zIndex: 2 + i }} onToggle={() => toggle(a.id, i)} />
@@ -220,7 +220,7 @@ function AccountChats({
   q: string
   filter: Filter
   limit: number
-  mode: 'full' | 'unread'
+  mode: 'full' | 'collapsed'
   // Bei mehreren Konten: Kopf des Blocks, bekommt die Zahl der ungelesenen Einträge
   head?: (unread: number) => JSX.Element
   bodyRef?: (el: HTMLDivElement | null) => void
@@ -241,9 +241,9 @@ function AccountChats({
 
   const matches = (r: Row): boolean => {
     if (r.type === 'channel') {
-      if (filter === 'unread') return r.channel.unread
       if (filter === 'meetings') return false
-      return !q || r.channel.displayName.toLowerCase().includes(q) || r.team.displayName.toLowerCase().includes(q)
+      if (q && !r.channel.displayName.toLowerCase().includes(q) && !r.team.displayName.toLowerCase().includes(q)) return false
+      return filter !== 'unread' || r.channel.unread
     }
     const c = r.chat
     if (q && !c.title.toLowerCase().includes(q)) return false
@@ -289,8 +289,7 @@ function AccountChats({
 
   // Auswahl auf den ersten Eintrag setzen, wenn noch keiner gewählt ist
   useEffect(() => {
-    // Bei mehreren Konten nichts vorauswählen: Der offene Chat bleibt auch im zugeklappten Block stehen,
-    // ein automatisch gewählter wäre dort ein Eintrag, den niemand geöffnet hat
+    // Bei mehreren Konten nichts vorauswählen: Ein automatisch gewählter Chat wäre einer, den niemand geöffnet hat
     if (!active || multi || selection.chatId || selection.channelId || selection.newChat) return
     const first = sections.flatMap((s) => s.rows)[0]
     if (first?.type === 'chat') useStore.getState().select({ chatId: first.chat.id })
@@ -450,27 +449,20 @@ function AccountChats({
       rows.push(r)
     }
     for (const sec of sections) sec.rows.forEach(add)
-    for (const t of snapshot?.teams ?? []) if (!t.isArchived) for (const c of t.channels) if (withChannels || channelIsSelected(c)) add({ type: 'channel', team: t, channel: c })
+    if (withChannels) for (const t of snapshot?.teams ?? []) if (!t.isArchived) for (const c of t.channels) add({ type: 'channel', team: t, channel: c })
     return rows.sort((a, b) => lastOf(b) - lastOf(a))
   }
-  const channelIsSelected = (c: Channel) => active && !selection.newChat && !selection.chatId && c.id === selection.channelId
-  // Die Filter Chats und Besprechungen blenden Kanäle aus Teams aus, außer dem offenen
+  // Die Filter Chats und Besprechungen blenden Kanäle aus Teams aus
   const filterShowsChannels = filter !== 'meetings' && filter !== 'chats'
 
-  // Was der zugeklappte Block zeigt: Ungelesenes und der offene Chat. Daraus kommt auch die Zahl im Kopf.
-  const shown = snapshot ? collect((r) => isSelected(r) || (isUnreadRow(r) && matches(r)), filterShowsChannels) : []
+  // Zahl im Kopf: ungelesene Einträge des Kontos unter dem gewählten Filter
+  const unreadCount = head && snapshot ? collect((r) => isUnreadRow(r) && matches(r), filterShowsChannels).length : 0
 
   let body: JSX.Element | null
-  if (!snapshot) {
-    body = mode === 'unread' ? null : <div style={{ padding: multi ? '6px 12px 10px' : 20, color: 'var(--fg-3)' }}>Chats werden geladen …</div>
-  } else if (mode === 'unread') {
-    body =
-      shown.length === 0 ? null : (
-        <>
-          <div className="acct-note">{shown.some(isUnreadRow) ? 'Ungelesen' : 'Geöffnet'}</div>
-          {shown.map((r) => renderRow(r, { key: 'unread' }))}
-        </>
-      )
+  if (mode === 'collapsed') {
+    body = null
+  } else if (!snapshot) {
+    body = <div style={{ padding: multi ? '6px 12px 10px' : 20, color: 'var(--fg-3)' }}>Chats werden geladen …</div>
   } else {
     body = (
       <>
@@ -514,7 +506,7 @@ function AccountChats({
   if (!head) return body
   return (
     <>
-      {head(shown.filter(isUnreadRow).length)}
+      {head(unreadCount)}
       <div ref={bodyRef}>{body}</div>
     </>
   )
