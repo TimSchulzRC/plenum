@@ -473,3 +473,20 @@ test('Messung Fußzeilen: Beschriftungen, US-Anschrift, Abmelden', () => {
   const news = L('Your weekly summary is ready.', 'Open the dashboard to see details.', 'Copyright © 2026 Northwind Inc. All rights reserved.', '500 Market St #300, San Francisco, CA 94105', 'Unsubscribe')
   assert.deepEqual(findSignatures(news), [{ start: 2, end: 5, reason: 'footer' }])
 })
+
+test('Review Runde 10: „Received:“ ohne Datum, Kontaktdaten hinter „---“, Vertretungsangabe', () => {
+  // Lagermeldung: „Received: 12 pallets“ ist Inhalt, kein Kopffeld
+  const stock = L('Zur Info.', 'From: Warehouse North', 'Subject: Inbound update', 'Received: 12 pallets', 'Missing: 2 pallets')
+  assert.deepEqual(findHeaders(stock), [{ start: 1, end: 3, label: 'Warehouse North' }])
+  assert.deepEqual(findHeaders(L('Zur Info.', 'From: Warehouse North', 'Received: 12 pallets', 'Missing: 2 pallets')), [])
+  assert.deepEqual(findHeaders(L('Ok', 'Von: Kim Fabrik', 'Empfangen: 24.11.2026 09:00', 'Betreff: x', 'Text')), [{ start: 1, end: 4, label: 'Kim Fabrik · 24.11.2026 09:00' }])
+  // Mitgeteilte Kontaktdaten unter einer markierten Signatur bleiben sichtbar
+  const venue = L('Hallo,', 'hier die Daten des Hotels.', { text: 'Kim Fabrik', marker: 1 }, { text: 'Tel. +49 40 1234567', marker: 1 }, '---', 'Website:', 'https://hotel.example.com', '+49 40 7654321')
+  assert.deepEqual(hidden(venue), [['Tel. +49 40 1234567']])
+  // Mit Registerzeile ist es die Fußzeile des Servers
+  assert.equal(findSignatures(L(...venue, 'Fabrikam GmbH · Amtsgericht Hamburg HRB 12345'))[0].end, venue.length + 1)
+  // Vertragsmail: Der Vertreter ist Inhalt, nur der Hinweis fällt weg
+  const disclaimer = 'This e-mail may contain confidential information. If you are not the intended recipient, please notify the sender.'
+  assert.deepEqual(hidden(L('The agreement names the following party.', 'Represented by: Jane Doe', disclaimer)), [[disclaimer]])
+  assert.deepEqual(hidden(L('Der Vertrag nennt folgende Partei.', 'Vertreten durch: Kim Fabrik', disclaimer)), [[disclaimer]])
+})

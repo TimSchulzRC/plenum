@@ -32,7 +32,6 @@ const CLOSING =
 
 // Kopf eines zitierten Teils, als Text erkannt (falls das HTML keine Markierung hat)
 const HEADER_FROM = /^(?:von|from|de|da)\s*:\s*\S/i
-const HEADER_REST = /^(?:gesendet|sent|datum|date|received|empfangen|an|to|betreff|subject|cc|bcc|kopie|wichtigkeit|importance|priorität|priority|antwort an|reply-to|anlagen|attachments)\s*:/i
 const HEADER_DATE = /^(?:gesendet|sent|datum|date|received|empfangen)\s*:\s*/i
 // Auch mit Leerzeichen zwischen den Strichen („- - - Original Message - - -“)
 const ORIGINAL = /^(?:-[-\s]*(?:ursprüngliche nachricht|original message|weitergeleitete nachricht|forwarded message)[-\s]*-|(?:anfang der weitergeleiteten nachricht|begin forwarded message)\s*:)$/i
@@ -48,7 +47,15 @@ const FIELDS: [RegExp, string][] = [
   [/^(?:wichtigkeit|importance|priorität|priority)\s*:/i, 'importance'],
   [/^(?:anlagen|attachments)\s*:/i, 'attachments']
 ]
-const fieldKey = (text: string) => FIELDS.find(([re]) => re.test(text.trim()))?.[1]
+// „Received:“ und „Empfangen:“ stehen auch im Inhalt („Received: 12 pallets“). Als Kopffeld zählen
+// sie nur mit Jahr, Uhrzeit oder Datum im Wert.
+const RECEIVED = /^(?:received|empfangen)\s*:/i
+const DATED = /\b\d{1,2}:\d{2}\b|\b(?:19|20)\d{2}\b|\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/
+function fieldKey(text: string): string | undefined {
+  const t = text.trim()
+  if (RECEIVED.test(t) && !DATED.test(t)) return undefined
+  return FIELDS.find(([re]) => re.test(t))?.[1]
+}
 const WROTE = /^(?:am|on)\s.{4,160}\s(?:schrieb|wrote)\b.{0,160}:$/i
 
 const PHONE_RE = /(?:\+|00)\d[\d\s/().-]{6,}\d|\(?0\d{2,5}\)?[\s/-]?\d[\d\s/-]{4,}\d/g
@@ -68,8 +75,12 @@ const ADDRESS_US = /\b[A-Z][A-Za-z .]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/
 const ADDRESS = { test: (t: string) => ADDRESS_PLZ.test(t) || ADDRESS_STREET.test(t) || ADDRESS_US.test(t) }
 // Rechtsform nach einem Namen, in üblicher Schreibweise: „Contoso GmbH“, nicht „AG“ für Arbeitsgruppe
 const COMPANY = /[A-ZÄÖÜ0-9][\w&.-]*\s+(?:GmbH|gGmbH|mbH|AG|KG|OHG|KGaA|SE|UG|e\.\s?K\.|e\.\s?V\.|Ltd\.?|Limited|Inc\.?|LLC|Corp\.?|PLC|S\.A\.|B\.V\.)(?=$|[\s,.;:|·&)–-])/
-const LEGAL =
-  /\b(?:geschäftsführ|vorstand|aufsichtsrat|amtsgericht|registergericht|handelsregister|hrb|hra|ust-?id|umsatzsteuer|steuer-?nr|sitz der gesellschaft|vat|registered office|company registration|registry court|register court|commercial register|managing directors?|komplementär\w*|vertreten durch|represented by|management\s*:|postanschrift|datenschutz|data protection|privacy|impressum)/i
+const LEGAL_HARD =
+  /\b(?:geschäftsführ|vorstand|aufsichtsrat|amtsgericht|registergericht|handelsregister|hrb|hra|ust-?id|umsatzsteuer|steuer-?nr|sitz der gesellschaft|vat|registered office|company registration|registry court|register court|commercial register|managing directors?|komplementär\w*|datenschutz|data protection|privacy|impressum)/i
+// Stehen in Fußzeilen, aber auch im Inhalt („Represented by: Jane Doe“ in einer Vertragsmail): Sie
+// dürfen in einer Fußzeile vorkommen, belegen und beginnen aber keine.
+const LEGAL_SOFT = /\b(?:vertreten durch|represented by|management\s*:|postanschrift)/i
+const LEGAL = { test: (t: string) => LEGAL_HARD.test(t) || LEGAL_SOFT.test(t) }
 // Hinweise und Standardsätze aus Fußzeilen: Vertraulichkeit, Umwelt, Netzwerk von
 // Prüfungsgesellschaften, Streitbeilegung, Newsletter und Benachrichtigungen
 const DISCLAIMER =
@@ -246,7 +257,7 @@ export function partStarts(lines: SigLine[]): number[] {
     const textHeader =
       ORIGINAL.test(t) ||
       WROTE.test(t) ||
-      (HEADER_FROM.test(t) && lines.slice(i + 1, i + 5).some((x) => HEADER_REST.test(x.text.trim())))
+      (HEADER_FROM.test(t) && lines.slice(i + 1, i + 5).some((x) => (fieldKey(x.text) ?? 'from') !== 'from'))
     if (lines[i].boundary || textHeader) {
       // Noch im Kopf des vorigen Teils („-----Ursprüngliche Nachricht-----“ vor „Von:“), oder die
       // Markierung des Zitats direkt nach seinem Kopf: kein neuer Teil. Ein neuer Kopf direkt nach
@@ -283,6 +294,10 @@ function quotedSender(lines: SigLine[], from: number, body: number): string | un
 
 const imageOnly = (l: SigLine) => !!l.image && !l.text.trim()
 
+// Beleg für eine Fußzeile: Hinweistext oder eine Firmen- oder Registerzeile. Telefon, Anschrift oder
+// eine Vertretungsangabe allein können auch Angaben sein, die die Mail mitteilt.
+const footerTop = (l: SigLine) => boilerplate(l) || (specific(l) && !roleLine(l) && (COMPANY.test(l.text) || LEGAL_HARD.test(l.text)))
+
 // Zeile direkt nach der Grußformel, die sagt, wer unterschreibt: Name, Team oder Firma, aber keine
 // Rolle und keine Kontaktangabe
 function signer(l: SigLine): boolean {
@@ -316,7 +331,11 @@ function inPart(lines: SigLine[], from: number, to: number, sender?: string): Si
     // Besteht der Rest des Teils nur aus solchen Zeilen, gehört er dazu
     const rest = lines.slice(end, to)
     const footerLine = (l: SigLine) => specific(l) || link(l) || boilerplate(l) || ruleLine(l) || bareLabel(l)
-    if (start < end && rest.length && rest.every(footerLine) && rest.some((l) => boilerplate(l) || (specific(l) && !roleLine(l)))) end = to
+    // Hinter einer Trennlinie oder Beschriftung („---“, „Website:“) können auch mitgeteilte Kontaktdaten
+    // stehen: Dann muss eine Firmen- oder Registerzeile oder Hinweistext die Fußzeile belegen.
+    const loose = rest.some((l) => ruleLine(l) || bareLabel(l))
+    const proof = (l: SigLine) => (loose ? footerTop(l) : boilerplate(l) || (specific(l) && !roleLine(l)))
+    if (start < end && rest.length && rest.every(footerLine) && rest.some(proof)) end = to
     if (start < end) return { start, end, reason: 'marker' }
   }
 
@@ -369,9 +388,8 @@ function inPart(lines: SigLine[], from: number, to: number, sender?: string): Si
   const footerLine = (l: SigLine) => boilerplate(l) || (specific(l) && !roleLine(l)) || link(l) || ruleLine(l) || bareLabel(l)
   let fs = to
   while (fs - 1 > floor && footerLine(lines[fs - 1])) fs--
-  // Sie beginnt beim Hinweistext oder bei einer Firmen- oder Registerzeile. Eine Telefonnummer oder
-  // Anschrift direkt davor kann eine Angabe sein, die die Mail mitteilt, und bleibt sichtbar.
-  const footerTop = (l: SigLine) => boilerplate(l) || (specific(l) && !roleLine(l) && (COMPANY.test(l.text) || LEGAL.test(l.text)))
+  // Sie beginnt beim Hinweistext oder bei einer Firmen- oder Registerzeile. Eine Telefonnummer,
+  // Anschrift oder Vertretungsangabe direkt davor kann die Mail mitteilen, sie bleibt sichtbar.
   while (fs < to && !footerTop(lines[fs])) fs++
   // Eine Zeile mit Doppelpunkt davor leitet eine Aufzählung ein („unsere neuen Daten:“), außer sie ist
   // selbst eine Beschriftung der Fußzeile („Registry Court:“)
