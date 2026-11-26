@@ -127,8 +127,9 @@ export class SignatureModel {
       }
       proc.on('error', (e: NodeJS.ErrnoException) => {
         this.log.warn('[signatures] Helfer', e.message)
-        // Lässt sich gar nicht starten: für die Sitzung bei den Regeln bleiben
-        if (e.code === 'ENOENT' || e.code === 'EACCES' || e.code === 'ENOEXEC') this.unavailable = true
+        // Lässt sich gar nicht starten (fehlt, nicht ausführbar, falsche Architektur auf Intel-Macs):
+        // für die Sitzung bei den Regeln bleiben
+        if (!proc.pid) this.unavailable = true
         finish(true)
       })
       proc.on('exit', (code) => finish(!!code))
