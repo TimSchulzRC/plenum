@@ -32,7 +32,8 @@ const CLOSING =
 
 // Kopf eines zitierten Teils, als Text erkannt (falls das HTML keine Markierung hat)
 const HEADER_FROM = /^(?:von|from|de|da)\s*:\s*\S/i
-const HEADER_REST = /^(?:gesendet|sent|datum|date|an|to|betreff|subject|cc)\s*:/i
+const HEADER_REST = /^(?:gesendet|sent|datum|date|an|to|betreff|subject|cc|bcc|kopie|wichtigkeit|importance|priorität|priority|antwort an|reply-to|anlagen|attachments)\s*:/i
+const HEADER_DATE = /^(?:gesendet|sent|datum|date)\s*:\s*/i
 const ORIGINAL = /^-{2,}\s*(?:ursprüngliche nachricht|original message|weitergeleitete nachricht|forwarded message)\s*-{2,}$/i
 const WROTE = /^(?:am|on)\s.{4,160}\s(?:schrieb|wrote)\b.{0,160}:$/i
 
@@ -186,6 +187,11 @@ function nameLike(t: string): boolean {
 }
 
 
+const headerLine = (text: string) => {
+  const t = text.trim()
+  return HEADER_FROM.test(t) || HEADER_REST.test(t) || ORIGINAL.test(t) || WROTE.test(t)
+}
+
 // Teile des Verlaufs: Grenzen aus dem HTML oder aus Kopfzeilen im Text
 export function partStarts(lines: SigLine[]): number[] {
   const starts = [0]
@@ -196,7 +202,11 @@ export function partStarts(lines: SigLine[]): number[] {
       WROTE.test(t) ||
       (HEADER_FROM.test(t) && lines.slice(i + 1, i + 5).some((x) => HEADER_REST.test(x.text.trim())))
     if (lines[i].boundary || textHeader) {
-      if (starts[starts.length - 1] !== i) starts.push(i)
+      // Noch im Kopf des vorigen Teils („-----Ursprüngliche Nachricht-----“ vor „Von:“, die Zeile
+      // „Am … schrieb …:“ vor dem markierten Zitat): kein neuer Teil
+      const last = starts[starts.length - 1]
+      const inHeader = starts.length > 1 && lines.slice(last, i).every((l) => headerLine(l.text))
+      if (last !== i && !inHeader) starts.push(i)
     }
   }
   return starts
@@ -205,7 +215,7 @@ export function partStarts(lines: SigLine[]): number[] {
 // Erste Inhaltszeile eines Teils: Kopfzeilen eines zitierten Teils („Von:“, „Betreff:“ …) überspringen
 export function bodyStart(lines: SigLine[], from: number, to: number): number {
   let body = from
-  if (from > 0) while (body < to && (HEADER_FROM.test(lines[body].text.trim()) || HEADER_REST.test(lines[body].text.trim()) || ORIGINAL.test(lines[body].text.trim()) || WROTE.test(lines[body].text.trim()))) body++
+  if (from > 0) while (body < to && headerLine(lines[body].text)) body++
   return body
 }
 
@@ -295,6 +305,25 @@ function inPart(lines: SigLine[], from: number, to: number, sender?: string): Si
   return undefined
 }
 
+// Der Name bleibt sichtbar: Eine Signatur beginnt erst unter dem Trenner „--“, der Grußformel und der
+// Namenszeile. Bleibt danach nichts übrig, gibt es nichts auszublenden.
+function nameLine(l: SigLine): boolean {
+  const t = l.text.trim()
+  if (l.image || !t) return false
+  if (properName({ text: t.split(/\s*[|·]\s*/)[0] })) return true
+  // einzelner Vorname
+  return /^[A-ZÄÖÜ][a-zäöüßéèáó'’-]+$/.test(t) && !COMPANY.test(t) && !JOB.test(t)
+}
+
+function belowName<T extends { start: number; end: number }>(lines: SigLine[], r: T): T | undefined {
+  let s = r.start
+  if (s < r.end && /^--[\s\u00a0]?$/.test(lines[s].text)) s++
+  const c = s < r.end ? closingLine(lines[s].text) : undefined
+  if (c?.closing) s++
+  if (!c?.name && s < r.end && nameLine(lines[s])) s++
+  return s < r.end ? { ...r, start: s } : undefined
+}
+
 // sender: Anzeigename des Absenders der Mail, gilt für den obersten Teil. Zitierte Teile nennen ihren
 // Absender im Kopf.
 export function findSignatures(lines: SigLine[], sender?: string): SigRange[] {
@@ -303,7 +332,43 @@ export function findSignatures(lines: SigLine[], sender?: string): SigRange[] {
   starts.forEach((from, k) => {
     const to = starts[k + 1] ?? lines.length
     const hit = inPart(lines, from, to, k === 0 ? sender : undefined)
-    if (hit) out.push(hit)
+    // Nach einer Grußformel und bei „Gesendet von …“ steht der Beginn schon unter dem Namen
+    const visible = hit && (hit.reason === 'closing' || hit.reason === 'mobile' ? hit : belowName(lines, hit))
+    if (visible) out.push(visible)
+  })
+  return out
+}
+
+// ---------- Kopfzeilen zitierter Nachrichten ----------
+
+export interface HeaderRange {
+  start: number
+  end: number
+  // Kurzform für die eingeklappte Zeile: „Kim Fabrik · Dienstag, 24. November 2026 11:03“
+  label: string
+}
+
+// Der Block „Von: … Gesendet: … An: … Betreff: …“ über jeder zitierten Nachricht. Eine einzelne Zeile
+// „Am … schrieb …:“ bleibt stehen, sie ist schon die Kurzform.
+export function findHeaders(lines: SigLine[]): HeaderRange[] {
+  const starts = partStarts(lines)
+  const out: HeaderRange[] = []
+  starts.forEach((from, k) => {
+    if (k === 0) return
+    const to = starts[k + 1] ?? lines.length
+    const end = bodyStart(lines, from, to)
+    const block = lines.slice(from, end).map((l) => l.text.trim())
+    if (block.filter((t) => HEADER_FROM.test(t) || HEADER_REST.test(t)).length < 2) return
+    const sender = block.find((t) => HEADER_FROM.test(t))
+    const date = block.find((t) => HEADER_DATE.test(t))
+    const name = sender
+      ?.replace(/^[^:]*:/, '')
+      .replace(/<[^>]*>|\[[^\]]*\]/g, ' ')
+      .replace(/["']/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const label = [name, date?.replace(HEADER_DATE, '').trim()].filter(Boolean).join(' · ')
+    out.push({ start: from, end, label: label || 'Kopfzeilen' })
   })
   return out
 }
@@ -368,7 +433,9 @@ export function modelRanges(starts: (number | null)[], req: { of: number[]; part
     const top = hidden[0]
     const name = top.text.split(/\s*[|·]\s*/)[0]
     if (!(specific(top) || properName(top) || properName({ text: name }))) return
-    out.push({ start: p.body + n - 1, end: p.end, reason: 'model' })
+    // Der Name bleibt sichtbar
+    const below = belowName(p.lines, { start: n - 1, end: p.lines.length })
+    if (below) out.push({ start: p.body + below.start, end: p.end, reason: 'model' })
   })
   return out
 }

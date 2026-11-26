@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { findSignatures, modelRanges, modelRequest, partStarts, type SigLine } from '../src/renderer/src/lib/mail-signature.ts'
+import { findHeaders, findSignatures, modelRanges, modelRequest, partStarts, type SigLine } from '../src/renderer/src/lib/mail-signature.ts'
 
 const L = (...texts: (string | SigLine)[]): SigLine[] => texts.map((t) => (typeof t === 'string' ? { text: t } : t))
 const hidden = (lines: SigLine[], sender?: string) => findSignatures(lines, sender).map((r) => lines.slice(r.start, r.end).map((l) => l.text))
@@ -36,18 +36,18 @@ test('Englisch mit Logo und Disclaimer', () => {
 
 test('Vom Client markierte Signatur und Trenner „-- “', () => {
   const marked = L('Hallo,', 'kurze Frage zum Termin.', { text: 'Sam Muster', marker: 1 }, { text: 'IT-Service', marker: 1 })
-  assert.deepEqual(hidden(marked), [['Sam Muster', 'IT-Service']])
+  assert.deepEqual(hidden(marked), [['IT-Service']])
   assert.equal(findSignatures(marked)[0].reason, 'marker')
   // P.S. unter der markierten Signatur bleibt sichtbar
   const ps = L('Hallo,', 'kurze Frage zum Termin.', { text: 'Sam Muster', marker: 1 }, { text: 'IT-Service', marker: 1 }, 'P.S. Bitte bis Freitag.')
-  assert.deepEqual(hidden(ps), [['Sam Muster', 'IT-Service']])
+  assert.deepEqual(hidden(ps), [['IT-Service']])
   // Eine „--“-Linie im Text ist kein Trenner, „-- “ mit Leerzeichen schon
   assert.deepEqual(hidden(L('Agenda', '--', 'Punkt eins ist wichtig, weil wir sonst nicht weiterkommen.', 'Punkt zwei auch, das klären wir morgen.')), [])
-  assert.deepEqual(hidden(L('Agenda', { text: '--', sep: true }, 'Robin Nord')), [['--', 'Robin Nord']])
+  assert.deepEqual(hidden(L('Agenda', { text: '--', sep: true }, 'Robin Nord', 'Tel. +49 30 1234567')), [['Tel. +49 30 1234567']])
   const gmail = L('Klingt gut, bis Freitag!', '--', { text: 'Sam Muster', marker: 1 }, { text: 'Mobil: +49 151 23456789', marker: 1 })
-  assert.deepEqual(hidden(gmail), [['--', 'Sam Muster', 'Mobil: +49 151 23456789']])
+  assert.deepEqual(hidden(gmail), [['Mobil: +49 151 23456789']])
   const dashes = L('Hallo,', 'siehe unten.', '-- ', 'Robin Nord', 'Northwind Traders')
-  assert.deepEqual(hidden(dashes), [['-- ', 'Robin Nord', 'Northwind Traders']])
+  assert.deepEqual(hidden(dashes), [['Northwind Traders']])
 })
 
 test('Verlauf: jede Nachricht hat ihre eigene Signatur, der Kopf des Zitats bleibt', () => {
@@ -85,7 +85,7 @@ test('Zitierter Kopf nur als Text („Von:“ … „Betreff:“, „Am … schr
 test('Ohne Grußformel: Kontaktblock am Ende mit mindestens zwei Kontaktzeilen', () => {
   const lines = L('Die Unterlagen liegen im Ordner.', 'Robin Nord', 'Northwind Traders GmbH', 'Tel: +49 30 1234567', 'robin@northwind.example')
   // Nur mit dem Namen des Absenders: Ein fremder Name ist ein Kontakt, den die Mail mitteilt
-  assert.deepEqual(hidden(lines, 'Nord, Robin (Northwind)'), [['Robin Nord', 'Northwind Traders GmbH', 'Tel: +49 30 1234567', 'robin@northwind.example']])
+  assert.deepEqual(hidden(lines, 'Nord, Robin (Northwind)'), [['Northwind Traders GmbH', 'Tel: +49 30 1234567', 'robin@northwind.example']])
   assert.equal(findSignatures(lines, 'Robin Nord')[0].reason, 'contact')
   assert.deepEqual(hidden(lines, 'Alex Beispiel'), [])
   assert.deepEqual(hidden(lines), [])
@@ -156,7 +156,7 @@ test('Modell: Antwort wird geprüft, bevor etwas verschwindet', () => {
   const p = open(5, 'Hallo,', 'das Update ist eingespielt, bitte einmal neu starten.', 'Jo Beispiel | Teamleitung Plattform', 'Fabrikam – wir verbinden Systeme.', { text: '', image: true })
   const req = { of: [0] }
   // Zeile 3 (ab dem Inhalt): Name, Slogan, Logo
-  assert.deepEqual(modelRanges([3], req, [p]), [{ start: 7, end: 10, reason: 'model' }])
+  assert.deepEqual(modelRanges([3], req, [p]), [{ start: 8, end: 10, reason: 'model' }])
   // Erste Inhaltszeile nie, nichts gefunden, außerhalb des Teils
   assert.deepEqual(modelRanges([1], req, [p]), [])
   assert.deepEqual(modelRanges([null], req, [p]), [])
@@ -207,14 +207,14 @@ test('„Gesendet von Outlook für iOS“ und Co., auch in kurzen Antworten', ()
 
 test('Fließtext im markierten Element bleibt sichtbar', () => {
   const prose = 'Wir haben die Auswertung abgeschlossen und schicken dir die Ergebnisse bis Ende der Woche zusammen mit den Folien.'
-  assert.deepEqual(hidden(L('Lieber Kim,', { text: prose, marker: 1 }, { text: 'Alex', marker: 1 }, { text: 'Tel. +49 123 456789', marker: 1 })), [['Alex', 'Tel. +49 123 456789']])
+  assert.deepEqual(hidden(L('Lieber Kim,', { text: prose, marker: 1 }, { text: 'Alex', marker: 1 }, { text: 'Tel. +49 123 456789', marker: 1 })), [['Tel. +49 123 456789']])
 })
 
 test('Modell: erste gezeigte Zeile und Blöcke über 15 Zeilen werden verworfen', () => {
   const p = open(0, 'Hallo,', 'Text', 'Jo Beispiel | Teamleitung', 'Fabrikam – wir verbinden Systeme.', { text: '', image: true })
   const req = { of: [0], parts: [{ first: 2, lines: ['Text', 'Jo Beispiel | Teamleitung', 'Fabrikam – wir verbinden Systeme.', '[Bild]'] }] }
   assert.deepEqual(modelRanges([2], req, [p]), [])
-  assert.deepEqual(modelRanges([3], req, [p]), [{ start: 2, end: 5, reason: 'model' }])
+  assert.deepEqual(modelRanges([3], req, [p]), [{ start: 3, end: 5, reason: 'model' }])
   const fields = open(0, 'Neues Ticket', ...Array.from({ length: 20 }, (_, i) => `Feld ${i}: Wert ${i}`), 'Melder: kim@fabrikam.de')
   assert.deepEqual(modelRanges([3], { of: [0], parts: [{ first: 2, lines: [] }] }, [fields]), [])
 })
@@ -230,7 +230,7 @@ test('Review: P.S., Anweisungen und Linklisten bleiben Inhalt', () => {
   // P.S. mit Mailadresse am Ende des markierten Elements
   assert.deepEqual(
     hidden(L('Hallo,', 'anbei der Vertrag.', { text: 'Alex Beispiel', marker: 1 }, { text: 'Tel. +49 123 456789', marker: 1 }, { text: 'P.S. Send the signed copy to kim@example.com by Friday.', marker: 1 })),
-    [['Alex Beispiel', 'Tel. +49 123 456789']]
+    [['Tel. +49 123 456789']]
   )
 })
 
@@ -294,13 +294,13 @@ test('Review Runde 4: jede ausgeblendete Zeile braucht einen Beleg', () => {
   // S13: Jahr und Ort sind keine Postleitzahl
   assert.deepEqual(hidden(L('Hi,', 'Status:', '2026 Berlin Summit', 'Tracking: https://example.com/track')), [])
   // S14: P.S. nach „-- “ und Name bleibt
-  assert.deepEqual(hidden(L('The draft is attached.', { text: '--', sep: true }, 'Alex Doe', 'P.S. Do not send the draft.')), [['--', 'Alex Doe']])
+  assert.deepEqual(hidden(L('The draft is attached.', { text: '--', sep: true }, 'Alex Doe', 'P.S. Do not send the draft.')), [])
   // S15: kurze Anweisung vor einer Mailadresse
   assert.deepEqual(hidden(L('The draft is attached.', 'Thanks,', 'Alex Doe', 'Call me tomorrow', 'alex@example.com')), [])
   assert.deepEqual(hidden(L('The draft is attached.', 'Thanks,', 'Alex Doe', 'Call me tomorrow', 'Tel. +49 170 1234567')), [])
   // S16: Anweisung mit „unsubscribe“ unter der markierten Signatur
   const marked = L('I attached the draft.', { text: 'Alex Doe', marker: 1 }, 'Please unsubscribe the test account before migration.')
-  assert.deepEqual(hidden(marked), [['Alex Doe']])
+  assert.deepEqual(hidden(marked), [])
   // S18: Liste aus Firmen und Links
   assert.deepEqual(hidden(L('I found two vendors for the migration.', 'Northwind GmbH', 'https://northwind.example.com', 'Contoso GmbH', 'https://contoso.example.com')), [])
 })
@@ -319,9 +319,9 @@ test('Review Runde 5: Satz mit „privacy“ ist kein Fußzeilentext, fremder Ko
   // S20: nach markierter Signatur und nach „-- “
   const sentence = 'One more thing: our privacy team still needs to approve the draft before Friday.'
   const question = 'Does the privacy team need to approve the updated draft before Friday?'
-  assert.deepEqual(hidden(L('Draft attached.', { text: 'Alex Doe', marker: 1 }, { text: 'Tel. +49 170 1234567', marker: 1 }, sentence)), [['Alex Doe', 'Tel. +49 170 1234567']])
-  assert.deepEqual(hidden(L('Draft attached.', { text: 'Alex Doe', marker: 1 }, { text: 'Tel. +49 170 1234567', marker: 1 }, question)), [['Alex Doe', 'Tel. +49 170 1234567']])
-  assert.deepEqual(hidden(L('Draft attached.', { text: '--', sep: true }, 'Alex Doe', sentence)), [['--', 'Alex Doe']])
+  assert.deepEqual(hidden(L('Draft attached.', { text: 'Alex Doe', marker: 1 }, { text: 'Tel. +49 170 1234567', marker: 1 }, sentence)), [['Tel. +49 170 1234567']])
+  assert.deepEqual(hidden(L('Draft attached.', { text: 'Alex Doe', marker: 1 }, { text: 'Tel. +49 170 1234567', marker: 1 }, question)), [['Tel. +49 170 1234567']])
+  assert.deepEqual(hidden(L('Draft attached.', { text: '--', sep: true }, 'Alex Doe', sentence)), [])
   // Echte Fußzeilen bleiben Hinweistext
   const footer = L('Hallo,', 'anbei.', { text: 'Alex', marker: 1 }, { text: 'Tel. +49 123 456789', marker: 1 }, 'This e-mail may contain confidential information. If you are not the intended recipient, please notify the sender.', 'Vorstand: Kim Fabrik (Vors.), Jo Beispiel · Aufsichtsrat: Max Muster · weitere Angaben im Impressum unserer Webseite')
   assert.equal(findSignatures(footer)[0].end, footer.length)
@@ -331,19 +331,56 @@ test('Review Runde 5: Satz mit „privacy“ ist kein Fußzeilentext, fremder Ko
   assert.deepEqual(hidden(contact), [])
   // Zitierter Teil: Absender aus dem Kopf
   const quoted = L('Danke!', 'Von: Robin Nord <robin@northwind.example>', 'Gesendet: Montag', 'Betreff: Kontakt', 'Die Unterlagen liegen im Ordner.', 'Robin Nord', 'Tel: +49 30 1234567')
-  assert.deepEqual(hidden(quoted, 'Alex Beispiel'), [['Robin Nord', 'Tel: +49 30 1234567']])
+  assert.deepEqual(hidden(quoted, 'Alex Beispiel'), [['Tel: +49 30 1234567']])
   const quotedOther = L('Danke!', 'Von: Kim Fabrik <kim@fabrikam.de>', 'Gesendet: Montag', 'Betreff: Kontakt', 'Hier der Ansprechpartner für heute Nacht.', 'Robin Nord', 'Tel: +49 30 1234567')
   assert.deepEqual(hidden(quotedOther, 'Alex Beispiel'), [])
 })
 
 test('Review Runde 6: „sent in error“ ist Inhalt, gleicher Vorname reicht nicht', () => {
   const billing = 'The invoice was sent in error and we need a corrected copy by Friday.'
-  assert.deepEqual(hidden(L('Draft attached.', { text: 'Alex Doe', marker: 1 }, { text: 'Tel. +49 170 1234567', marker: 1 }, billing)), [['Alex Doe', 'Tel. +49 170 1234567']])
-  assert.deepEqual(hidden(L('Draft attached.', { text: '--', sep: true }, 'Alex Doe', billing)), [['--', 'Alex Doe']])
+  assert.deepEqual(hidden(L('Draft attached.', { text: 'Alex Doe', marker: 1 }, { text: 'Tel. +49 170 1234567', marker: 1 }, billing)), [['Tel. +49 170 1234567']])
+  assert.deepEqual(hidden(L('Draft attached.', { text: '--', sep: true }, 'Alex Doe', billing)), [])
   // Der übliche Hinweis bleibt Fußzeilentext
   const notice = L('Hallo,', 'anbei.', { text: 'Alex', marker: 1 }, { text: 'Tel. +49 123 456789', marker: 1 }, 'If you have received this message in error, please notify the sender immediately and delete it.')
   assert.equal(findSignatures(notice)[0].end, notice.length)
   const contact = L('I found the on-call contact for tonight.', 'Alex Doe', 'Tel. +49 170 1234567')
   assert.deepEqual(hidden(contact, 'Alex Kim alex.kim'), [])
-  assert.deepEqual(hidden(contact, 'Doe, Alex'), [['Alex Doe', 'Tel. +49 170 1234567']])
+  assert.deepEqual(hidden(contact, 'Doe, Alex'), [['Tel. +49 170 1234567']])
+})
+
+test('Der Name bleibt sichtbar, ausgeblendet wird erst darunter', () => {
+  // Markierte Signatur mit Gruß und Name im Element
+  const marked = L('Hi Alex,', 'danke dir.', { text: 'Viele Grüße', marker: 1 }, { text: 'Robin Nord', marker: 1 }, { text: 'Head of Operations | Northwind Traders', marker: 1 }, { text: '+49 30 1234567', marker: 1 })
+  assert.deepEqual(hidden(marked), [['Head of Operations | Northwind Traders', '+49 30 1234567']])
+  // Name mit Rolle in einer Zeile zählt als Namenszeile
+  assert.deepEqual(hidden(L('Hallo,', 'passt.', { text: 'Jo Beispiel | Teamleitung', marker: 1 }, { text: 'Tel. +49 123 456789', marker: 1 })), [['Tel. +49 123 456789']])
+  // Beginnt die Signatur mit der Firma, gibt es keinen Namen zu zeigen
+  assert.deepEqual(hidden(L('Hallo,', 'passt.', { text: 'Fabrikam AG', marker: 1 }, { text: 'Tel. +49 123 456789', marker: 1 })), [['Fabrikam AG', 'Tel. +49 123 456789']])
+  // Nur der Name: nichts auszublenden
+  assert.deepEqual(hidden(L('Hallo,', 'passt.', { text: 'Sam Muster', marker: 1 })), [])
+})
+
+test('Kopfzeilen zitierter Nachrichten: Bereich und Kurzform', () => {
+  const lines = L(
+    'Passt, danke!',
+    'Von: Kim Fabrik <kim@fabrikam.de>',
+    'Gesendet: Mittwoch, 25. November 2026 10:00',
+    'An: Alex Beispiel',
+    'Cc: Robin Nord',
+    'Betreff: Angebot',
+    'Hallo Alex, hier das Angebot.',
+    '-----Ursprüngliche Nachricht-----',
+    'From: "Beispiel, Alex" [mailto:alex@contoso.com]',
+    'Sent: Tuesday, November 24, 2026 4:12 PM',
+    'Subject: Angebot',
+    'Hallo Kim.',
+    'Am 23.11.2026 um 09:00 schrieb Kim Fabrik <kim@fabrikam.de>:',
+    'Erste Nachricht.'
+  )
+  assert.deepEqual(findHeaders(lines), [
+    { start: 1, end: 6, label: 'Kim Fabrik · Mittwoch, 25. November 2026 10:00' },
+    { start: 7, end: 11, label: 'Beispiel, Alex · Tuesday, November 24, 2026 4:12 PM' }
+  ])
+  // Ohne Zitat keine Kopfzeilen, „Von:“ im Fließtext zählt nicht
+  assert.deepEqual(findHeaders(L('Hallo', 'Von: wem kommt das?', 'Grüße')), [])
 })
