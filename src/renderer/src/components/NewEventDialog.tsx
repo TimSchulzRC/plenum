@@ -10,6 +10,8 @@ import {
   Field,
   Input,
   Option,
+  Radio,
+  RadioGroup,
   Switch,
   Textarea
 } from '@fluentui/react-components'
@@ -17,7 +19,7 @@ import { useState, type CSSProperties } from 'react'
 import type { AccountInfo } from '@shared/types'
 import { api } from '../api'
 import { accountTitle } from '@shared/accounts'
-import { ipcErrorText, localTime as toMs, parseAttendees } from '../lib/calendar'
+import { ipcErrorText, localTime as toMs, parseAttendees, planEvents, type OtherAccountsMode } from '../lib/calendar'
 
 export interface EventDraft {
   accountId: string
@@ -34,7 +36,11 @@ const timeValue = (ms: number) => {
   const d = new Date(ms)
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
-// Neuer Termin in einem Konto. Mit mehreren Konten wählt man oben, in welchem Kalender er landet.
+const name = (a?: AccountInfo) => (a ? accountTitle(a).name : 'Konto')
+const names = (list: (AccountInfo | undefined)[]) => list.map(name).join(', ')
+
+// Neuer Termin. Mit mehreren Konten wählt man oben, in welchen Kalendern er landet. Das zuerst gewählte
+// Konto legt ihn an und verschickt Einladungen, die weiteren bekommen einen Blocker oder eine Einladung.
 export function NewEventDialog({
   draft,
   accounts,
@@ -46,9 +52,13 @@ export function NewEventDialog({
   accounts: AccountInfo[]
   color: (id: string) => string
   onClose: () => void
-  onCreated: (accountId: string) => void
+  onCreated: (accountIds: string[]) => void
 }): JSX.Element {
-  const [accountId, setAccountId] = useState(draft.accountId)
+  // In der Reihenfolge der Auswahl, das erste ist der Organisator
+  const [accountIds, setAccountIds] = useState(draft.accountId ? [draft.accountId] : [])
+  const [others, setOthers] = useState<OtherAccountsMode>('block')
+  // Schon angelegt: Scheitert ein Konto, legt der nächste Versuch nur die übrigen an
+  const [done, setDone] = useState<string[]>([])
   const [subject, setSubject] = useState('')
   const [allDay, setAllDay] = useState(false)
   const [date, setDate] = useState(dateValue(draft.start))
@@ -62,8 +72,13 @@ export function NewEventDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
 
-  const account = accounts.find((a) => a.id === accountId)
+  const chosen = accountIds.map((id) => accounts.find((a) => a.id === id))
+  const account = chosen[0]
+  const extra = chosen.slice(1)
+  const notReady = chosen.filter((a) => a && a.status !== 'ready' && !done.includes(a.id))
+  const noAddress = others === 'invite' ? extra.filter((a) => !a?.upn) : []
   const parsed = parseAttendees(attendees)
+  const invites = parsed.valid.length + (others === 'invite' ? extra.length : 0)
   const start = allDay ? toMs(date) : toMs(date, startTime)
   // Ganztägig: Ende ist Mitternacht nach dem letzten Tag
   const end = allDay ? toMs(endDate, '00:00', 1) : toMs(date, endTime)
@@ -73,9 +88,13 @@ export function NewEventDialog({
       ? 'Das Ende muss nach dem Beginn liegen'
       : parsed.invalid.length
         ? `Keine E-Mail-Adresse: ${parsed.invalid.join(', ')}`
-        : account && account.status !== 'ready'
-          ? `${accountTitle(account).name} ist nicht verbunden`
-          : undefined
+        : !account
+          ? 'Kein Kalender gewählt'
+          : notReady.length
+            ? `${names(notReady)} ${notReady.length === 1 ? 'ist' : 'sind'} nicht verbunden`
+            : noAddress.length
+              ? `Für ${names(noAddress)} ist keine Adresse bekannt, nur ein Blocker ist möglich`
+              : undefined
 
   const onStartTime = (v: string) => {
     // Dauer beibehalten, wie in Teams
@@ -84,30 +103,55 @@ export function NewEventDialog({
     if (dur > 0) setEndTime(timeValue(toMs(date, v) + dur))
   }
 
+  // Kalender wählen: neu gewählte hinten anhängen, damit der Organisator bleibt. Einer bleibt immer.
+  const pick = (selected: string[]) => {
+    const next = [...accountIds.filter((id) => selected.includes(id)), ...selected.filter((id) => !accountIds.includes(id))]
+    if (next.length) setAccountIds(next)
+  }
+
   const save = async () => {
     if (problem || busy) return
     setBusy(true)
     setError(undefined)
+    const created = [...done]
     try {
-      await api.createEvent(accountId, {
-        subject: subject.trim(),
-        start,
-        end,
-        isAllDay: allDay,
-        location: location.trim() || undefined,
-        attendees: parsed.valid,
-        teamsMeeting: teams,
-        body: body.trim() || undefined
-      })
-      onCreated(accountId)
+      const plan = planEvents(
+        {
+          subject: subject.trim(),
+          start,
+          end,
+          isAllDay: allDay,
+          location: location.trim() || undefined,
+          attendees: parsed.valid,
+          teamsMeeting: teams,
+          body: body.trim() || undefined
+        },
+        accountIds,
+        others,
+        (id) => accounts.find((a) => a.id === id)?.upn
+      )
+      // Nacheinander: Der Organisator zuerst, damit ein Blocker nie ohne den eigentlichen Termin entsteht
+      for (const p of plan) {
+        if (created.includes(p.accountId)) continue
+        await api.createEvent(p.accountId, p.event)
+        created.push(p.accountId)
+      }
+      onCreated(accountIds)
     } catch (e) {
-      setError(ipcErrorText(e))
+      setDone(created)
+      const ok = created.map((id) => accounts.find((a) => a.id === id))
+      setError(ok.length ? `In ${names(ok)} angelegt. ${ipcErrorText(e)}` : ipcErrorText(e))
       setBusy(false)
     }
   }
 
+  // Nach einem Teilerfolg sind die Felder fest, sonst stimmten die Kalender nicht mehr überein
+  const locked = busy || done.length > 0
+  // Schließen nach einem Teilerfolg lädt den Kalender trotzdem neu
+  const close = () => (done.length ? onCreated(done) : onClose())
+
   return (
-    <Dialog open onOpenChange={(_e, d) => !d.open && !busy && onClose()}>
+    <Dialog open onOpenChange={(_e, d) => !d.open && !busy && close()}>
       <DialogSurface style={{ maxWidth: 520 }}>
         <form
           onSubmit={(e) => {
@@ -119,48 +163,68 @@ export function NewEventDialog({
             <DialogTitle>Neuer Termin</DialogTitle>
             <DialogContent className="new-event">
               {accounts.length > 1 && (
-                <Field label="Kalender">
+                <Field
+                  label="Kalender"
+                  hint={
+                    extra.length
+                      ? others === 'invite'
+                        ? `${name(account)} legt den Termin an und lädt ${names(extra)} ein.`
+                        : `${name(account)} legt den Termin an. ${names(extra)} ${extra.length === 1 ? 'bekommt' : 'bekommen'} einen Blocker ohne Teilnehmer.`
+                      : 'Mehrere Kalender möglich.'
+                  }
+                >
                   <Dropdown
-                    value={account ? accountTitle(account).name : ''}
-                    selectedOptions={[accountId]}
-                    onOptionSelect={(_e, d) => d.optionValue && setAccountId(d.optionValue)}
-                    button={{ children: <AccountLabel a={account} color={color} /> }}
+                    multiselect
+                    disabled={locked}
+                    value={names(chosen)}
+                    selectedOptions={accountIds}
+                    onOptionSelect={(_e, d) => pick(d.selectedOptions)}
+                    button={{ children: chosen.length === 1 ? <AccountLabel a={account} color={color} /> : <AccountsLabel list={chosen} color={color} /> }}
                   >
                     {accounts.map((a) => (
-                      <Option key={a.id} value={a.id} text={accountTitle(a).name} disabled={a.status !== 'ready'}>
+                      <Option key={a.id} value={a.id} text={accountTitle(a).name} disabled={a.status !== 'ready' && !accountIds.includes(a.id)}>
                         <AccountLabel a={a} color={color} />
                       </Option>
                     ))}
                   </Dropdown>
                 </Field>
               )}
+              {extra.length > 0 && (
+                <Field label={extra.length === 1 ? `Im Kalender von ${name(extra[0])}` : 'In den weiteren Kalendern'}>
+                  <RadioGroup layout="horizontal" value={others} disabled={locked} onChange={(_e, d) => setOthers(d.value as OtherAccountsMode)}>
+                    <Radio value="block" label="Nur blocken" />
+                    <Radio value="invite" label="Einladen" />
+                  </RadioGroup>
+                </Field>
+              )}
               <Field label="Titel" required>
-                <Input autoFocus value={subject} onChange={(_e, d) => setSubject(d.value)} placeholder="Titel hinzufügen" />
+                <Input disabled={locked} autoFocus value={subject} onChange={(_e, d) => setSubject(d.value)} placeholder="Titel hinzufügen" />
               </Field>
               <div className="new-event-row">
                 <Field label={allDay ? 'Von' : 'Datum'}>
-                  <Input type="date" value={date} onChange={(_e, d) => {
+                  <Input disabled={locked} type="date" value={date} onChange={(_e, d) => {
                     setDate(d.value)
                     if (d.value > endDate) setEndDate(d.value)
                   }} />
                 </Field>
                 {allDay ? (
                   <Field label="Bis">
-                    <Input type="date" value={endDate} min={date} onChange={(_e, d) => setEndDate(d.value)} />
+                    <Input disabled={locked} type="date" value={endDate} min={date} onChange={(_e, d) => setEndDate(d.value)} />
                   </Field>
                 ) : (
                   <>
                     <Field label="Beginn">
-                      <Input type="time" step={300} value={startTime} onChange={(_e, d) => onStartTime(d.value)} />
+                      <Input disabled={locked} type="time" step={300} value={startTime} onChange={(_e, d) => onStartTime(d.value)} />
                     </Field>
                     <Field label="Ende">
-                      <Input type="time" step={300} value={endTime} onChange={(_e, d) => setEndTime(d.value)} />
+                      <Input disabled={locked} type="time" step={300} value={endTime} onChange={(_e, d) => setEndTime(d.value)} />
                     </Field>
                   </>
                 )}
               </div>
               <div className="new-event-row">
                 <Switch
+                  disabled={locked}
                   label="Ganztägig"
                   checked={allDay}
                   onChange={(_e, d) => {
@@ -169,25 +233,25 @@ export function NewEventDialog({
                     if (d.checked) setTeams(false)
                   }}
                 />
-                <Switch label="Teams-Besprechung" checked={teams} onChange={(_e, d) => setTeams(d.checked)} />
+                <Switch disabled={locked} label="Teams-Besprechung" checked={teams} onChange={(_e, d) => setTeams(d.checked)} />
               </div>
               <Field label="Teilnehmer" hint={parsed.valid.length ? `${account ? accountTitle(account).name : 'Das Konto'} verschickt Einladungen an ${parsed.valid.length === 1 ? '1 Person' : `${parsed.valid.length} Personen`}.` : 'E-Mail-Adressen, durch Komma getrennt. Leer lassen für einen Termin nur für dich.'}>
-                <Input value={attendees} onChange={(_e, d) => setAttendees(d.value)} placeholder="name@firma.de, …" />
+                <Input disabled={locked} value={attendees} onChange={(_e, d) => setAttendees(d.value)} placeholder="name@firma.de, …" />
               </Field>
               <Field label="Ort">
-                <Input value={location} onChange={(_e, d) => setLocation(d.value)} placeholder="Ort hinzufügen" />
+                <Input disabled={locked} value={location} onChange={(_e, d) => setLocation(d.value)} placeholder="Ort hinzufügen" />
               </Field>
               <Field label="Beschreibung">
-                <Textarea value={body} onChange={(_e, d) => setBody(d.value)} resize="vertical" />
+                <Textarea disabled={locked} value={body} onChange={(_e, d) => setBody(d.value)} resize="vertical" />
               </Field>
               {error && <div className="new-event-error">{error}</div>}
             </DialogContent>
             <DialogActions>
-              <Button disabled={busy} onClick={onClose}>
+              <Button disabled={busy} onClick={close}>
                 Abbrechen
               </Button>
-              <Button type="submit" appearance="primary" disabled={!!problem || busy} title={problem}>
-                {busy ? 'Wird gespeichert …' : parsed.valid.length ? 'Senden' : 'Speichern'}
+              <Button type="submit" appearance="primary" disabled={!!problem || busy} title={problem} style={{ whiteSpace: 'nowrap' }}>
+                {busy ? 'Wird gespeichert …' : done.length ? 'Erneut versuchen' : invites ? 'Senden' : 'Speichern'}
               </Button>
             </DialogActions>
           </DialogBody>
@@ -204,6 +268,18 @@ function AccountLabel({ a, color }: { a?: AccountInfo; color: (id: string) => st
       <span className="acct-dot" style={{ background: color(a.id) } as CSSProperties} />
       <span>{accountTitle(a).name}</span>
       {a.upn && <span style={{ color: 'var(--fg-3)', fontSize: 12 }}>{a.upn}</span>}
+    </span>
+  )
+}
+
+// Mehrere Kalender im Auswahlfeld: Punkte in den Kontofarben und die Namen
+function AccountsLabel({ list, color }: { list: (AccountInfo | undefined)[]; color: (id: string) => string }): JSX.Element {
+  return (
+    <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', minWidth: 0 }}>
+      <span style={{ display: 'inline-flex', gap: 3 }}>
+        {list.map((a) => a && <span key={a.id} className="acct-dot" style={{ background: color(a.id) } as CSSProperties} />)}
+      </span>
+      <span>{names(list)}</span>
     </span>
   )
 }

@@ -2497,3 +2497,23 @@ button {
 .image-viewer-tools .icon-btn:hover {
   background: rgba(255, 255, 255, 0.15);
 }
+/* Gezogener Zeitraum für einen neuen Termin */
+.cal-day {
+  touch-action: none;
+  user-select: none;
+}
+.cal-select {
+  position: absolute;
+  left: 2px;
+  right: 4px;
+  z-index: 3;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--brand-fg) 18%, transparent);
+  border: 1px solid var(--brand-fg);
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  pointer-events: none;
+  overflow: hidden;
+}

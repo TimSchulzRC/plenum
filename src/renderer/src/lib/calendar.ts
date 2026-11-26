@@ -31,6 +31,8 @@ export interface MergeableEvent {
   id: string
   start: number
   end: number
+  subject?: string
+  isAllDay?: boolean
   iCalUId?: string
   joinUrl?: string
   isCancelled?: boolean
@@ -71,13 +73,30 @@ export function normalizeJoinUrl(url: string): string {
   }
 }
 
+// Blocker: Kopie eines Termins in einem weiteren Konto (siehe planEvents). Sie hat eine eigene UID und
+// keinen Teilnahmelink, gleicht dem Termin aber in Titel und Zeit. Zwei Termine mit verschiedenen
+// Teilnahmelinks bleiben getrennt, das sind zwei Besprechungen.
+function copyKey(e: MergeableEvent): string | undefined {
+  const subject = e.subject?.trim().toLowerCase()
+  return subject ? `copy:${subject}|${e.start}|${e.end}|${e.isAllDay ? 1 : 0}` : undefined
+}
+
+function sameMeeting(m: MergedEvent<MergeableEvent>, e: MergeableEvent): boolean {
+  if (!e.joinUrl) return true
+  const link = normalizeJoinUrl(e.joinUrl)
+  return m.sources.every((s) => !s.event.joinUrl || normalizeJoinUrl(s.event.joinUrl) === link)
+}
+
 export function mergeCalendars<E extends MergeableEvent>(lists: { accountId: string; events: E[] }[]): MergedEvent<E>[] {
   const merged: MergedEvent<E>[] = []
   const byKey = new Map<string, MergedEvent<E>>()
+  const byCopy = new Map<string, MergedEvent<E>[]>()
   for (const { accountId, events } of lists) {
     for (const event of events) {
       const keys = matchKeys(event)
-      const hit = keys.map((k) => byKey.get(k)).find((m) => m && !m.sources.some((s) => s.accountId === accountId))
+      const copy = copyKey(event)
+      const free = (m: MergedEvent<E> | undefined): m is MergedEvent<E> => !!m && !m.sources.some((s) => s.accountId === accountId)
+      const hit = keys.map((k) => byKey.get(k)).find(free) ?? (copy ? byCopy.get(copy)?.find((m) => free(m) && sameMeeting(m, event)) : undefined)
       if (hit) {
         hit.sources.push({ accountId, event })
         // Abgesagt ist der Termin erst, wenn er es in allen Kalendern ist
@@ -88,6 +107,7 @@ export function mergeCalendars<E extends MergeableEvent>(lists: { accountId: str
       const m: MergedEvent<E> = { key: `${accountId}|${event.id}`, event, sources: [{ accountId, event }] }
       merged.push(m)
       for (const k of keys) if (!byKey.has(k)) byKey.set(k, m)
+      if (copy) byCopy.set(copy, [...(byCopy.get(copy) ?? []), m])
     }
   }
   return merged.sort((a, b) => a.event.start - b.event.start || b.event.end - a.event.end)
@@ -150,4 +170,51 @@ export function localTime(date: string, time = '00:00', days = 0): number {
   const [y, m, d] = date.split('-').map(Number)
   const [h, min] = time.split(':').map(Number)
   return new Date(y, (m || 1) - 1, (d || 1) + days, h || 0, min || 0).getTime()
+}
+
+// Gezogener Zeitraum in einer Tagesspalte, Angaben in Stunden ab Mitternacht (wie wallHours). Beginn und
+// Ende rasten auf step Minuten ein, der Zeitraum umfasst mindestens einen Schritt. Gerechnet wird nach
+// der Uhr an der Wand, damit das Ergebnis am Tag der Zeitumstellung zur Zeile passt.
+export function dragRange(day: Date, fromHours: number, toHours: number, step = 15): { start: number; end: number } {
+  const slots = (24 * 60) / step
+  const slot = (h: number) => Math.max(0, Math.min(slots - 1, Math.floor((h * 60) / step)))
+  const a = slot(Math.min(fromHours, toHours))
+  const b = slot(Math.max(fromHours, toHours)) + 1
+  const at = (n: number) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, n * step).getTime()
+  return { start: at(a), end: at(b) }
+}
+
+// ---------- Ein Termin für mehrere Konten ----------
+
+// Weitere Konten bekommen den Termin als Blocker (eigene Kopie ohne Teilnehmer, ohne Besprechung) oder
+// werden vom ersten Konto eingeladen wie andere Teilnehmer auch.
+export type OtherAccountsMode = 'block' | 'invite'
+
+export interface PlannedEvent<E> {
+  accountId: string
+  event: E
+  copy: boolean
+}
+
+// Das erste Konto legt den Termin an, verschickt die Einladungen und erstellt die Teams-Besprechung.
+// Fehlt einem Konto die Adresse, kann es nicht eingeladen werden: Fehler statt stiller Lücke.
+export function planEvents<E extends { attendees: string[]; teamsMeeting: boolean }>(
+  ev: E,
+  accountIds: string[],
+  mode: OtherAccountsMode,
+  addressOf: (accountId: string) => string | undefined
+): PlannedEvent<E>[] {
+  const [first, ...others] = accountIds
+  if (!first) return []
+  if (mode === 'invite') {
+    const invite = others.map((id) => {
+      const address = addressOf(id)
+      if (!address) throw new Error('Für ein Konto ist keine Adresse bekannt, es kann nicht eingeladen werden')
+      return address
+    })
+    const attendees = [...ev.attendees]
+    for (const a of invite) if (!attendees.some((x) => x.toLowerCase() === a.toLowerCase())) attendees.push(a)
+    return [{ accountId: first, event: { ...ev, attendees }, copy: false }]
+  }
+  return [{ accountId: first, event: ev, copy: false }, ...others.map((accountId) => ({ accountId, event: { ...ev, attendees: [], teamsMeeting: false }, copy: true }))]
 }

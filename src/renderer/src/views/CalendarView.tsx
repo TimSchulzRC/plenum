@@ -11,12 +11,12 @@ import {
   CalendarLtr16Regular
 } from '@fluentui/react-icons'
 import { addDays, startOfWeek, isSameDay } from 'date-fns'
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
 import type { AccountInfo, CalendarEvent } from '@shared/types'
 import { api } from '../api'
 import { clock, fmt } from '../lib/format'
 import { accountTitle } from '@shared/accounts'
-import { accountColor, allDayOn, findMeetingChat, ipcErrorText, mergeCalendars, wallHours, type MergedEvent } from '../lib/calendar'
+import { accountColor, allDayOn, dragRange, findMeetingChat, ipcErrorText, mergeCalendars, wallHours, type MergedEvent } from '../lib/calendar'
 import { useStore } from '../store'
 import { NewEventDialog, type EventDraft } from '../components/NewEventDialog'
 
@@ -50,6 +50,9 @@ export function CalendarView(): JSX.Element {
   const [hidden, setHidden] = useState<string[]>(loadHidden)
   const [open, setOpen] = useState<{ m: Merged; el: HTMLElement } | null>(null)
   const [draft, setDraft] = useState<EventDraft | null>(null)
+  // Gezogener Zeitraum: Tag und Stunden ab Mitternacht. Bleibt stehen, solange der Dialog dazu offen ist.
+  const [sel, setSel] = useState<{ day: number; from: number; to: number } | null>(null)
+  const drag = useRef<{ day: number; from: number; y: number; moved: boolean } | null>(null)
   const [reload, setReload] = useState(0)
   const [now, setNow] = useState(Date.now())
   const wrap = useRef<HTMLDivElement>(null)
@@ -164,11 +167,39 @@ export function CalendarView(): JSX.Element {
     return (ready.find((a) => a.id === activeAccountId) ?? ready[0] ?? accounts.find((a) => a.id === activeAccountId) ?? accounts[0])?.id
   }
 
-  const newEvent = (start?: number) => {
+  const newEvent = (start?: number, end?: number) => {
     const s = start ?? nextHalfHour()
-    // Der Dialog hat ein Datum für Beginn und Ende: ab 23:30 endet der Vorschlag um 23:55
+    // Der Dialog hat ein Datum für Beginn und Ende: Was bis Mitternacht reicht, endet um 23:55
     const lastSlot = new Date(s).setHours(23, 55, 0, 0)
-    setDraft({ accountId: defaultAccount() ?? '', start: s, end: Math.min(s + 30 * 60_000, lastSlot) })
+    setDraft({ accountId: defaultAccount() ?? '', start: s, end: Math.min(end ?? s + 30 * 60_000, lastSlot) })
+  }
+
+  // Ziehen in einer freien Stelle: Zeitraum in Viertelstunden wählen, beim Loslassen öffnet der Dialog.
+  // Ein Klick ohne Ziehen tut nichts, damit der Doppelklick weiter funktioniert.
+  const hoursAt = (el: HTMLElement, clientY: number) => (clientY - el.getBoundingClientRect().top) / HOUR
+  const dragStart = (day: Date, e: PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || !accounts.length) return
+    if (e.target !== e.currentTarget && !(e.target as HTMLElement).classList.contains('cal-slot')) return
+    drag.current = { day: day.getTime(), from: hoursAt(e.currentTarget, e.clientY), y: e.clientY, moved: false }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  const dragMove = (e: PointerEvent<HTMLDivElement>) => {
+    const d = drag.current
+    if (!d) return
+    if (!d.moved && Math.abs(e.clientY - d.y) < 4) return
+    d.moved = true
+    setSel({ day: d.day, from: d.from, to: hoursAt(e.currentTarget, e.clientY) })
+  }
+  const dragEnd = (e: PointerEvent<HTMLDivElement>) => {
+    const d = drag.current
+    drag.current = null
+    if (!d?.moved) return
+    const r = dragRange(new Date(d.day), d.from, hoursAt(e.currentTarget, e.clientY))
+    newEvent(r.start, r.end)
+  }
+  const dragCancel = () => {
+    drag.current = null
+    setSel(null)
   }
 
   // Doppelklick in eine freie Stelle: Termin ab der angeklickten halben Stunde
@@ -306,10 +337,19 @@ export function CalendarView(): JSX.Element {
               </div>
               {dayList.map((d) => {
                 return (
-                  <div key={d.getTime()} className="cal-day" onDoubleClick={(e) => slotDoubleClick(d, e)}>
+                  <div
+                    key={d.getTime()}
+                    className="cal-day"
+                    onDoubleClick={(e) => slotDoubleClick(d, e)}
+                    onPointerDown={(e) => dragStart(d, e)}
+                    onPointerMove={dragMove}
+                    onPointerUp={dragEnd}
+                    onPointerCancel={dragCancel}
+                  >
                     {Array.from({ length: 24 }, (_, h) => (
                       <div key={h} className="cal-slot" />
                     ))}
+                    {sel?.day === d.getTime() && <Selection day={d} from={sel.from} to={sel.to} />}
                     {isSameDay(d, new Date(now)) && <div className="cal-now" style={{ top: wallHours(now) * HOUR }} />}
                     {layout(d).map(({ m, col, cols: n }) => {
                       const ev = m.event
@@ -356,10 +396,22 @@ export function CalendarView(): JSX.Element {
           draft={draft}
           accounts={accounts}
           color={color}
-          onClose={() => setDraft(null)}
-          onCreated={(accountId) => {
+          onClose={() => {
             setDraft(null)
-            if (hidden.includes(accountId)) toggle(accountId)
+            setSel(null)
+          }}
+          onCreated={(created) => {
+            setDraft(null)
+            setSel(null)
+            const show = hidden.filter((h) => !created.includes(h))
+            if (show.length !== hidden.length) {
+              setHidden(show)
+              try {
+                localStorage.setItem(HIDDEN_KEY, JSON.stringify(show))
+              } catch {
+                /* ignore */
+              }
+            }
             setReload((n) => n + 1)
           }}
         />
@@ -466,6 +518,18 @@ function JoinButton({
 }
 
 const name = (a?: AccountInfo) => (a ? accountTitle(a).name : 'Konto')
+
+// Markierung beim Ziehen, eingerastet wie der Termin, den der Dialog vorschlägt
+function Selection({ day, from, to }: { day: Date; from: number; to: number }): JSX.Element {
+  const r = dragRange(day, from, to)
+  const top = wallHours(r.start) * HOUR
+  const bottom = r.end >= addDays(day, 1).getTime() ? 24 * HOUR : wallHours(r.end) * HOUR
+  return (
+    <div className="cal-select" style={{ top, height: bottom - top }}>
+      {clock(r.start)} – {clock(r.end)}
+    </div>
+  )
+}
 
 function nextHalfHour(): number {
   const d = new Date()
