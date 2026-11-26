@@ -438,3 +438,38 @@ test('Review Fußzeile: mitgeteilte Telefonnummer vor dem Disclaimer bleibt sich
   assert.deepEqual(hidden(L('You can reach the venue directly.', '+49 40 1234567', disclaimer)), [[disclaimer]])
   assert.deepEqual(hidden(L('Hallo,', 'die Adresse lautet', 'Hafenweg 3, 20457 Hamburg', disclaimer)), [[disclaimer]])
 })
+
+test('Messung Kopfzeilen und Name: Bild vor dem Namen, Team als Unterzeichner, Ticket-Kopf', () => {
+  // Bild zwischen Grußformel und Name: Name bleibt sichtbar
+  const img = L('Hallo,', 'passt.', 'Mit freundlichen Grüßen, Best regards', { text: '', image: true }, 'Kim Fabrik', 'Leitung Integration', 'Tel. +49 40 1234567')
+  assert.deepEqual(hidden(img), [['Leitung Integration', 'Tel. +49 40 1234567']])
+  const marked = L('Hallo,', 'passt.', { text: 'Besten Gruß / Best regards', marker: 1 }, { text: '', image: true, marker: 1 }, { text: 'Kim Fabrik', marker: 1 }, { text: 'Tel. +49 40 1234567', marker: 1 })
+  assert.deepEqual(hidden(marked), [['Tel. +49 40 1234567']])
+  // Team oder Firma direkt nach dem Gruß unterschreibt und bleibt sichtbar
+  assert.deepEqual(hidden(L('Hallo,', 'Ticket ist gelöst.', 'Viele Grüße', 'Ihr Servicedesk Team', 'Fabrikam AG', 'Tel. +49 40 1234567')), [['Fabrikam AG', 'Tel. +49 40 1234567']])
+  assert.deepEqual(hidden(L('Hallo,', 'Ticket ist gelöst.', 'Viele Grüße', 'Fabrikam AG', 'Hafenweg 3, 20457 Hamburg', 'Tel. +49 40 1234567')), [['Hafenweg 3, 20457 Hamburg', 'Tel. +49 40 1234567']])
+  // Ticket-Mail: Trenner mit Leerzeichen, „Received:“ als Datum, Werte mit Semikolon
+  const ticket = L('Neuer Kommentar.', '------------------- Original Message -------------------', 'From: Kim Fabrik <kim@fabrikam.de>;', 'Received: Mon Nov 23 2026 09:00', 'To: Support;', 'Subject: Störung', 'Text der Anfrage.')
+  assert.deepEqual(partStarts(ticket), [0, 1])
+  assert.deepEqual(findHeaders(ticket), [{ start: 1, end: 6, label: 'Kim Fabrik · Mon Nov 23 2026 09:00' }])
+  // „Im Auftrag von“ gehört nicht zum Namen
+  assert.equal(findHeaders(L('Ok', 'Von: Kim Fabrik <kim@fabrikam.de> Im Auftrag von Support <support@fabrikam.de>', 'Gesendet: Montag', 'Betreff: x', 'Text'))[0].label, 'Kim Fabrik · Montag')
+})
+
+test('Messung Fußzeilen: Beschriftungen, US-Anschrift, Abmelden', () => {
+  // Fußzeile des Mailservers mit Beschriftungen unter einer markierten Signatur
+  const gateway = L(
+    'Hallo,', 'anbei.',
+    { text: 'Kim Fabrik', marker: 1 }, { text: 'Tel. +49 40 1234567', marker: 1 },
+    'Fabrikam GmbH & Co. KG', 'Registry Court:', 'Amtsgericht Hamburg, HRA 12345', 'Sitz der Gesellschaft/Registered Office:', 'Hafenweg 3, 20457 Hamburg',
+    'Vertreten durch: Fabrikam Verwaltungs GmbH', 'Phone:', '+49 40 1234567', 'Management: Kim Fabrik',
+    'Diese E-Mail enthält vertrauliche Informationen. Wenn Sie nicht der richtige Adressat sind oder sie irrtümlich erhalten haben, informieren Sie bitte den Absender.'
+  )
+  assert.equal(findSignatures(gateway)[0].end, gateway.length)
+  // Dieselbe Fußzeile ohne Signatur davor
+  const bare = L('Die Rechnung liegt bei.', ...gateway.slice(4))
+  assert.deepEqual(findSignatures(bare), [{ start: 1, end: bare.length, reason: 'footer' }])
+  // Newsletter: Copyright, US-Anschrift, Abmelden
+  const news = L('Your weekly summary is ready.', 'Open the dashboard to see details.', 'Copyright © 2026 Northwind Inc. All rights reserved.', '500 Market St #300, San Francisco, CA 94105', 'Unsubscribe')
+  assert.deepEqual(findSignatures(news), [{ start: 2, end: 5, reason: 'footer' }])
+})
