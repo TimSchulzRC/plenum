@@ -1,7 +1,8 @@
-import { Button, Dropdown, Option, Radio, RadioGroup, Switch, Badge, Textarea } from '@fluentui/react-components'
-import { useEffect, useState } from 'react'
+import { Avatar, Button, Dropdown, Option, Radio, RadioGroup, Switch, Badge, Textarea } from '@fluentui/react-components'
+import { Fragment, useEffect, useState } from 'react'
+import { accountTitle, orderAccounts } from '@shared/accounts'
 import { FEEDBACK_MAX_LENGTH, type FeedbackKind } from '@shared/analytics'
-import type { AppSettings, DebugInfo } from '@shared/types'
+import type { AccountInfo, AppSettings, DebugInfo, TenantInfo } from '@shared/types'
 import { api } from '../api'
 import { USAGE_DATA_DOC } from '../analytics'
 import { PersonAvatar } from '../components/Avatars'
@@ -72,42 +73,49 @@ export function SettingsView(): JSX.Element {
       <h1>Einstellungen</h1>
       <section>
         <h2>Konten</h2>
-        {accounts.map((a) => (
-          <div className="row" key={a.id}>
-            <PersonAvatar mri={a.mri} name={a.label} size={36} accountId={a.id} />
-            <div className="grow">
-              <div style={{ fontWeight: 600 }}>{a.label}</div>
-              <div className="hint">
-                {a.upn} · <Badge appearance="tint" color={a.status === 'ready' ? 'success' : a.status === 'error' ? 'danger' : 'warning'} size="small">{statusText(a.status)}</Badge>
-                {a.statusDetail ? ` ${a.statusDetail}` : ''}
+        {orderAccounts(accounts).map((a) => (
+          <Fragment key={a.id}>
+            <div className="row" style={a.parentId ? { paddingLeft: 48 } : undefined}>
+              {a.parentId ? <Avatar shape="square" size={28} name={accountTitle(a).name} color="colorful" /> : <PersonAvatar mri={a.mri} name={a.label} size={36} accountId={a.id} />}
+              <div className="grow">
+                <div style={{ fontWeight: 600 }}>{a.parentId ? accountTitle(a).name : a.label}</div>
+                <div className="hint">
+                  {a.parentId ? `Gast, angemeldet als ${a.upn ?? a.label}` : a.upn} ·{' '}
+                  <Badge appearance="tint" color={a.status === 'ready' ? 'success' : a.status === 'error' ? 'danger' : 'warning'} size="small">
+                    {statusText(a.status)}
+                  </Badge>
+                  {a.statusDetail ? ` ${a.statusDetail}` : ''}
+                </div>
               </div>
-            </div>
-            {a.status === 'login-required' && (
-              <Button size="small" appearance="primary" onClick={() => void api.showLogin(a.id)}>
-                Anmelden
+              {a.status === 'login-required' && (
+                <Button size="small" appearance="primary" onClick={() => void api.showLogin(a.id)}>
+                  Anmelden
+                </Button>
+              )}
+              <Button size="small" onClick={() => void api.reloadAccount(a.id)}>
+                Neu verbinden
               </Button>
-            )}
-            <Button size="small" onClick={() => void api.reloadAccount(a.id)}>
-              Neu verbinden
-            </Button>
-            <Button size="small" onClick={() => void api.showEngine(a.id)}>
-              Webansicht
-            </Button>
-            <Button
-              size="small"
-              onClick={() => {
-                if (confirm(`${a.label} abmelden und entfernen?`)) void api.removeAccount(a.id)
-              }}
-            >
-              Entfernen
-            </Button>
-          </div>
+              <Button size="small" onClick={() => void api.showEngine(a.id)}>
+                Webansicht
+              </Button>
+              <Button
+                size="small"
+                onClick={() => {
+                  const text = a.parentId ? `${accountTitle(a).name} aus der Chatliste entfernen?` : `${a.label} abmelden und entfernen?`
+                  if (confirm(text)) void api.removeAccount(a.id)
+                }}
+              >
+                Entfernen
+              </Button>
+            </div>
+            {!a.parentId && <Tenants account={a} />}
+          </Fragment>
         ))}
         <div className="row">
           <Button appearance="primary" onClick={() => void api.addAccount()}>
             Konto hinzufügen
           </Button>
-          <div className="hint">Jedes Konto läuft in einer eigenen, getrennten Sitzung der Teams-Web-App.</div>
+          <div className="hint">Jedes Konto und jeder Gastmandant läuft in einer eigenen, getrennten Sitzung der Teams-Web-App.</div>
         </div>
       </section>
 
@@ -343,5 +351,62 @@ function FeedbackSection(): JSX.Element {
         </div>
       </div>
     </section>
+  )
+}
+
+// Gastmandanten eines Kontos. Eingeschaltete laufen als eigener Block in der Chatliste,
+// jeder mit einer eigenen, versteckten Teams-Web-App (Arbeitsspeicher wie ein Browser-Tab).
+function Tenants({ account }: { account: AccountInfo }): JSX.Element | null {
+  const accounts = useStore((s) => s.accounts)
+  const [tenants, setTenants] = useState<TenantInfo[] | null>(null)
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState<string>()
+  const ready = account.status === 'ready'
+
+  useEffect(() => {
+    if (!ready) return
+    let alive = true
+    void api
+      .listTenants(account.id)
+      .then((t) => alive && setTenants(t))
+      .catch((e: Error) => alive && setError(e.message))
+    return () => {
+      alive = false
+    }
+  }, [account.id, ready])
+
+  const others = (tenants ?? []).filter((t) => !t.current)
+  if (!ready || (!error && others.length === 0)) return null
+  return (
+    <div className="tenant-list">
+      <div className="hint" style={{ marginBottom: 4 }}>
+        {error ? `Mandanten konnten nicht geladen werden (${error}).` : 'Weitere Mandanten, in denen du Gast bist. Eingeschaltete erscheinen als eigener Block in der Chatliste.'}
+      </div>
+      {others.map((t) => {
+        const child = accounts.find((c) => c.parentId === account.id && c.tenantId === t.tenantId)
+        return (
+          <div className="row" key={t.tenantId}>
+            <Avatar shape="square" size={24} name={t.tenantName || t.tenantId} color="colorful" />
+            <div className="grow">
+              <div>{t.tenantName || t.tenantId}</div>
+              <div className="hint">{[t.guest ? 'Gast' : 'Mitglied', t.hidden && 'in Teams ausgeblendet'].filter(Boolean).join(' · ')}</div>
+            </div>
+            <Switch
+              label="In der Chatliste"
+              labelPosition="before"
+              checked={!!child}
+              disabled={busy === t.tenantId}
+              onChange={(_e, d) => {
+                setBusy(t.tenantId)
+                const done = () => setBusy(undefined)
+                if (d.checked) void api.addTenant(account.id, t.tenantId, t.tenantName).catch((e: Error) => alert(e.message)).finally(done)
+                else if (child) void Promise.resolve(api.removeAccount(child.id)).finally(done)
+                else done()
+              }}
+            />
+          </div>
+        )
+      })}
+    </div>
   )
 }

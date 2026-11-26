@@ -7,7 +7,7 @@ import { dayLabel, sameDay } from '../lib/format'
 import { cacheKey, fetchHorizons, fetchMessages, horizonCache, messageCache, receiptsEnabled as hasReceipts } from '../lib/prefetch'
 import { readReceipt } from '../lib/receipts'
 import { personName, useStore } from '../store'
-import { ChatAvatar, PersonAvatar, presenceLabel } from './Avatars'
+import { AccountChip, ChatAvatar, PersonAvatar, presenceLabel } from './Avatars'
 import { Composer, imageFiles, type ComposerHandle, type SendPayload } from './Composer'
 import { MessageItem } from './MessageItem'
 
@@ -362,6 +362,7 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
           <div className="tabs">
             <button className="tab active">Chat</button>
           </div>
+          <AccountChip />
         </div>
         {chat.kind === 'meeting' && chat.meeting?.joinUrl && (
           <Button appearance="primary" size="small" icon={<Video20Regular />} onClick={() => void api.joinMeeting(accountId, chat.meeting!.joinUrl!, { video: true, audio: true })}>

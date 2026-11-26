@@ -18,6 +18,7 @@ import type {
   Availability,
   BackgroundList,
   CallDevices,
+  TenantInfo,
   UpdateState
 } from './types'
 import type { McpClient, McpInfo } from './mcp'
@@ -28,6 +29,10 @@ export interface ApiMethods {
   listAccounts(): AccountInfo[]
   addAccount(): string
   removeAccount(accountId: string): void
+  // Mandanten, zu denen das Konto gehört (Heimatmandant und Gastzugänge)
+  listTenants(accountId: string): TenantInfo[]
+  // Gastmandant als eigenen Block in der Chatliste anzeigen, angemeldet über dieses Konto
+  addTenant(accountId: string, tenantId: string, tenantName?: string): string
   showLogin(accountId: string): void
   showEngine(accountId: string): void
   reloadAccount(accountId: string): void

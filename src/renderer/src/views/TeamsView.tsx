@@ -3,7 +3,7 @@ import { ChevronDown16Regular, ChevronRight16Regular, Dismiss20Regular, LockClos
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject, type UIEvent } from 'react'
 import type { Channel, ChannelThread, Message, Team } from '@shared/types'
 import { api, onEvent } from '../api'
-import { PersonAvatar, TeamAvatar } from '../components/Avatars'
+import { AccountChip, PersonAvatar, TeamAvatar } from '../components/Avatars'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { MessageItem } from '../components/MessageItem'
 import { dayLabel, listTime, sameDay } from '../lib/format'
@@ -199,6 +199,7 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
             <div className="tabs">
               <button className="tab active">Beiträge</button>
             </div>
+            <AccountChip />
           </div>
         </div>
         <div className="messages" ref={scroller} onScroll={onScroll}>

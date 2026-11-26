@@ -1,8 +1,9 @@
 import { Avatar, AvatarGroup, AvatarGroupItem, type PresenceBadgeStatus } from '@fluentui/react-components'
 import { CalendarLtr20Regular, PeopleTeam20Regular } from '@fluentui/react-icons'
+import { accountTitle } from '@shared/accounts'
 import type { Availability, ChatSummary, Presence, Team } from '@shared/types'
 import { avatarUrl, teamPictureUrl } from '../lib/media'
-import { useStore } from '../store'
+import { useScopedAccountId, useStore } from '../store'
 
 export function presenceStatus(p?: Presence): PresenceBadgeStatus | undefined {
   if (!p) return undefined
@@ -60,8 +61,8 @@ export function PersonAvatar({
   showPresence?: boolean
   accountId?: string
 }): JSX.Element {
-  const active = useStore((s) => s.activeAccountId)
-  const acct = accountId ?? active ?? ''
+  const scoped = useScopedAccountId()
+  const acct = accountId ?? scoped
   const presence = useStore((s) => (mri && showPresence ? s.snapshots[acct]?.presence[mri] : undefined))
   const status = presenceStatus(presence)
   const img = mri ? avatarUrl(acct, mri, name, size > 48 ? 'HR196x196' : 'HR64x64') : undefined
@@ -77,7 +78,7 @@ export function PersonAvatar({
 }
 
 export function ChatAvatar({ chat, size = 32 }: { chat: ChatSummary; size?: 24 | 28 | 32 | 36 | 40 | 48 }): JSX.Element {
-  const acct = useStore((s) => s.activeAccountId ?? '')
+  const acct = useScopedAccountId()
   const me = useStore((s) => s.snapshots[acct]?.me)
   if (chat.kind === 'meeting') {
     return <Avatar size={size} icon={<CalendarLtr20Regular />} color="brand" aria-label={chat.title} />
@@ -101,8 +102,23 @@ export function ChatAvatar({ chat, size = 32 }: { chat: ChatSummary; size?: 24 |
 }
 
 export function TeamAvatar({ team, size = 32 }: { team: Team; size?: 20 | 24 | 28 | 32 | 36 | 40 | 48 }): JSX.Element {
-  const acct = useStore((s) => s.activeAccountId ?? '')
+  const acct = useScopedAccountId()
   const groupId = (team as Team & { groupId?: string }).groupId
   const img = teamPictureUrl(acct, groupId, team.pictureETag, team.displayName)
   return <Avatar shape="square" size={size} name={team.displayName} color="colorful" image={img ? { src: img } : undefined} />
+}
+
+// Im Chatkopf: zu welchem Konto oder Mandanten die Unterhaltung gehört. Nur bei mehreren Konten,
+// denn dann zeigt die Chatliste alle untereinander und Nachrichten gehen über das Konto des Chats.
+export function AccountChip(): JSX.Element | null {
+  const account = useStore((s) => (s.accounts.length > 1 ? s.accounts.find((a) => a.id === s.activeAccountId) : undefined))
+  if (!account) return null
+  const { name, sub } = accountTitle(account)
+  return (
+    <span className="acct-chip" title={`Du schreibst als ${account.upn ?? account.label}${account.parentId ? ` (Gast bei ${name})` : ''}`}>
+      {account.parentId ? <Avatar shape="square" size={16} name={name} color="colorful" /> : <PersonAvatar mri={account.mri} name={account.label} size={16} accountId={account.id} showPresence={false} />}
+      <span>{name}</span>
+      {account.parentId && <span className="acct-chip-sub">{sub}</span>}
+    </span>
+  )
 }

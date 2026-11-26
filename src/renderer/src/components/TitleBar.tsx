@@ -1,4 +1,5 @@
 import {
+  Avatar,
   Menu,
   MenuDivider,
   MenuGroupHeader,
@@ -22,6 +23,7 @@ import {
   Checkmark16Regular
 } from '@fluentui/react-icons'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { accountTitle, orderAccounts } from '@shared/accounts'
 import { accountBadge } from '@shared/badge'
 import type { Availability, Person } from '@shared/types'
 import { api } from '../api'
@@ -119,16 +121,19 @@ export function TitleBar(): JSX.Element {
                 </>
               )}
               <MenuGroupHeader>Konten</MenuGroupHeader>
-              {accounts.map((a) => (
+              {orderAccounts(accounts).map((a) => (
                 <MenuItem
                   key={a.id}
-                  icon={<PersonAvatar mri={a.mri} name={a.label} size={24} accountId={a.id} />}
+                  style={a.parentId ? { paddingLeft: 28 } : undefined}
+                  icon={a.parentId ? <Avatar shape="square" size={20} name={a.tenantName || 'Mandant'} color="colorful" /> : <PersonAvatar mri={a.mri} name={a.label} size={24} accountId={a.id} />}
                   secondaryContent={accountBadge(a) > 0 ? <CounterBadge count={accountBadge(a)} size="small" color="danger" /> : a.id === account?.id ? <Checkmark16Regular /> : undefined}
                   onClick={() => useStore.getState().setActiveAccount(a.id)}
                 >
                   <div>
-                    <div>{a.label}</div>
-                    {a.status !== 'ready' && <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>{statusText(a.status)}</div>}
+                    <div>{a.parentId ? accountTitle(a).name : a.label}</div>
+                    {(a.parentId || a.status !== 'ready') && (
+                      <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>{[a.parentId && 'Gast', a.status !== 'ready' && statusText(a.status)].filter(Boolean).join(' · ')}</div>
+                    )}
                   </div>
                 </MenuItem>
               ))}
@@ -139,7 +144,8 @@ export function TitleBar(): JSX.Element {
                 <MenuItem
                   icon={<SignOut20Regular />}
                   onClick={() => {
-                    if (confirm(`${account.label} abmelden und aus der App entfernen?`)) void api.removeAccount(account.id)
+                    const text = account.parentId ? `${accountTitle(account).name} aus der Chatliste entfernen?` : `${account.label} abmelden und aus der App entfernen?`
+                    if (confirm(text)) void api.removeAccount(account.id)
                   }}
                 >
                   Abmelden

@@ -33,7 +33,8 @@ import type {
   MessagePreview,
   Person,
   Presence,
-  Team
+  Team,
+  TenantInfo
 } from '@shared/types'
 import { unreadChats, unreadTeams } from '@shared/badge'
 import { log } from './log'
@@ -41,6 +42,7 @@ import { analytics } from './analytics'
 import { errorSummary } from '@shared/analytics'
 import { parseRealtimeFrame } from './engine/realtime'
 import { OlderCursors } from './older-cursors'
+import { parseTenants } from './tenants'
 
 export interface AccountRecord {
   id: string
@@ -48,6 +50,8 @@ export interface AccountRecord {
   upn?: string
   tenantId?: string
   tenantName?: string
+  // Gastmandant: läuft als eigenes Konto mit eigener Sitzung, angemeldet über dieses Konto
+  parentId?: string
   mri?: string
   createdAt: number
 }
@@ -127,7 +131,10 @@ export class AccountService extends EventEmitter<AccountEvents> {
     super()
     this.engine = new Engine(record.id, enginePreloadPath(), {
       autoShowLogin: opts.autoShowLogin,
-      title: record.displayName || record.upn || 'Microsoft Teams'
+      title: [record.displayName || record.upn || 'Microsoft Teams', record.parentId && record.tenantName].filter(Boolean).join(' – '),
+      // Nur Gastmandanten bekommen den Mandanten fest vorgegeben, das Hauptkonto startet wie in Teams
+      tenantId: record.parentId ? record.tenantId : undefined,
+      loginHint: record.parentId ? record.upn : undefined
     })
     this.api = new TeamsApi(this.engine)
     this.loadPeopleCache()
@@ -163,11 +170,12 @@ export class AccountService extends EventEmitter<AccountEvents> {
   info(): AccountInfo {
     return {
       id: this.id,
-      label: this.record.displayName || this.record.upn || 'Neues Konto',
+      label: [this.record.displayName || this.record.upn || 'Neues Konto', this.record.parentId && this.record.tenantName && `(${this.record.tenantName})`].filter(Boolean).join(' '),
       displayName: this.record.displayName,
       upn: this.record.upn,
       tenantId: this.record.tenantId,
       tenantName: this.record.tenantName,
+      parentId: this.record.parentId,
       mri: this.record.mri,
       status: this.engine.status,
       statusDetail: this.engine.statusDetail,
@@ -188,10 +196,17 @@ export class AccountService extends EventEmitter<AccountEvents> {
 
   private onReady(): void {
     const me = this.engine.tokens.me
+    // Gastmandant: Die Web-App muss im vorgegebenen Mandanten laufen, sonst zeigte der Block
+    // die Chats des Hauptkontos ein zweites Mal
+    if (this.record.parentId && me.tid && this.record.tenantId && me.tid !== this.record.tenantId) {
+      log.warn(`[${this.id}] Web-App läuft nicht im Gastmandanten`)
+      this.engine.setStatus('error', `Teams hat ${this.record.tenantName ?? 'den Mandanten'} nicht geöffnet.`)
+      return
+    }
     if (me.oid) {
       const mri = `8:orgid:${me.oid}`
       const changed = this.record.mri !== mri || this.record.displayName !== me.name || this.record.upn !== me.upn
-      this.record = { ...this.record, mri, displayName: me.name || this.record.displayName, upn: me.upn || this.record.upn, tenantId: me.tid }
+      this.record = { ...this.record, mri, displayName: me.name || this.record.displayName, upn: me.upn || this.record.upn, tenantId: me.tid || this.record.tenantId }
       this.me = { mri, displayName: me.name || '', upn: me.upn, email: me.upn, objectId: me.oid }
       this.people.set(mri, { ...(this.people.get(mri) ?? {}), ...this.me })
       if (changed) this.emit('record-updated', this.record)
@@ -223,6 +238,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
       // Basis für inkrementelle Abfragen holen
       await this.deltaSync(true)
       if (!this.started) return
+      // Beim ersten Abgleich auch den Namen des Mandanten holen, für die Kopfzeile in der Chatliste
+      if (!this.initialSyncDone) void this.listTenants().catch((e: Error) => log.warn(`[${this.id}] Mandanten nicht lesbar`, e.message))
       this.initialSyncDone = true
       void this.refreshPresence()
       void this.refreshActivityCount()
@@ -825,6 +842,19 @@ export class AccountService extends EventEmitter<AccountEvents> {
     } catch {
       /* ignore */
     }
+  }
+
+  // Mandanten des Kontos, wie sie der Mandantenwechsel der Web-App anzeigt
+  async listTenants(): Promise<TenantInfo[]> {
+    const raw = await this.api.json('mt', `${this.api.base('mt')}/beta/users/tenantsv2?invalidate=${Date.now()}`)
+    const tenants = parseTenants(raw, this.record.tenantId)
+    // Name des eigenen Mandanten für die Kopfzeile in der Chatliste merken
+    const own = tenants.find((t) => t.current)
+    if (own?.tenantName && own.tenantName !== this.record.tenantName) {
+      this.record = { ...this.record, tenantName: own.tenantName }
+      this.emit('record-updated', this.record)
+    }
+    return tenants
   }
 
   async getPeople(mris: string[]): Promise<Person[]> {

@@ -1,3 +1,4 @@
+import { createContext, useContext } from 'react'
 import { create } from 'zustand'
 import type { AccountInfo, AccountSnapshot, AppSettings, CallState, Presence, UpdateState } from '@shared/types'
 import { api, onEvent } from './api'
@@ -34,6 +35,8 @@ interface MainState {
   forward: NavEntry[]
   setView(v: View): void
   select(sel: Selection, view?: View): void
+  // Unterhaltung eines anderen Kontos öffnen: Konto und Auswahl in einem Schritt
+  open(accountId: string, sel: Selection, view?: View): void
   setActiveAccount(id: string): void
   goBack(): void
   goForward(): void
@@ -68,6 +71,18 @@ export const useStore = create<MainState>((set, get) => ({
       back: [...s.back.slice(-50), current(s)],
       forward: []
     })
+  },
+  open: (accountId, sel, view) => {
+    const s = get()
+    if (s.activeAccountId === accountId) return s.select(sel, view)
+    set({
+      activeAccountId: accountId,
+      selection: { ...s.selection, [accountId]: { ...(s.selection[accountId] ?? {}), ...sel } },
+      view: view ?? s.view,
+      back: [...s.back.slice(-50), current(s)],
+      forward: []
+    })
+    void api.setSettings({ activeAccountId: accountId })
   },
   setActiveAccount: (id) => {
     const s = get()
@@ -108,6 +123,16 @@ export function useActive(): { account?: AccountInfo; snapshot?: AccountSnapshot
   const snapshot = useStore((s) => (id ? s.snapshots[id] : undefined))
   const selection = useStore((s) => (id ? s.selection[id] : undefined))
   return { account: accounts.find((a) => a.id === id), snapshot, selection: selection ?? {} }
+}
+
+// Konto, zu dem ein Listeneintrag gehört. Die Chatliste zeigt alle Konten untereinander,
+// Avatare und Vorladen brauchen deshalb das Konto des Eintrags, nicht das aktive.
+export const AccountScope = createContext<string | undefined>(undefined)
+
+export function useScopedAccountId(): string {
+  const scoped = useContext(AccountScope)
+  const active = useStore((s) => s.activeAccountId)
+  return scoped ?? active ?? ''
 }
 
 export function usePresence(mri?: string): Presence | undefined {

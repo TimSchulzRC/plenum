@@ -482,6 +482,116 @@ button {
   font-size: 13.5px;
 }
 
+/* Mehrere Konten und Mandanten: ein Block je Konto, Köpfe kleben oben und unten */
+.list-scroll.multi {
+  position: relative;
+  padding-bottom: 0;
+}
+.list-scroll.multi::after {
+  content: '';
+  display: block;
+  height: 12px;
+}
+.acct-head {
+  position: sticky;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px 0 4px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: var(--pane);
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.acct-head.first {
+  border-top-color: transparent;
+}
+.acct-head.child {
+  padding-left: 18px;
+}
+.acct-head > svg {
+  flex-shrink: 0;
+  color: var(--fg-3);
+}
+.acct-head:hover .acct-name {
+  color: var(--fg);
+}
+.acct-head .acct-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 650;
+  color: var(--fg);
+}
+.acct-head .acct-sub {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--fg-4);
+}
+.acct-head .acct-state {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--fg-3);
+}
+.settings .tenant-list {
+  margin: -4px 0 8px 48px;
+  padding: 8px 12px 4px;
+  border-left: 2px solid var(--border-strong);
+}
+.settings .tenant-list .row {
+  padding: 6px 0;
+}
+.acct-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin-left: auto;
+  padding: 0 8px 0 4px;
+  border-radius: 12px;
+  background: var(--hover);
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 600;
+  max-width: 220px;
+}
+.acct-chip > span:not(.acct-chip-sub) {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.acct-chip .acct-chip-sub {
+  font-weight: 400;
+  color: var(--fg-4);
+}
+.acct-head .acct-count {
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--badge);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .main-pane {
   flex: 1;
   min-width: 0;

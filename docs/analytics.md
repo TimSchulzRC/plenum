@@ -44,6 +44,7 @@ Aktionen aus der Oberfläche tragen zusätzlich `duration_ms`, die Dauer des Auf
 | Ereignis | Wann | Eigenschaften |
 | --- | --- | --- |
 | `account_add_started`, `account_removed`, `account_switched` | Konto hinzugefügt, entfernt, gewechselt | |
+| `tenant_added` | Gastmandant als eigener Block in der Chatliste angelegt | `cookies` (Anmelde-Cookies des Kontos übernommen) |
 | `sign_in_required` | neues Konto muss sich anmelden | |
 | `sign_in_expired` | Anmeldung eines bekannten Kontos ist abgelaufen | |
 | `account_connected` | Konto ist verbunden | `seconds`, `after` (`start`, `sign_in`, `reconnect`), `first_sign_in`, `complete` (Teams und Kanäle verfügbar) |

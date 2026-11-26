@@ -1,4 +1,4 @@
-import { Input, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Tooltip } from '@fluentui/react-components'
+import { Avatar, Input, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Tooltip } from '@fluentui/react-components'
 import {
   ChevronDown16Regular,
   ChevronRight16Regular,
@@ -9,15 +9,18 @@ import {
   LockClosed12Regular,
   Video16Filled
 } from '@fluentui/react-icons'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Channel, ChatFolder, ChatSummary, Person, Team } from '@shared/types'
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { accountTitle, orderAccounts } from '@shared/accounts'
+import { chatBadge } from '@shared/badge'
+import type { AccountInfo, Channel, ChatFolder, ChatSummary, Person, Team } from '@shared/types'
 import { api } from '../api'
 import { ChatAvatar, PersonAvatar, TeamAvatar } from '../components/Avatars'
 import { Composer } from '../components/Composer'
 import { ConversationView } from '../components/ConversationView'
 import { listTime } from '../lib/format'
 import { prefetchChannel, prefetchChat, useHoverPrefetch } from '../lib/prefetch'
-import { useActive, useStore } from '../store'
+import { AccountScope, useActive, useScopedAccountId, useStore, type Selection } from '../store'
+import { statusText } from '../components/TitleBar'
 import { ChannelView } from './TeamsView'
 
 type Filter = 'all' | 'unread' | 'meetings' | 'chats'
@@ -53,14 +56,161 @@ type Row = { type: 'chat'; chat: ChatSummary } | { type: 'channel'; team: Team; 
 const SYSTEM_FOLDERS = new Set(['QuickViews', 'RecentChats', 'MeetingChats', 'TeamsAndChannels', 'MutedChats', 'EngageCommunities'])
 
 function ChatList(): JSX.Element {
-  const { snapshot, selection } = useActive()
-  const compact = useStore((s) => !s.settings?.chatPreviews)
+  const accounts = useStore((s) => s.accounts)
+  const activeId = useStore((s) => s.activeAccountId)
   const [filterOpen, setFilterOpen] = useState(false)
   const [text, setText] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
+  const [limit, setLimit] = useState(150)
+  const ordered = useMemo(() => orderAccounts(accounts), [accounts])
+  const multi = ordered.length > 1
+  const q = text.trim().toLowerCase()
+
+  return (
+    <div className="list-pane">
+      <div className="list-header">
+        <h1>Chat</h1>
+        <Menu>
+          <MenuTrigger disableButtonEnhancement>
+            <button className={`icon-btn ${filter !== 'all' ? 'active' : ''}`} title="Filtern">
+              <Filter20Regular />
+            </button>
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              <MenuItem onClick={() => setFilterOpen(true)}>Nach Name filtern</MenuItem>
+              <MenuItem onClick={() => setFilter('all')}>Alle</MenuItem>
+              <MenuItem onClick={() => setFilter('unread')}>Ungelesen</MenuItem>
+              <MenuItem onClick={() => setFilter('chats')}>Chats</MenuItem>
+              <MenuItem onClick={() => setFilter('meetings')}>Besprechungen</MenuItem>
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+        <Tooltip content="Neuer Chat (⌘N)" relationship="label">
+          <button className="icon-btn" onClick={() => useStore.getState().select({ newChat: true, chatId: undefined, channelId: undefined }, 'chat')}>
+            <Compose20Regular />
+          </button>
+        </Tooltip>
+      </div>
+      {(filterOpen || filter !== 'all') && (
+        <div style={{ padding: '0 16px 8px', display: 'flex', gap: 6, alignItems: 'center' }}>
+          <Input
+            size="small"
+            autoFocus
+            placeholder="Nach Name filtern"
+            value={text}
+            onChange={(_e, d) => setText(d.value)}
+            style={{ flex: 1 }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setText('')
+                setFilterOpen(false)
+                setFilter('all')
+              }
+            }}
+          />
+          <button
+            className="icon-btn"
+            onClick={() => {
+              setText('')
+              setFilterOpen(false)
+              setFilter('all')
+            }}
+          >
+            <Dismiss16Regular />
+          </button>
+        </div>
+      )}
+      <div
+        className={`list-scroll ${multi ? 'multi' : ''}`}
+        onScroll={(e) => {
+          const el = e.currentTarget
+          if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) setLimit((l) => l + 150)
+        }}
+      >
+        {multi ? <AccountBlocks accounts={ordered} activeId={activeId} q={q} filter={filter} limit={limit} /> : activeId && <AccountChats accountId={activeId} q={q} filter={filter} limit={limit} mode="full" />}
+      </div>
+    </div>
+  )
+}
+
+const HEAD_HEIGHT = 34
+const EXPANDED_KEY = 'chatlist.expanded'
+
+function loadExpanded(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? '{}') as Record<string, boolean>
+  } catch {
+    return {}
+  }
+}
+
+// Ein Block je Konto bzw. Mandant. Zugeklappt zeigt er nur Ungelesenes und den offenen Chat.
+// Die Köpfe kleben oben und unten am Rand, so bleiben alle Konten sichtbar.
+function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: AccountInfo[]; activeId?: string; q: string; filter: Filter; limit: number }): JSX.Element {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(loadExpanded)
+  const bodies = useRef<Record<string, HTMLDivElement | null>>({})
+  const isOpen = (id: string) => expanded[id] ?? id === (activeId ?? accounts[0]?.id)
+  const toggle = (id: string) => {
+    const open = !isOpen(id)
+    const next = { ...expanded, [id]: open }
+    setExpanded(next)
+    try {
+      localStorage.setItem(EXPANDED_KEY, JSON.stringify(next))
+    } catch {
+      /* nur Komfort */
+    }
+    if (!open) return
+    // Aufgeklappten Block nach oben holen, auch wenn sein Kopf gerade unten klebt
+    requestAnimationFrame(() => {
+      const body = bodies.current[id]
+      const scroller = body?.parentElement
+      if (body && scroller) scroller.scrollTop = body.offsetTop - HEAD_HEIGHT
+    })
+  }
+  return (
+    <>
+      {accounts.map((a, i) => {
+        const open = isOpen(a.id)
+        return (
+          <Fragment key={a.id}>
+            <AccountHead account={a} open={open} first={i === 0} style={{ top: 0, bottom: (accounts.length - 1 - i) * HEAD_HEIGHT, zIndex: 2 + i }} onToggle={() => toggle(a.id)} />
+            <div ref={(el) => void (bodies.current[a.id] = el)}>
+              <AccountScope.Provider value={a.id}>
+                <AccountChats accountId={a.id} q={q} filter={filter} limit={limit} mode={open ? 'full' : 'unread'} />
+              </AccountScope.Provider>
+            </div>
+          </Fragment>
+        )
+      })}
+    </>
+  )
+}
+
+function AccountHead({ account, open, first, style, onToggle }: { account: AccountInfo; open: boolean; first: boolean; style: CSSProperties; onToggle: () => void }): JSX.Element {
+  const count = chatBadge(account)
+  const { name, sub } = accountTitle(account)
+  return (
+    <button className={`acct-head ${first ? 'first' : ''} ${account.parentId ? 'child' : ''}`} style={style} onClick={onToggle} aria-expanded={open} title={[name, sub].filter(Boolean).join(' · ')}>
+      {open ? <ChevronDown16Regular /> : <ChevronRight16Regular />}
+      {account.parentId ? <Avatar shape="square" size={20} name={name} color="colorful" /> : <PersonAvatar mri={account.mri} name={account.label} size={20} accountId={account.id} showPresence={false} />}
+      <span className="acct-name">{name}</span>
+      <span className="acct-sub">{sub}</span>
+      {account.status !== 'ready' ? <span className="acct-state">{statusText(account.status)}</span> : count > 0 && <span className="acct-count">{count > 99 ? '99+' : count}</span>}
+    </button>
+  )
+}
+
+const isUnreadRow = (r: Row) => (r.type === 'chat' ? r.chat.unread && !r.chat.muted && !r.chat.hidden : r.channel.unread)
+
+function AccountChats({ accountId, q, filter, limit, mode }: { accountId: string; q: string; filter: Filter; limit: number; mode: 'full' | 'unread' }): JSX.Element | null {
+  const snapshot = useStore((s) => s.snapshots[accountId])
+  const selection = useStore((s) => s.selection[accountId]) ?? NO_SELECTION
+  const active = useStore((s) => s.activeAccountId === accountId)
+  const multi = useStore((s) => s.accounts.length > 1)
+  const compact = useStore((s) => !s.settings?.chatPreviews)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [openTeams, setOpenTeams] = useState<Record<string, boolean>>({})
-  const [limit, setLimit] = useState(150)
 
   const channelIndex = useMemo(() => {
     const m = new Map<string, { team: Team; channel: Channel }>()
@@ -68,7 +218,6 @@ function ChatList(): JSX.Element {
     return m
   }, [snapshot?.teams])
 
-  const q = text.trim().toLowerCase()
   const matches = (r: Row): boolean => {
     if (r.type === 'channel') {
       if (filter === 'unread') return r.channel.unread
@@ -119,18 +268,20 @@ function ChatList(): JSX.Element {
 
   // Auswahl auf den ersten Eintrag setzen, wenn noch keiner gewählt ist
   useEffect(() => {
-    if (selection.chatId || selection.channelId || selection.newChat) return
+    if (!active || selection.chatId || selection.channelId || selection.newChat) return
     const first = sections.flatMap((s) => s.rows)[0]
     if (first?.type === 'chat') useStore.getState().select({ chatId: first.chat.id })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot?.accountId, sections.length])
+  }, [snapshot?.accountId, sections.length, active])
+
+  const isSelected = (r: Row) =>
+    active && !selection.newChat && (r.type === 'chat' ? r.chat.id === selection.chatId : r.channel.id === selection.channelId && !selection.chatId)
 
   const selectRow = (r: Row) => {
-    if (r.type === 'chat') useStore.getState().select({ chatId: r.chat.id, channelId: undefined, teamId: undefined, newChat: false })
-    else useStore.getState().select({ chatId: undefined, teamId: r.team.id, channelId: r.channel.id, newChat: false })
+    const sel: Selection = r.type === 'chat' ? { chatId: r.chat.id, channelId: undefined, teamId: undefined, newChat: false } : { chatId: undefined, teamId: r.team.id, channelId: r.channel.id, newChat: false }
+    useStore.getState().open(accountId, sel)
   }
 
-  const accountId = snapshot?.accountId ?? ''
   const favorites = snapshot?.folders?.find((f) => f.type === 'Favorites')
   const [drag, setDrag] = useState<{ id: string; from?: string } | null>(null)
   const [dropAt, setDropAt] = useState<{ folderId: string; index: number } | null>(null)
@@ -172,9 +323,9 @@ function ChatList(): JSX.Element {
     const inFav = !!favorites?.items.includes(id)
     const row =
       r.type === 'chat' ? (
-        <ChatRow chat={r.chat} compact={compact} selected={r.chat.id === selection.chatId && !selection.newChat} onSelect={() => selectRow(r)} />
+        <ChatRow chat={r.chat} compact={compact} selected={isSelected(r)} onSelect={() => selectRow(r)} />
       ) : (
-        <ChannelRow team={r.team} channel={r.channel} showTeam selected={r.channel.id === selection.channelId && !selection.chatId} onSelect={() => selectRow(r)} />
+        <ChannelRow team={r.team} channel={r.channel} showTeam selected={isSelected(r)} onSelect={() => selectRow(r)} />
       )
     const showLineBefore = dropAt && folder && dropAt.folderId === folder.id && dropAt.index === idx
     const showLineAfter = dropAt && folder && dropAt.folderId === folder.id && dropAt.index === idx + 1 && idx === folder.items.length - 1
@@ -244,7 +395,7 @@ function ChatList(): JSX.Element {
     return teams
       .sort((a, b) => a.displayName.localeCompare(b.displayName, 'de'))
       .map((t) => {
-        const open = openTeams[t.id] ?? (q.length > 0 || t.channels.some((c) => c.id === selection.channelId))
+        const open = openTeams[t.id] ?? (q.length > 0 || (active && t.channels.some((c) => c.id === selection.channelId)))
         const channels = t.channels.filter((c) => (filter === 'unread' ? c.unread : true) && (!q || c.displayName.toLowerCase().includes(q) || t.displayName.toLowerCase().includes(q)))
         return (
           <div key={t.id}>
@@ -257,76 +408,36 @@ function ChatList(): JSX.Element {
             </div>
             {open &&
               channels.map((c) => (
-                <ChannelRow key={c.id} team={t} channel={c} indent selected={c.id === selection.channelId && !selection.chatId} onSelect={() => selectRow({ type: 'channel', team: t, channel: c })} />
+                <ChannelRow key={c.id} team={t} channel={c} indent selected={active && c.id === selection.channelId && !selection.chatId} onSelect={() => selectRow({ type: 'channel', team: t, channel: c })} />
               ))}
           </div>
         )
       })
   }
 
+  if (!snapshot) {
+    if (mode === 'unread') return null
+    return <div style={{ padding: multi ? '6px 12px 10px' : 20, color: 'var(--fg-3)' }}>Chats werden geladen …</div>
+  }
+
+  // Zugeklappt: nur Ungelesenes und der offene Chat, neueste zuerst
+  if (mode === 'unread') {
+    const seen = new Set<string>()
+    const rows: Row[] = []
+    const add = (r: Row) => {
+      const id = rowId(r)
+      if (seen.has(id) || !(isUnreadRow(r) || isSelected(r)) || !matches(r)) return
+      seen.add(id)
+      rows.push(r)
+    }
+    for (const sec of sections) sec.rows.forEach(add)
+    if (filter !== 'meetings' && filter !== 'chats') for (const t of snapshot.teams) if (!t.isArchived) for (const c of t.channels) add({ type: 'channel', team: t, channel: c })
+    rows.sort((a, b) => lastOf(b) - lastOf(a))
+    return <>{rows.map((r) => renderRow(r, { key: 'unread' }))}</>
+  }
+
   return (
-    <div className="list-pane">
-      <div className="list-header">
-        <h1>Chat</h1>
-        <Menu>
-          <MenuTrigger disableButtonEnhancement>
-            <button className={`icon-btn ${filter !== 'all' ? 'active' : ''}`} title="Filtern">
-              <Filter20Regular />
-            </button>
-          </MenuTrigger>
-          <MenuPopover>
-            <MenuList>
-              <MenuItem onClick={() => setFilterOpen(true)}>Nach Name filtern</MenuItem>
-              <MenuItem onClick={() => setFilter('all')}>Alle</MenuItem>
-              <MenuItem onClick={() => setFilter('unread')}>Ungelesen</MenuItem>
-              <MenuItem onClick={() => setFilter('chats')}>Chats</MenuItem>
-              <MenuItem onClick={() => setFilter('meetings')}>Besprechungen</MenuItem>
-            </MenuList>
-          </MenuPopover>
-        </Menu>
-        <Tooltip content="Neuer Chat (⌘N)" relationship="label">
-          <button className="icon-btn" onClick={() => useStore.getState().select({ newChat: true, chatId: undefined, channelId: undefined }, 'chat')}>
-            <Compose20Regular />
-          </button>
-        </Tooltip>
-      </div>
-      {(filterOpen || filter !== 'all') && (
-        <div style={{ padding: '0 16px 8px', display: 'flex', gap: 6, alignItems: 'center' }}>
-          <Input
-            size="small"
-            autoFocus
-            placeholder="Nach Name filtern"
-            value={text}
-            onChange={(_e, d) => setText(d.value)}
-            style={{ flex: 1 }}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                setText('')
-                setFilterOpen(false)
-                setFilter('all')
-              }
-            }}
-          />
-          <button
-            className="icon-btn"
-            onClick={() => {
-              setText('')
-              setFilterOpen(false)
-              setFilter('all')
-            }}
-          >
-            <Dismiss16Regular />
-          </button>
-        </div>
-      )}
-      <div
-        className="list-scroll"
-        onScroll={(e) => {
-          const el = e.currentTarget
-          if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) setLimit((l) => l + 150)
-        }}
-      >
-        {!snapshot && <div style={{ padding: 20, color: 'var(--fg-3)' }}>Chats werden geladen …</div>}
+    <>
         {sections.map((sec) => {
           const rows = sec.rows.filter(matches)
           if (!sec.teams && rows.length === 0) return null
@@ -358,10 +469,11 @@ function ChatList(): JSX.Element {
             </div>
           )
         })}
-      </div>
-    </div>
+    </>
   )
 }
+
+const NO_SELECTION: Selection = {}
 
 function lastOf(r: Row): number {
   return r.type === 'chat' ? r.chat.lastMessage?.time ?? r.chat.lastActivity : r.channel.lastActivity ?? 0
@@ -372,7 +484,7 @@ function nameOf(r: Row): string {
 
 function ChatRow({ chat, selected, compact, onSelect }: { chat: ChatSummary; selected: boolean; compact: boolean; onSelect: () => void }): JSX.Element {
   const inCall = useStore((s) => !!s.callState && s.callState.title !== '' && (s.callState.conversationId === chat.id || (chat.kind === 'meeting' && s.callState.title === chat.title)))
-  const accountId = useStore((s) => s.activeAccountId ?? '')
+  const accountId = useScopedAccountId()
   const hover = useHoverPrefetch(() => !selected && prefetchChat(accountId, chat))
   const lm = chat.lastMessage
   let preview = lm?.text ?? ''
@@ -399,7 +511,7 @@ function ChatRow({ chat, selected, compact, onSelect }: { chat: ChatSummary; sel
 }
 
 function ChannelRow({ team, channel, selected, onSelect, showTeam, indent }: { team: Team; channel: Channel; selected: boolean; onSelect: () => void; showTeam?: boolean; indent?: boolean }): JSX.Element {
-  const accountId = useStore((s) => s.activeAccountId ?? '')
+  const accountId = useScopedAccountId()
   const hover = useHoverPrefetch(() => !selected && prefetchChannel(accountId, team.id, channel.id))
   return (
     <div className={`list-item compact ${selected ? 'selected' : ''} ${channel.unread ? 'unread' : ''}`} onClick={onSelect} title={`${team.displayName} › ${channel.displayName}`} {...hover}>

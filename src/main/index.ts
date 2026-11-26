@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, p
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { AccountService, type AccountRecord, type NotifyPayload } from './account'
+import { copyLoginCookies, engineSession } from './engine/engine'
 import { CallManager } from './calls'
 import { handleMediaProtocol, registerMediaScheme } from './media-protocol'
 import { imageAction } from './image-actions'
@@ -132,7 +133,7 @@ function showNotification(n: NotifyPayload): void {
   if (presence?.availability === 'DoNotDisturb') return
   const notif = createNotification({
     title: n.title,
-    subtitle: multi ? acct?.record.displayName || acct?.record.upn : undefined,
+    subtitle: multi ? [acct?.record.displayName || acct?.record.upn, acct?.record.parentId && acct.record.tenantName].filter(Boolean).join(' · ') : undefined,
     body: settings.showMessagePreview ? n.body : 'Neue Nachricht',
     silent: !settings.notificationSound
   })
@@ -236,11 +237,37 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     removeAccount: async (id) => {
       const a = accounts.get(id)
       if (!a) return
-      await a.engine.clearData().catch(() => undefined)
-      a.stop()
-      accounts.delete(id)
+      // Gastmandanten melden sich über das Konto an und gehen mit ihm
+      for (const acct of [a, ...[...accounts.values()].filter((c) => c.record.parentId === id)]) {
+        await acct.engine.clearData().catch(() => undefined)
+        acct.stop()
+        accounts.delete(acct.id)
+      }
       saveRecords()
       emitAccounts()
+    },
+    listTenants: (id) => get(id).listTenants(),
+    addTenant: async (id, tenantId, tenantName) => {
+      const parent = get(id)
+      if (parent.record.parentId) throw new Error('Mandanten gehören zum Hauptkonto')
+      const existing = [...accounts.values()].find((a) => a.record.parentId === id && a.record.tenantId === tenantId)
+      if (existing) return existing.id
+      const rec: AccountRecord = {
+        id: randomUUID().slice(0, 8),
+        parentId: id,
+        tenantId,
+        tenantName,
+        displayName: parent.record.displayName,
+        upn: parent.record.upn,
+        createdAt: Date.now()
+      }
+      const copied = await copyLoginCookies(parent.engine.ses, engineSession(rec.id))
+      log.info(`Gastmandant angelegt, ${copied} Anmelde-Cookies übernommen`)
+      analytics.track('tenant_added', { cookies: copied > 0 }, { active: true })
+      addAccountService(rec, true)
+      saveRecords()
+      emitAccounts()
+      return rec.id
     },
     showLogin: (id) => get(id).engine.showForLogin(),
     showEngine: (id) => get(id).engine.showWindow(),
