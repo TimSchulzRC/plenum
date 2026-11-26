@@ -305,7 +305,11 @@ export function MailView(): JSX.Element {
               <Spinner size="small" />
             </div>
           )}
-          {sources && !items.length && !errors.length && <div className="folder-note" style={{ padding: 24, textAlign: 'center' }}>Keine Mails</div>}
+          {sources && !items.length && !errors.length && (
+            <div className="folder-note" style={{ padding: 24, textAlign: 'center' }}>
+              {wanted.length ? 'Keine Mails' : 'Kein Konto verbunden'}
+            </div>
+          )}
           {items.map((m) => {
             const selected = !!open && open.accountId === m.accountId && open.id === m.id
             const who = showTo ? m.to.map(addressLabel).join(', ') || '(Keine Empfänger)' : addressLabel(m.from) || '(Unbekannt)'
