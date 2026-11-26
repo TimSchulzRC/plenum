@@ -241,9 +241,9 @@ function AccountChats({
 
   const matches = (r: Row): boolean => {
     if (r.type === 'channel') {
-      if (filter === 'unread') return r.channel.unread
       if (filter === 'meetings') return false
-      return !q || r.channel.displayName.toLowerCase().includes(q) || r.team.displayName.toLowerCase().includes(q)
+      if (q && !r.channel.displayName.toLowerCase().includes(q) && !r.team.displayName.toLowerCase().includes(q)) return false
+      return filter !== 'unread' || r.channel.unread
     }
     const c = r.chat
     if (q && !c.title.toLowerCase().includes(q)) return false
