@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { allDayOn, wallHours } from '../src/renderer/src/lib/calendar.ts'
+import { ACCOUNT_COLORS, accountColor, allDayOn, calendarAccountName, ipcErrorText, mergeCalendars, parseAttendees, wallHours } from '../src/renderer/src/lib/calendar.ts'
 
 process.env.TZ = 'Europe/Berlin'
 
@@ -34,4 +34,89 @@ test('Am Tag der Zeitumstellung steht 10:00 auf der 10-Uhr-Zeile', () => {
   assert.equal((ten - midnight) / 3600_000, 11)
   assert.equal(wallHours(ten), 10)
   assert.equal(wallHours(new Date(2026, 2, 29, 10, 30).getTime()), 10.5)
+})
+
+const H = 3600_000
+const t0 = Date.parse('2026-11-26T09:00:00Z')
+const ev = (id: string, extra: Partial<{ start: number; end: number; iCalUId: string; joinUrl: string; isCancelled: boolean }> = {}) => ({
+  id,
+  start: t0,
+  end: t0 + H,
+  ...extra
+})
+
+test('Derselbe Termin in zwei Konten erscheint einmal mit beiden Konten', () => {
+  const merged = mergeCalendars([
+    { accountId: 'a', events: [ev('a1', { iCalUId: 'UID-1' }), ev('a2', { start: t0 + 2 * H, end: t0 + 3 * H })] },
+    { accountId: 'b', events: [ev('b1', { iCalUId: 'uid-1' })] }
+  ])
+  assert.equal(merged.length, 2)
+  assert.deepEqual(merged[0].sources.map((s) => s.accountId), ['a', 'b'])
+  assert.equal(merged[0].event.id, 'a1')
+  assert.deepEqual(merged[1].sources.map((s) => s.accountId), ['a'])
+})
+
+test('Ohne iCal-UID zählt der Teilnahmelink, Abfrageparameter egal', () => {
+  const link = 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0'
+  const merged = mergeCalendars([
+    { accountId: 'a', events: [ev('a1', { joinUrl: `${link}?context=%7b%22Tid%22%3a%22x%22%7d` })] },
+    { accountId: 'b', events: [ev('b1', { iCalUId: 'other', joinUrl: `${link}?context=%7b%22Tid%22%3a%22y%22%7d` })] }
+  ])
+  assert.equal(merged.length, 1)
+  assert.deepEqual(merged[0].sources.map((s) => s.accountId), ['a', 'b'])
+})
+
+test('Gleicher Link, andere Zeit: Vorkommen einer Serie bleiben getrennt', () => {
+  const joinUrl = 'https://teams.microsoft.com/l/meetup-join/series'
+  const merged = mergeCalendars([
+    { accountId: 'a', events: [ev('a1', { joinUrl }), ev('a2', { joinUrl, start: t0 + 24 * H, end: t0 + 25 * H })] },
+    { accountId: 'b', events: [ev('b1', { joinUrl, start: t0 + 24 * H, end: t0 + 25 * H })] }
+  ])
+  assert.equal(merged.length, 2)
+  assert.deepEqual(merged[1].sources.map((s) => s.accountId), ['a', 'b'])
+})
+
+test('Termine im selben Konto werden nie zusammengelegt', () => {
+  const merged = mergeCalendars([{ accountId: 'a', events: [ev('a1', { iCalUId: 'x' }), ev('a2', { iCalUId: 'x' })] }])
+  assert.equal(merged.length, 2)
+})
+
+test('Ohne UID und Link bleiben gleich lange Termine getrennt', () => {
+  const merged = mergeCalendars([
+    { accountId: 'a', events: [ev('a1')] },
+    { accountId: 'b', events: [ev('b1')] }
+  ])
+  assert.equal(merged.length, 2)
+})
+
+test('Abgesagt nur, wenn alle Kalender absagen', () => {
+  const merged = mergeCalendars([
+    { accountId: 'a', events: [ev('a1', { iCalUId: 'x', isCancelled: true })] },
+    { accountId: 'b', events: [ev('b1', { iCalUId: 'x' })] }
+  ])
+  assert.equal(merged[0].event.isCancelled, undefined)
+  assert.equal(merged[0].sources.length, 2)
+})
+
+test('Kontofarben: erstes Konto behält die Markenfarbe, Reihenfolge bestimmt die Farbe', () => {
+  assert.equal(accountColor(['a', 'b'], 'a'), ACCOUNT_COLORS[0])
+  assert.equal(accountColor(['a', 'b'], 'b'), ACCOUNT_COLORS[1])
+  assert.equal(accountColor(['a'], 'unbekannt'), ACCOUNT_COLORS[0])
+})
+
+test('Teilnehmer: Komma, Semikolon, Leerzeichen und „Name <adresse>“', () => {
+  assert.deepEqual(parseAttendees('a@x.de, b@y.com;c@z.org  A@x.de'), { valid: ['a@x.de', 'b@y.com', 'c@z.org'], invalid: [] })
+  assert.deepEqual(parseAttendees('Max <max@firma.de>, kaputt'), { valid: ['max@firma.de'], invalid: ['kaputt'] })
+  assert.deepEqual(parseAttendees('  '), { valid: [], invalid: [] })
+})
+
+test('Kontoname im Kalender: Organisation vor Domain vor Personenname', () => {
+  assert.equal(calendarAccountName({ label: 'Alex', upn: 'alex@contoso.com', tenantName: 'Contoso' }), 'Contoso')
+  assert.equal(calendarAccountName({ label: 'Alex', upn: 'alex@fabrikam.de' }), 'fabrikam.de')
+  assert.equal(calendarAccountName({ label: 'Alex' }), 'Alex')
+})
+
+test('Fehlertext ohne Electron-Vorsatz', () => {
+  assert.equal(ipcErrorText(new Error("Error invoking remote method 'api': Error: Termin nicht angelegt (graph: graph 403)")), 'Termin nicht angelegt (graph: graph 403)')
+  assert.equal(ipcErrorText(new Error('schlicht')), 'schlicht')
 })

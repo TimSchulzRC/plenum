@@ -327,6 +327,7 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     addToFolder: (id, folderId, itemId, index) => get(id).folderActions([{ action: 'AddItem', folderId, itemId, itemIndex: index ?? 0 }]),
     removeFromFolder: (id, folderId, itemId) => get(id).folderActions([{ action: 'RemoveItem', folderId, itemId }]),
     getCalendar: (id, s, e) => get(id).getCalendar(s, e),
+    createEvent: (id, ev) => get(id).createEvent(ev),
     getActivity: (id) => get(id).getActivity(),
     markActivityRead: (id) => get(id).markActivityRead(),
     getCallHistory: (id) => get(id).getCallHistory(),

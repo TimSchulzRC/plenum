@@ -24,6 +24,7 @@ import type {
   ActivityItem,
   Availability,
   CalendarEvent,
+  NewCalendarEvent,
   CallLogEntry,
   Channel,
   ChannelThread,
@@ -1232,7 +1233,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
             isCancelled: !!(e.isCancelled ?? e.IsCancelled),
             showAs: e.showAs ?? e.ShowAs,
             myResponse: e.responseStatus?.response,
-            isPrivate: (e.sensitivity ?? '') === 'private'
+            isPrivate: (e.sensitivity ?? '') === 'private',
+            iCalUId: e.iCalUId ?? e.ICalUId ?? undefined
           }
         }
         return {
@@ -1250,11 +1252,19 @@ export class AccountService extends EventEmitter<AccountEvents> {
           showAs: e.showAs,
           myResponse: e.myResponseType ?? e.responseType,
           threadId: e.skypeTeamsData ? safeThreadId(e.skypeTeamsData) : undefined,
-          isPrivate: !!e.isPrivate
+          isPrivate: !!e.isPrivate,
+          iCalUId: e.iCalUID ?? e.iCalUId ?? e.icalUid ?? undefined
         }
       })
       .filter((e) => e.start && e.end)
       .sort((a, b) => a.start - b.start)
+  }
+
+  async createEvent(ev: NewCalendarEvent): Promise<void> {
+    if (!ev.subject.trim()) throw new Error('Titel fehlt')
+    if (!(ev.end > ev.start)) throw new Error('Das Ende muss nach dem Beginn liegen')
+    const { source } = await this.api.createEvent(ev)
+    log.info(`[calendar] Termin angelegt über ${source}`)
   }
 
   async getActivity(): Promise<ActivityItem[]> {

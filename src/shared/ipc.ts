@@ -5,6 +5,7 @@ import type {
   AppSettings,
   BridgeMessage,
   CalendarEvent,
+  NewCalendarEvent,
   CallAction,
   CallLogEntry,
   CallState,
@@ -67,6 +68,7 @@ export interface ApiMethods {
   addToFolder(accountId: string, folderId: string, itemId: string, index?: number): void
   removeFromFolder(accountId: string, folderId: string, itemId: string): void
   getCalendar(accountId: string, start: number, end: number): CalendarEvent[]
+  createEvent(accountId: string, event: NewCalendarEvent): void
   getActivity(accountId: string): ActivityItem[]
   markActivityRead(accountId: string): void
   getCallHistory(accountId: string): CallLogEntry[]

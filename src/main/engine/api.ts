@@ -3,6 +3,8 @@ import type { Engine } from './engine'
 import type { Family } from './tokens'
 import { log } from '../log'
 import { uploadAmsImage } from './ams'
+import { firstWriter, graphEventBody, outlookEventBody } from './events'
+import type { NewCalendarEvent } from '@shared/types'
 
 export class ApiError extends Error {
   constructor(
@@ -245,6 +247,27 @@ export class TeamsApi {
       }
     }
     throw new ApiError(0, `Kalender nicht abrufbar (${errors.join('; ') || 'kein Token'})`)
+  }
+
+  // Termin im Kalender dieses Kontos anlegen. Der nächste Weg kommt nur dran, wenn der vorige sicher
+  // nichts angelegt hat (siehe mayTryNextWriter), sonst stünde der Termin doppelt im Kalender.
+  async createEvent(ev: NewCalendarEvent): Promise<{ source: string; data: any }> {
+    const tries: [string, () => Promise<any>][] = []
+    // Die Graph- und Outlook-Tokens der Teams-Web-App dürfen Calendars.ReadWrite. Graph legt die
+    // Teams-Besprechung selbst an. Die Outlook-Felder dafür gibt es nur in der Beta-API.
+    const tokens = this.engine.tokens
+    if (tokens.has('graph') || tokens.findBearer('graph.microsoft.com')) {
+      tries.push(['graph', () => this.json('graph', 'https://graph.microsoft.com/v1.0/me/events', { method: 'POST', body: graphEventBody(ev) })])
+    }
+    if (tokens.has('outlook') || tokens.findBearer('outlook.office')) {
+      const version = ev.teamsMeeting ? 'beta' : 'v2.0'
+      tries.push(['outlook', () => this.json('outlook', `https://outlook.office.com/api/${version}/me/events`, { method: 'POST', body: outlookEventBody(ev) })])
+    }
+    try {
+      return await firstWriter(tries)
+    } catch (e) {
+      throw new ApiError((e as { status?: number }).status ?? 0, (e as Error).message)
+    }
   }
 }
 

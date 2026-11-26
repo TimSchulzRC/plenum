@@ -77,6 +77,10 @@ const MAPPERS: { [K in ApiName]?: Mapper<K> } = {
   addToFolder: () => ({ event: 'chat_section_changed', props: { action: 'add' } }),
   removeFromFolder: () => ({ event: 'chat_section_changed', props: { action: 'remove' } }),
   markActivityRead: () => ({ event: 'activity_marked_read' }),
+  createEvent: ([, ev]) => ({
+    event: 'calendar_event_created',
+    props: { all_day: ev.isAllDay, teams_meeting: ev.teamsMeeting, attendees: ev.attendees.length, has_location: !!ev.location, has_body: !!ev.body }
+  }),
 
   joinMeeting: () => ({ event: 'meeting_join_clicked' }),
   startCall: ([, target, video]) => ({

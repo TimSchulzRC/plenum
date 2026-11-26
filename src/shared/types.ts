@@ -180,6 +180,22 @@ export interface CalendarEvent {
   myResponse?: string
   threadId?: string
   isPrivate?: boolean
+  // Gleich für alle Eingeladenen, damit der gemeinsame Kalender doppelte Termine aus mehreren Konten erkennt
+  iCalUId?: string
+}
+
+// Neuer Termin im Kalender eines Kontos. Mit Teilnehmern verschickt das Konto Einladungen.
+export interface NewCalendarEvent {
+  subject: string
+  start: number
+  end: number
+  isAllDay: boolean
+  location?: string
+  // E-Mail-Adressen
+  attendees: string[]
+  teamsMeeting: boolean
+  // Klartext
+  body?: string
 }
 
 export type ActivityType = 'mention' | 'reply' | 'reaction' | 'call' | 'meeting' | 'membership' | 'like' | 'other'

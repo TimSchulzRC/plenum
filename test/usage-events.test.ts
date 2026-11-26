@@ -59,3 +59,13 @@ test('Testmitteilung meldet, ob sie ankam', () => {
   const spec = usageFor('testNotification', [], ctx)
   assert.deepEqual(spec?.resultProps?.({ ok: false, error: 'denied' }), { ok: false, error: 'denied' })
 })
+
+test('Neuer Termin: nur Merkmale, nie Titel, Ort, Text oder Adressen', () => {
+  const ev = { subject: 'Geheimes Projekt', start: 1, end: 2, isAllDay: false, location: 'Raum Elbe', attendees: ['kim@fabrikam.de', 'robin@fabrikam.de'], teamsMeeting: true, body: 'Agenda' }
+  const spec = usageFor('createEvent', ['acc-1', ev], ctx)
+  assert.deepEqual(spec, {
+    event: 'calendar_event_created',
+    props: { all_day: false, teams_meeting: true, attendees: 2, has_location: true, has_body: true }
+  })
+  assert.doesNotMatch(JSON.stringify(spec), /Geheim|Elbe|fabrikam|Agenda|acc-1/)
+})
