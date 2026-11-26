@@ -29,6 +29,8 @@ const NAMED: Record<string, string> = {
 
 const TOKEN = new RegExp(`#[0-9a-f]{3,8}\\b|rgba?\\([^)]*\\)|(?<![\\w.#-])(?:${Object.keys(NAMED).join('|')})(?![\\w-])`, 'gi')
 
+const SKIP = new RegExp(`url\\([^)]*\\)|"[^"]*"|'[^']*'|${TOKEN.source}`, 'gi')
+
 function parse(c: string): [number, number, number, number] | undefined {
   const s = c.trim().toLowerCase()
   let hex = NAMED[s] ?? (s.startsWith('#') ? s.slice(1) : undefined)
@@ -48,27 +50,48 @@ function parse(c: string): [number, number, number, number] | undefined {
   return [r, g, b, a].some(Number.isNaN) ? undefined : [r, g, b, a]
 }
 
+// Relative Luminanz (sRGB) und daraus die wahrgenommene Helligkeit L* (0 bis 100)
+const linear = (v: number) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
+const luminance = (r: number, g: number, b: number) => 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+const lstar = (y: number) => (y > 0.008856 ? 116 * Math.cbrt(y) - 16 : 903.3 * y)
+// L* von #292929 (Kartenhintergrund) und #dbdbdb (Text)
+const DARKEST = lstar(luminance(0x29 / 255, 0x29 / 255, 0x29 / 255))
+const LIGHTEST = lstar(luminance(0xdb / 255, 0xdb / 255, 0xdb / 255))
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs((h % 2) - 1))
+  const [r, g, b] = h < 1 ? [c, x, 0] : h < 2 ? [x, c, 0] : h < 3 ? [0, c, x] : h < 4 ? [0, x, c] : h < 5 ? [x, 0, c] : [c, 0, x]
+  return [r + l - c / 2, g + l - c / 2, b + l - c / 2]
+}
+
 export function darkColor(c: string): string | undefined {
   const rgba = parse(c)
   if (!rgba) return undefined
   const [r, g, b] = rgba.slice(0, 3).map((x) => Math.min(255, Math.max(0, x)) / 255)
   const max = Math.max(r, g, b)
   const min = Math.min(r, g, b)
-  const l = (max + min) / 2
   const d = max - min
-  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1))
+  const s = d === 0 ? 0 : d / (1 - Math.abs(max + min - 1))
   const h = d === 0 ? 0 : max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4
-  // HSL zurück mit umgekehrter Helligkeit
-  const l2 = 0.16 + 0.7 * (1 - l)
-  const c2 = (1 - Math.abs(2 * l2 - 1)) * s
-  const x = c2 * (1 - Math.abs((h % 2) - 1))
-  const [r1, g1, b1] = h < 1 ? [c2, x, 0] : h < 2 ? [x, c2, 0] : h < 3 ? [0, c2, x] : h < 4 ? [0, x, c2] : h < 5 ? [x, 0, c2] : [c2, 0, x]
-  const out = [r1, g1, b1].map((v) => Math.round((v + l2 - c2 / 2) * 255))
+  // Wahrgenommene Helligkeit umkehren, nicht die HSL-Helligkeit: Reines Blau ist für das Auge
+  // dunkel und muss hell werden, sonst ist ein blauer Link auf dunklem Grund kaum lesbar.
+  const target = DARKEST + (LIGHTEST - DARKEST) * (1 - lstar(luminance(r, g, b)) / 100)
+  let lo = 0
+  let hi = 1
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2
+    if (lstar(luminance(...hslToRgb(h, s, mid))) < target) lo = mid
+    else hi = mid
+  }
+  const out = hslToRgb(h, s, (lo + hi) / 2).map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255))
   const a = rgba[3]
   return a < 1 ? `rgba(${out.join(', ')}, ${a})` : '#' + out.map((v) => v.toString(16).padStart(2, '0')).join('')
 }
 
 // Nur Werte nach einem Doppelpunkt, damit Selektoren wie .red oder Klassennamen heil bleiben
 export function darkCss(css: string): string {
-  return css.replace(/:([^;{}]*)/g, (_, value: string) => ':' + value.replace(TOKEN, (t) => darkColor(t) ?? t))
+  // URLs und Zeichenketten bleiben, sonst würde aus url(white.png) eine kaputte Adresse
+  const value = (v: string) => v.replace(SKIP, (t) => (/^url\(/i.test(t) || t[0] === '"' || t[0] === "'" ? t : (darkColor(t) ?? t)))
+  return css.replace(/:((?:url\([^)]*\)|[^;{}])*)/gi, (_, v: string) => ':' + value(v))
 }
