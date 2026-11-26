@@ -684,9 +684,12 @@ function MailReader({
         </Button>
         <div style={{ flex: 1 }} />
         {doc.signatures > 0 && (
-          <Tooltip content={hideSig ? 'Signaturen zeigen' : 'Signaturen ausblenden'} relationship="label">
+          <Tooltip
+            content={`${doc.signatures === 1 ? '1 Signatur' : `${doc.signatures} Signaturen`} ${hideSig ? 'ausgeblendet. Klicken zeigt sie.' : 'sichtbar. Klicken blendet sie aus.'}`}
+            relationship="label"
+          >
             <ToggleButton size="small" appearance="subtle" icon={<TextCollapse20Regular />} checked={hideSig} onClick={toggleSignatures}>
-              {doc.signatures === 1 ? '1 Signatur' : `${doc.signatures} Signaturen`}
+              {doc.signatures}
             </ToggleButton>
           </Tooltip>
         )}
