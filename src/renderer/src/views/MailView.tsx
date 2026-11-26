@@ -23,7 +23,9 @@ import {
   Flag16Filled,
   MailInboxAll20Regular,
   ArrowSync20Regular,
-  ShieldError20Regular
+  ShieldError20Regular,
+  WeatherMoon20Regular,
+  WeatherSunny20Regular
 } from '@fluentui/react-icons'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AccountInfo, MailFolder, MailFolderKind, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
@@ -35,6 +37,7 @@ import { addressLabel, fileSize, mergeMail } from '../lib/mail'
 import { mailDocument } from '../lib/mail-html'
 import { setMailUnread } from '../lib/mail-unread'
 import { useStore } from '../store'
+import { useDarkMode } from '../theme'
 import { MailCompose, type ComposeState } from '../components/MailCompose'
 
 type Sel = { kind: 'all' } | { kind: 'folder'; accountId: string; folderId: string; name: string; folderKind?: MailFolderKind }
@@ -414,6 +417,10 @@ function MailReader({
   const [error, setError] = useState<string>()
   const [remote, setRemote] = useState(false)
   const [busy, setBusy] = useState(false)
+  // Im dunklen Theme dunkel, einzeln auf hell umschaltbar, falls eine Mail umgekehrt schlecht aussieht
+  const darkTheme = useDarkMode()
+  const [light, setLight] = useState(false)
+  const dark = darkTheme && !light
   const frame = useRef<HTMLIFrameElement>(null)
 
   useEffect(() => {
@@ -427,7 +434,7 @@ function MailReader({
     }
   }, [target.accountId, target.id])
 
-  const doc = useMemo(() => (m ? mailDocument(m, remote) : null), [m, remote])
+  const doc = useMemo(() => (m ? mailDocument(m, remote, dark) : null), [m, remote, dark])
 
   if (error && !m) {
     return (
@@ -472,6 +479,11 @@ function MailReader({
           Weiterleiten
         </Button>
         <div style={{ flex: 1 }} />
+        {darkTheme && (
+          <Tooltip content={light ? 'Dunkel anzeigen' : 'Hell anzeigen'} relationship="label">
+            <Button size="small" appearance="subtle" icon={light ? <WeatherMoon20Regular /> : <WeatherSunny20Regular />} onClick={() => setLight(!light)} />
+          </Tooltip>
+        )}
         <Tooltip content="Als ungelesen markieren" relationship="label">
           <Button size="small" appearance="subtle" icon={<MailUnread20Regular />} disabled={busy} onClick={() => void run(() => onUnread(m))} />
         </Tooltip>
@@ -521,7 +533,7 @@ function MailReader({
         )}
         {error && <div className="mail-error">{error}</div>}
       </div>
-      <iframe ref={frame} className="mail-body" title="Inhalt der Mail" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={doc.html} />
+      <iframe ref={frame} className={`mail-body ${dark ? 'dark' : ''}`} title="Inhalt der Mail" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={doc.html} />
     </div>
   )
 }
