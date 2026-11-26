@@ -432,3 +432,9 @@ test('Messung: Trennlinien, „Tel:“ allein und Fußzeilen ohne Gruß', () => 
   // Aufzählung nach Doppelpunkt ist keine Fußzeile
   assert.deepEqual(hidden(L('Hallo,', 'unsere neuen Daten:', 'Fabrikam AG · Hafenweg 3 · 20457 Hamburg', 'HRB 123456, Sitz der Gesellschaft: Hamburg, Registergericht Hamburg, USt-IdNr. DE123456789')), [])
 })
+
+test('Review Fußzeile: mitgeteilte Telefonnummer vor dem Disclaimer bleibt sichtbar', () => {
+  const disclaimer = 'This e-mail may contain confidential information. If you are not the intended recipient, please notify the sender.'
+  assert.deepEqual(hidden(L('You can reach the venue directly.', '+49 40 1234567', disclaimer)), [[disclaimer]])
+  assert.deepEqual(hidden(L('Hallo,', 'die Adresse lautet', 'Hafenweg 3, 20457 Hamburg', disclaimer)), [[disclaimer]])
+})

@@ -350,7 +350,10 @@ function inPart(lines: SigLine[], from: number, to: number, sender?: string): Si
   const footerLine = (l: SigLine) => boilerplate(l) || (specific(l) && !roleLine(l)) || link(l) || ruleLine(l) || bareLabel(l)
   let fs = to
   while (fs - 1 > floor && footerLine(lines[fs - 1])) fs--
-  while (fs < to && !(boilerplate(lines[fs]) || (specific(lines[fs]) && !roleLine(lines[fs])))) fs++
+  // Sie beginnt beim Hinweistext oder bei einer Firmen- oder Registerzeile. Eine Telefonnummer oder
+  // Anschrift direkt davor kann eine Angabe sein, die die Mail mitteilt, und bleibt sichtbar.
+  const footerTop = (l: SigLine) => boilerplate(l) || (specific(l) && !roleLine(l) && (COMPANY.test(l.text) || LEGAL.test(l.text)))
+  while (fs < to && !footerTop(lines[fs])) fs++
   if (fs > floor && fs < to && lines.slice(fs, to).some(strongBoilerplate) && !/:\s*$/.test(lines[fs - 1].text)) return { start: fs, end: to, reason: 'footer' }
   return undefined
 }
