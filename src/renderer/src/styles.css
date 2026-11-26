@@ -1568,21 +1568,32 @@ button {
   border-bottom-style: dashed;
   border-bottom-color: rgba(127, 127, 145, 0.1);
 }
+/* Farbbalken wie in Apple Kalender: abgerundet und vom Rand abgesetzt (--bar) */
 .cal-event {
+  --bar: var(--brand-fg);
   position: absolute;
   left: 2px;
   right: 4px;
-  /* Links gerade: Der Farbbalken soll nicht um die Ecke laufen */
-  border-radius: 0 6px 6px 0;
+  border-radius: 6px;
   background: var(--selected);
-  border-left: 3px solid var(--brand-fg);
-  padding: 4px 7px;
+  padding: 4px 7px 4px 12px;
   font-size: 12px;
   overflow: hidden;
   cursor: pointer;
   color: var(--fg);
   line-height: 15px;
   transition: background 0.1s, box-shadow 0.1s;
+}
+.cal-event::before,
+.allday .ev.acct::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  bottom: 3px;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--bar);
 }
 .cal-event:hover {
   background: var(--selected-strong);
@@ -1595,7 +1606,7 @@ button {
 .cal-event.free {
   background: transparent;
   border: 1px dashed var(--border-strong);
-  border-left: 3px solid var(--fg-4);
+  --bar: var(--fg-4);
 }
 .cal-event .ev-title {
   font-weight: 600;
@@ -1624,6 +1635,7 @@ button {
   background: var(--content);
 }
 .allday .ev {
+  position: relative;
   margin: 3px 4px;
   padding: 2px 8px;
   border-radius: 6px;
@@ -1685,8 +1697,8 @@ button {
   flex: 1;
 }
 .cal-event.acct {
+  --bar: var(--acct);
   background: color-mix(in srgb, var(--acct) 14%, transparent);
-  border-left-color: var(--acct);
 }
 .cal-event.acct:hover {
   background: color-mix(in srgb, var(--acct) 24%, transparent);
@@ -1698,9 +1710,9 @@ button {
   cursor: pointer;
 }
 .allday .ev.acct {
+  --bar: var(--acct);
+  padding-left: 12px;
   background: color-mix(in srgb, var(--acct) 16%, transparent);
-  border-left: 3px solid var(--acct);
-  border-radius: 0 6px 6px 0;
 }
 .acct-dots {
   float: right;
