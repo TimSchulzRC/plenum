@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ACCOUNT_COLORS, accountColor, allDayOn, findMeetingChat, ipcErrorText, localTime, mergeCalendars, parseAttendees, wallHours } from '../src/renderer/src/lib/calendar.ts'
+import { ACCOUNT_COLORS, accountColor, allDayOn, dragRange, findMeetingChat, ipcErrorText, joinSources, localTime, mergeCalendars, parseAttendees, planEvents, wallHours } from '../src/renderer/src/lib/calendar.ts'
 
 process.env.TZ = 'Europe/Berlin'
 
@@ -81,7 +81,7 @@ test('Termine im selben Konto werden nie zusammengelegt', () => {
   assert.equal(merged.length, 2)
 })
 
-test('Ohne UID und Link bleiben gleich lange Termine getrennt', () => {
+test('Ohne UID, Link und Titel bleiben gleich lange Termine getrennt', () => {
   const merged = mergeCalendars([
     { accountId: 'a', events: [ev('a1')] },
     { accountId: 'b', events: [ev('b1')] }
@@ -151,4 +151,94 @@ test('Ganztägig am Tag der Zeitumstellung endet am nächsten Kalendertag', () =
   assert.equal(new Date(end).getDate(), 26)
   assert.equal(new Date(end).getHours(), 0)
   assert.equal(new Date(localTime('2026-11-26', '14:30')).getHours(), 14)
+})
+
+test('Gezogener Zeitraum rastet auf Viertelstunden ein, auch nach oben gezogen', () => {
+  const day = new Date(2026, 10, 26)
+  const at = (h: number, m = 0) => new Date(2026, 10, 26, h, m).getTime()
+  assert.deepEqual(dragRange(day, 9.1, 10.6), { start: at(9), end: at(10, 45) })
+  assert.deepEqual(dragRange(day, 10.6, 9.1), { start: at(9), end: at(10, 45) })
+  // Innerhalb einer Viertelstunde: genau eine
+  assert.deepEqual(dragRange(day, 14.01, 14.2), { start: at(14), end: at(14, 15) })
+})
+
+test('Gezogener Zeitraum bleibt im Tag', () => {
+  const day = new Date(2026, 10, 26)
+  assert.deepEqual(dragRange(day, -1, 0.1), { start: new Date(2026, 10, 26).getTime(), end: new Date(2026, 10, 26, 0, 15).getTime() })
+  assert.equal(dragRange(day, 23.2, 30).end, new Date(2026, 10, 27).getTime())
+})
+
+test('Am Tag der Zeitumstellung passt der gezogene Zeitraum zur Zeile', () => {
+  // 25. Oktober 2026: um 3 Uhr zurück auf 2 Uhr
+  const r = dragRange(new Date(2026, 9, 25), 10, 11.4)
+  assert.equal(wallHours(r.start), 10)
+  assert.equal(wallHours(r.end), 11.5)
+})
+
+const draft = { subject: 'Abstimmung', attendees: ['kunde@firma.de'], teamsMeeting: true }
+const upn = (id: string) => ({ a: 'tim@a.de', b: 'tim@b.de' })[id]
+
+test('Ein Konto: Termin wie bisher', () => {
+  assert.deepEqual(planEvents(draft, ['a'], 'block', upn), [{ accountId: 'a', event: draft }])
+})
+
+test('Blocker: Organisator lädt ein, weitere Konten bekommen eine Kopie ohne Teilnehmer und Besprechung', () => {
+  const plan = planEvents(draft, ['b', 'a'], 'block', upn)
+  assert.deepEqual(plan, [
+    { accountId: 'b', event: draft },
+    { accountId: 'a', event: { ...draft, attendees: [], teamsMeeting: false } }
+  ])
+})
+
+test('Einladen: Organisator lädt die weiteren Konten als Teilnehmer ein, ohne doppelte Adresse', () => {
+  const plan = planEvents({ ...draft, attendees: ['kunde@firma.de', 'TIM@b.de'] }, ['a', 'b'], 'invite', upn)
+  assert.equal(plan.length, 1)
+  assert.equal(plan[0].accountId, 'a')
+  assert.deepEqual(plan[0].event.attendees, ['kunde@firma.de', 'TIM@b.de'])
+  assert.deepEqual(planEvents(draft, ['a', 'b'], 'invite', upn)[0].event.attendees, ['kunde@firma.de', 'tim@b.de'])
+})
+
+test('Einladen ohne bekannte Adresse scheitert, statt das Konto still auszulassen', () => {
+  assert.throws(() => planEvents(draft, ['a', 'c'], 'invite', upn))
+})
+
+test('Blocker in einem zweiten Konto erscheint mit dem Termin nur einmal', () => {
+  const start = Date.parse('2026-11-26T09:00:00Z')
+  const end = start + 3600_000
+  const real = { id: '1', subject: 'Abstimmung', start, end, iCalUId: 'uid-1', joinUrl: 'https://teams.microsoft.com/l/meetup-join/x' }
+  const copy = { id: '2', subject: 'Abstimmung ', start, end, iCalUId: 'uid-2' }
+  const merged = mergeCalendars([
+    { accountId: 'a', events: [real] },
+    { accountId: 'b', events: [copy] }
+  ])
+  assert.equal(merged.length, 1)
+  assert.deepEqual(merged[0].sources.map((s) => s.accountId), ['a', 'b'])
+  assert.equal(merged[0].event, real)
+})
+
+test('Gleicher Titel und Zeit, aber zwei Besprechungslinks: zwei Termine', () => {
+  const start = Date.parse('2026-11-26T09:00:00Z')
+  const end = start + 1800_000
+  const merged = mergeCalendars([
+    { accountId: 'a', events: [{ id: '1', subject: 'Daily', start, end, joinUrl: 'https://teams.microsoft.com/l/meetup-join/a' }] },
+    { accountId: 'b', events: [{ id: '2', subject: 'Daily', start, end, joinUrl: 'https://teams.microsoft.com/l/meetup-join/b' }] }
+  ])
+  assert.equal(merged.length, 2)
+})
+
+test('Gleicher Titel und Zeit im selben Konto bleiben zwei Termine', () => {
+  const start = Date.parse('2026-11-26T09:00:00Z')
+  const merged = mergeCalendars([{ accountId: 'a', events: [{ id: '1', subject: 'Fokus', start, end: start + 1 }, { id: '2', subject: 'Fokus', start, end: start + 1 }] }])
+  assert.equal(merged.length, 2)
+})
+
+test('Teilnehmen nur mit eingeladenen Konten, nicht mit dem Konto, das nur einen Blocker hat', () => {
+  const link = 'https://teams.microsoft.com/l/meetup-join/abc'
+  const organizer = { accountId: 'a', event: { iCalUId: 'X', joinUrl: link } }
+  const blocker = { accountId: 'b', event: { iCalUId: 'Y' } }
+  // Dieselbe Einladung, aber ohne Link geliefert
+  const invited = { accountId: 'c', event: { iCalUId: 'x' } }
+  assert.deepEqual(joinSources([blocker, organizer, invited]).map((s) => s.accountId), ['a', 'c'])
+  // Ohne Link: alle bleiben
+  assert.deepEqual(joinSources([blocker, invited]).map((s) => s.accountId), ['b', 'c'])
 })
