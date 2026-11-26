@@ -9,6 +9,8 @@ export interface AccountInfo {
   upn?: string
   tenantId?: string
   tenantName?: string
+  // Gastmandant: Konto, über das die Anmeldung läuft
+  parentId?: string
   mri?: string
   status: AccountStatus
   statusDetail?: string
@@ -18,6 +20,17 @@ export interface AccountInfo {
   teamsUnread: number
   activityUnread: number
   presence?: Presence
+}
+
+export interface TenantInfo {
+  tenantId: string
+  tenantName?: string
+  // Gastzugang (sonst Mitglied, also meist der Heimatmandant)
+  guest: boolean
+  // Die Web-App des Kontos läuft gerade in diesem Mandanten
+  current: boolean
+  // In Teams ausgeblendet
+  hidden: boolean
 }
 
 export type Availability =

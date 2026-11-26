@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { isAmsView, isChatMessagesPage, isTeamsUrl, mayReceiveTokens } from '../src/main/engine/hosts.ts'
+import { isAmsView, isChatMessagesPage, isTeamsUrl, loginCookieToSet, mayReceiveTokens, teamsStartUrl } from '../src/main/engine/hosts.ts'
 import { classify } from '../src/main/engine/tokens.ts'
 
 test('Bild-URLs fremder Hosts bekommen keine Tokens, auch wenn der Pfad nach Teams-API aussieht', () => {
@@ -51,4 +51,28 @@ test('MCP: Bilder nur als Ansicht eines AMS-Objekts auf Microsoft-Hosts', () => 
   assert.equal(isAmsView('https://eu-api.asm.skype.com/v1/objects/0-weu-d1-abc/content/imgpsh'), false)
   assert.equal(isAmsView('https://x.ams.evil.example/v1/objects/a/views/imgo'), false)
   assert.equal(isAmsView('https://graph.microsoft.com/v1.0/me/messages'), false)
+})
+
+test('nur Anmelde-Cookies von Entra ID wandern in die Sitzung eines Gastmandanten', () => {
+  assert.equal(loginCookieToSet({ name: 'x', value: '1', domain: 'teams.microsoft.com', path: '/' }), null)
+  assert.equal(loginCookieToSet({ name: 'x', value: '1', domain: '.evil-login.microsoftonline.com.example' }), null)
+  assert.deepEqual(loginCookieToSet({ name: 'ESTSAUTHPERSISTENT', value: 'v', domain: '.login.microsoftonline.com', path: '/', secure: true, httpOnly: true, expirationDate: 99, sameSite: 'no_restriction' }), {
+    url: 'https://login.microsoftonline.com/',
+    name: 'ESTSAUTHPERSISTENT',
+    value: 'v',
+    domain: '.login.microsoftonline.com',
+    path: '/',
+    secure: true,
+    httpOnly: true,
+    expirationDate: 99,
+    sameSite: 'no_restriction'
+  })
+  // Host-Cookie ohne Punkt bleibt Host-Cookie
+  assert.equal(loginCookieToSet({ name: 'buid', value: 'v', domain: 'login.microsoftonline.com', path: '/' })?.domain, undefined)
+})
+
+test('Gastmandant startet die Web-App mit tenantId', () => {
+  assert.equal(teamsStartUrl('https://teams.microsoft.com/v2/'), 'https://teams.microsoft.com/v2/')
+  assert.equal(teamsStartUrl('https://teams.microsoft.com/v2/', 'a1b2-c3'), 'https://teams.microsoft.com/v2/?tenantId=a1b2-c3')
+  assert.equal(teamsStartUrl('https://teams.microsoft.com/v2/', 'a1b2-c3', 'alex@contoso.com'), 'https://teams.microsoft.com/v2/?tenantId=a1b2-c3&login_hint=alex%40contoso.com')
 })

@@ -2,7 +2,7 @@ import { BrowserWindow, session, shell, type Session, type WebContents } from 'e
 import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
 import { TokenStore, type Family } from './tokens'
-import { mayReceiveTokens } from './hosts'
+import { loginCookieToSet, mayReceiveTokens, teamsStartUrl } from './hosts'
 import type { AccountStatus, BridgeMessage, CallState, IncomingCall, MediaStreamInfo } from '@shared/types'
 import { log } from '../log'
 import { analytics } from '../analytics'
@@ -74,15 +74,20 @@ export class Engine extends EventEmitter<EngineEvents> {
   constructor(
     readonly accountId: string,
     readonly preloadPath: string,
-    private readonly opts: { autoShowLogin: boolean; title: string }
+    private readonly opts: { autoShowLogin: boolean; title: string; tenantId?: string; loginHint?: string }
   ) {
     super()
-    this.ses = session.fromPartition(`persist:acct-${accountId}`)
+    this.ses = engineSession(accountId)
     this.setupSession()
     this.tokens.onChange = (f) => {
       this.emit('endpoint-changed', f)
       this.checkReady()
     }
+  }
+
+  // Gastmandanten öffnen die Web-App direkt im Mandanten
+  get startUrl(): string {
+    return teamsStartUrl(TEAMS_START_URL, this.opts.tenantId, this.opts.loginHint)
   }
 
   get webContents(): WebContents | undefined {
@@ -242,7 +247,7 @@ export class Engine extends EventEmitter<EngineEvents> {
       if (msg.startsWith('[tm]')) log.info(`[engine ${this.accountId}] ${msg}`)
     })
     this.attachDebugger(wc)
-    void win.loadURL(TEAMS_START_URL)
+    void win.loadURL(this.startUrl)
   }
 
   private attachDebugger(wc: WebContents): void {
@@ -374,7 +379,7 @@ export class Engine extends EventEmitter<EngineEvents> {
     if (this.quitting) return
     if (!this.win || this.win.isDestroyed()) return this.start()
     this.setStatus('starting')
-    void this.win.loadURL(TEAMS_START_URL)
+    void this.win.loadURL(this.startUrl)
   }
 
   navigate(url: string): void {
@@ -463,6 +468,28 @@ export class Engine extends EventEmitter<EngineEvents> {
     await this.ses.clearStorageData()
     await this.ses.clearCache()
   }
+}
+
+export function engineSession(accountId: string): Session {
+  return session.fromPartition(`persist:acct-${accountId}`)
+}
+
+// Anmelde-Cookies eines Kontos in die Sitzung eines Gastmandanten kopieren. Entra ID meldet
+// den Mandanten dann ohne neue Eingabe an. Gibt die Zahl der kopierten Cookies zurück.
+export async function copyLoginCookies(from: Session, to: Session): Promise<number> {
+  let n = 0
+  for (const c of await from.cookies.get({})) {
+    const details = loginCookieToSet(c)
+    if (!details) continue
+    try {
+      await to.cookies.set(details)
+      n++
+    } catch (e) {
+      log.warn(`Cookie ${c.name} nicht übernommen`, (e as Error).message)
+    }
+  }
+  await to.cookies.flushStore().catch(() => undefined)
+  return n
 }
 
 // https://teams.microsoft.com/l/meetup-join/... -> https://teams.microsoft.com/_#/l/meetup-join/...

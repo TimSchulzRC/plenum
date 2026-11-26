@@ -1443,5 +1443,6 @@ export function engineMainWorld(): void {
     ownTimeout(() => void startCall(linkAction[1] === 'startVideoCall', seq), 1500)
   }
 
-  log('engine hooks installed', location.href)
+  // Ohne Query und Hash: Dort stehen Anmeldecodes (authv2#code=…) und die Mailadresse (login_hint)
+  log('engine hooks installed', location.origin + location.pathname)
 }

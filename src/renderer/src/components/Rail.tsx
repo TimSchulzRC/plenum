@@ -33,10 +33,12 @@ const ITEMS: Item[] = [
 
 export function Rail(): JSX.Element {
   const view = useStore((s) => s.view)
+  const accounts = useStore((s) => s.accounts)
   const { account } = useActive()
   const badges: Partial<Record<View, number>> = {
     activity: account?.activityUnread ?? 0,
-    chat: account ? chatBadge(account) : 0
+    // Die Chatliste zeigt alle Konten, also zählt der Chat-Knopf auch alle
+    chat: accounts.reduce((n, a) => n + chatBadge(a), 0)
   }
   return (
     <nav className="rail">
