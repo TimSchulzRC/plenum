@@ -9,9 +9,8 @@ import {
   LockClosed12Regular,
   Video16Filled
 } from '@fluentui/react-icons'
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { accountTitle, orderAccounts } from '@shared/accounts'
-import { chatBadge } from '@shared/badge'
 import type { AccountInfo, Channel, ChatFolder, ChatSummary, Person, Team } from '@shared/types'
 import { api } from '../api'
 import { ChatAvatar, PersonAvatar, TeamAvatar } from '../components/Avatars'
@@ -173,22 +172,26 @@ function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: Acc
       {accounts.map((a, i) => {
         const open = isOpen(a.id)
         return (
-          <Fragment key={a.id}>
-            <AccountHead account={a} open={open} style={{ top: i * HEAD_HEIGHT, bottom: (accounts.length - 1 - i) * HEAD_HEIGHT, zIndex: 2 + i }} onToggle={() => toggle(a.id, i)} />
-            <div ref={(el) => void (bodies.current[a.id] = el)}>
-              <AccountScope.Provider value={a.id}>
-                <AccountChats accountId={a.id} q={q} filter={filter} limit={limit} mode={open ? 'full' : 'unread'} />
-              </AccountScope.Provider>
-            </div>
-          </Fragment>
+          <AccountScope.Provider key={a.id} value={a.id}>
+            <AccountChats
+              accountId={a.id}
+              q={q}
+              filter={filter}
+              limit={limit}
+              mode={open ? 'full' : 'unread'}
+              bodyRef={(el) => void (bodies.current[a.id] = el)}
+              head={(unread) => (
+                <AccountHead account={a} unread={unread} open={open} style={{ top: i * HEAD_HEIGHT, bottom: (accounts.length - 1 - i) * HEAD_HEIGHT, zIndex: 2 + i }} onToggle={() => toggle(a.id, i)} />
+              )}
+            />
+          </AccountScope.Provider>
         )
       })}
     </>
   )
 }
 
-function AccountHead({ account, open, style, onToggle }: { account: AccountInfo; open: boolean; style: CSSProperties; onToggle: () => void }): JSX.Element {
-  const count = chatBadge(account)
+function AccountHead({ account, unread: count, open, style, onToggle }: { account: AccountInfo; unread: number; open: boolean; style: CSSProperties; onToggle: () => void }): JSX.Element {
   const { name, sub } = accountTitle(account)
   return (
     <button className="acct-head" style={style} onClick={onToggle} aria-expanded={open} title={[name, sub].filter(Boolean).join(' · ')}>
@@ -204,7 +207,24 @@ function AccountHead({ account, open, style, onToggle }: { account: AccountInfo;
 
 const isUnreadRow = (r: Row) => (r.type === 'chat' ? r.chat.unread && !r.chat.muted && !r.chat.hidden : r.channel.unread)
 
-function AccountChats({ accountId, q, filter, limit, mode }: { accountId: string; q: string; filter: Filter; limit: number; mode: 'full' | 'unread' }): JSX.Element | null {
+function AccountChats({
+  accountId,
+  q,
+  filter,
+  limit,
+  mode,
+  head,
+  bodyRef
+}: {
+  accountId: string
+  q: string
+  filter: Filter
+  limit: number
+  mode: 'full' | 'unread'
+  // Bei mehreren Konten: Kopf des Blocks, bekommt die Zahl der ungelesenen Einträge
+  head?: (unread: number) => JSX.Element
+  bodyRef?: (el: HTMLDivElement | null) => void
+}): JSX.Element | null {
   const snapshot = useStore((s) => s.snapshots[accountId])
   const selection = useStore((s) => s.selection[accountId]) ?? NO_SELECTION
   const active = useStore((s) => s.activeAccountId === accountId)
@@ -418,38 +438,45 @@ function AccountChats({ accountId, q, filter, limit, mode }: { accountId: string
       })
   }
 
-  if (!snapshot) {
-    if (mode === 'unread') return null
-    return <div style={{ padding: multi ? '6px 12px 10px' : 20, color: 'var(--fg-3)' }}>Chats werden geladen …</div>
-  }
-
-  // Zugeklappt: nur Ungelesenes und der offene Chat, neueste zuerst
-  if (mode === 'unread') {
+  // Alle Einträge eines Blocks, die ein Kriterium erfüllen, ohne doppelte, neueste zuerst.
+  // Kanäle kommen aus allen Teams, nicht nur aus Ordnern.
+  const collect = (keep: (r: Row) => boolean, withChannels: boolean): Row[] => {
     const seen = new Set<string>()
     const rows: Row[] = []
     const add = (r: Row) => {
       const id = rowId(r)
-      if (seen.has(id) || !(isSelected(r) || (isUnreadRow(r) && matches(r)))) return
+      if (seen.has(id) || !keep(r)) return
       seen.add(id)
       rows.push(r)
     }
     for (const sec of sections) sec.rows.forEach(add)
-    if (filter !== 'meetings' && filter !== 'chats') for (const t of snapshot.teams) if (!t.isArchived) for (const c of t.channels) add({ type: 'channel', team: t, channel: c })
-    rows.sort((a, b) => lastOf(b) - lastOf(a))
-    if (rows.length === 0) return null
-    return (
-      <>
-        <div className="acct-note">{rows.some(isUnreadRow) ? 'Ungelesen' : 'Geöffnet'}</div>
-        {rows.map((r) => renderRow(r, { key: 'unread' }))}
-      </>
-    )
+    for (const t of snapshot?.teams ?? []) if (!t.isArchived) for (const c of t.channels) if (withChannels || channelIsSelected(c)) add({ type: 'channel', team: t, channel: c })
+    return rows.sort((a, b) => lastOf(b) - lastOf(a))
   }
+  const channelIsSelected = (c: Channel) => active && !selection.newChat && !selection.chatId && c.id === selection.channelId
 
-  return (
-    <>
+  let body: JSX.Element | null
+  if (!snapshot) {
+    body = mode === 'unread' ? null : <div style={{ padding: multi ? '6px 12px 10px' : 20, color: 'var(--fg-3)' }}>Chats werden geladen …</div>
+  } else if (mode === 'unread') {
+    // Zugeklappt: nur Ungelesenes und der offene Chat. Die Filter Chats/Besprechungen blenden Kanäle aus,
+    // außer dem offenen.
+    const rows = collect((r) => isSelected(r) || (isUnreadRow(r) && matches(r)), filter !== 'meetings' && filter !== 'chats')
+    body =
+      rows.length === 0 ? null : (
+        <>
+          <div className="acct-note">{rows.some(isUnreadRow) ? 'Ungelesen' : 'Geöffnet'}</div>
+          {rows.map((r) => renderRow(r, { key: 'unread' }))}
+        </>
+      )
+  } else {
+    body = (
+      <>
         {sections.map((sec) => {
           const rows = sec.rows.filter(matches)
           if (!sec.teams && rows.length === 0) return null
+          // Mandanten ohne Teams (häufig bei Gastzugängen) brauchen keinen leeren Abschnitt
+          if (sec.teams && !snapshot.teams.some((t) => !t.isArchived)) return null
           const isCollapsed = collapsed[sec.key]
           return (
             <div key={sec.key}>
@@ -478,6 +505,17 @@ function AccountChats({ accountId, q, filter, limit, mode }: { accountId: string
             </div>
           )
         })}
+      </>
+    )
+  }
+
+  if (!head) return body
+  // Zahl im Kopf aus denselben Zeilen, die der zugeklappte Block zeigt
+  const unread = snapshot ? collect(isUnreadRow, true).length : 0
+  return (
+    <>
+      {head(unread)}
+      <div ref={bodyRef}>{body}</div>
     </>
   )
 }

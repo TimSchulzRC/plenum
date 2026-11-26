@@ -385,7 +385,11 @@ function Tenants({ account }: { account: AccountInfo }): JSX.Element | null {
     let alive = true
     void api
       .listTenants(account.id)
-      .then((t) => alive && setTenants(t))
+      .then((t) => {
+        if (!alive) return
+        setTenants(t)
+        setError(undefined)
+      })
       .catch((e: Error) => alive && setError(e.message))
     return () => {
       alive = false

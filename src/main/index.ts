@@ -262,6 +262,8 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
         createdAt: Date.now()
       }
       const copied = await copyLoginCookies(parent.engine.ses, engineSession(rec.id))
+      // Konto während des Kopierens entfernt: keinen verwaisten Mandanten anlegen
+      if (accounts.get(id) !== parent) throw new Error('Konto nicht gefunden')
       log.info(`Gastmandant angelegt, ${copied} Anmelde-Cookies übernommen`)
       analytics.track('tenant_added', { cookies: copied > 0 }, { active: true })
       addAccountService(rec, true)
