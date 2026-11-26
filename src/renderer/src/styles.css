@@ -2067,6 +2067,9 @@ button {
   background: #fff;
   box-shadow: var(--shadow-sm);
 }
+.mail-body.dark {
+  background: #292929;
+}
 .compose-title {
   font-size: 13px;
   font-weight: 600;
