@@ -64,7 +64,9 @@ function collectLines(root: Element): DomLine[] {
   let markerSeq = 0
   let boundary = false
   const flush = () => {
-    const t = text.replace(/\s+/g, ' ').trim()
+    // Unsichtbare Zeichen (Zero-Width-Space, weiches Trennzeichen) zählen nicht als Text: Eine Zeile
+    // nur daraus ist leer und unterbricht keinen Signaturblock
+    const t = text.replace(/[\u200b-\u200d\ufeff\u00ad]/g, '').replace(/\s+/g, ' ').trim()
     if (first && (t || image)) {
       // „-- “ mit Leerzeichen am Ende ist der Signaturtrenner, das Leerzeichen fällt beim Trimmen weg
       const sep = /^[ \t\r\n]*--[ \u00a0]$/.test(text.replace(/[\r\n]+$/, '')) || undefined
