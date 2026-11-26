@@ -13,6 +13,7 @@ import type {
   MailMessage,
   MailPage,
   MailReplyKind,
+  MailSignaturePart,
   CallAction,
   CallLogEntry,
   CallState,
@@ -92,6 +93,9 @@ export interface ApiMethods {
   setMailRead(accountId: string, messageId: string, isRead: boolean): void
   deleteMail(accountId: string, messageId: string): void
   sendMail(accountId: string, draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): void
+  // Signaturen mit Apple Intelligence: erste Signaturzeile je Teil, null wenn das Modell fehlt oder aus ist
+  findSignaturesWithModel(parts: MailSignaturePart[]): (number | null)[] | null
+  signatureModelAvailable(): boolean
   getActivity(accountId: string): ActivityItem[]
   markActivityRead(accountId: string): void
   getCallHistory(accountId: string): CallLogEntry[]

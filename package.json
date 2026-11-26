@@ -20,15 +20,15 @@
   "private": true,
   "packageManager": "pnpm@12.18.0",
   "scripts": {
-    "dev": "node scripts/dev-app.mjs && electron-vite dev",
+    "dev": "node scripts/dev-app.mjs && node scripts/native.mjs && electron-vite dev",
     "build": "electron-vite build",
     "start": "node scripts/dev-app.mjs && electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "node --test \"test/**/*.test.ts\"",
     "bench:call": "node scripts/call-bench/run.mjs",
-    "dist": "electron-vite build && electron-builder --mac --dir",
-    "dist:dmg": "electron-vite build && electron-builder --mac dmg",
-    "dist:release": "electron-vite build && electron-builder --mac dmg zip --arm64 --x64 --publish never",
+    "dist": "electron-vite build && node scripts/native.mjs && electron-builder --mac --dir",
+    "dist:dmg": "electron-vite build && node scripts/native.mjs && electron-builder --mac dmg",
+    "dist:release": "electron-vite build && node scripts/native.mjs && electron-builder --mac dmg zip --arm64 --x64 --publish never",
     "icons": "node scripts/icons.mjs",
     "teams-emoji": "node scripts/teams-emoji.mjs"
   },
@@ -66,6 +66,15 @@
       "package.json"
     ],
     "asar": true,
+    "extraResources": [
+      {
+        "from": "out/native",
+        "to": "native",
+        "filter": [
+          "mail-signatures"
+        ]
+      }
+    ],
     "mac": {
       "category": "public.app-category.business",
       "icon": "build/icon.icns",

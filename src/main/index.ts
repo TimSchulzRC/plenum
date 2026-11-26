@@ -8,6 +8,7 @@ import { CallManager } from './calls'
 import { handleMediaProtocol, registerMediaScheme } from './media-protocol'
 import { imageAction } from './image-actions'
 import { chooseFolder, deliverAttachment, downloadsDir, saveAttachmentsTo, showSavedFile, type AttachmentFile } from './mail-files'
+import { SignatureModel } from './signature-model'
 import { store } from './store'
 import { createMainWindow, uiWindows } from './windows'
 import { currentBundlePath, renameBundleAfterQuit, Updater } from './updater'
@@ -392,6 +393,8 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     setMailRead: (id, mid, isRead) => get(id).setMailRead(mid, isRead),
     deleteMail: (id, mid) => get(id).deleteMail(mid),
     sendMail: (id, draft, reply) => get(id).sendMail(draft, reply),
+    findSignaturesWithModel: (parts) => (settings.mailSignatureModel === false ? null : signatureModel.find(parts)),
+    signatureModelAvailable: () => signatureModel.available(),
     getActivity: (id) => get(id).getActivity(),
     markActivityRead: (id) => get(id).markActivityRead(),
     getCallHistory: (id) => get(id).getCallHistory(),
@@ -620,6 +623,12 @@ function buildMenu(): void {
 app.on('second-instance', () => showMain())
 app.on('activate', () => showMain())
 app.on('browser-window-focus', (_e, win) => trackFocus(win, isUiContents))
+// Signaturen mit Apple Intelligence (native/mail-signatures.swift), gebaut von scripts/native.mjs
+const signatureModel = new SignatureModel(
+  app.isPackaged ? join(process.resourcesPath, 'native', 'mail-signatures') : join(app.getAppPath(), 'out', 'native', 'mail-signatures'),
+  { log }
+)
+
 // Bei SIGTERM sauber beenden, damit Cookies und Speicher geschrieben werden
 process.on('SIGTERM', () => app.quit())
 process.on('SIGINT', () => app.quit())
@@ -631,6 +640,7 @@ app.on('before-quit', () => {
   for (const a of accounts.values()) void a.engine.ses.cookies.flushStore().catch(() => undefined)
   for (const a of accounts.values()) a.stop()
   void mcp?.stop()
+  signatureModel.stop()
 })
 // Wartende Nutzungsdaten noch senden, höchstens zwei Sekunden lang. Ohne PostHog-Client
 // (kein Schlüssel) beendet sich die App wie bisher in einem Durchgang.
