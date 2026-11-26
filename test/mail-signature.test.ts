@@ -335,3 +335,15 @@ test('Review Runde 5: Satz mit „privacy“ ist kein Fußzeilentext, fremder Ko
   const quotedOther = L('Danke!', 'Von: Kim Fabrik <kim@fabrikam.de>', 'Gesendet: Montag', 'Betreff: Kontakt', 'Hier der Ansprechpartner für heute Nacht.', 'Robin Nord', 'Tel: +49 30 1234567')
   assert.deepEqual(hidden(quotedOther, 'Alex Beispiel'), [])
 })
+
+test('Review Runde 6: „sent in error“ ist Inhalt, gleicher Vorname reicht nicht', () => {
+  const billing = 'The invoice was sent in error and we need a corrected copy by Friday.'
+  assert.deepEqual(hidden(L('Draft attached.', { text: 'Alex Doe', marker: 1 }, { text: 'Tel. +49 170 1234567', marker: 1 }, billing)), [['Alex Doe', 'Tel. +49 170 1234567']])
+  assert.deepEqual(hidden(L('Draft attached.', { text: '--', sep: true }, 'Alex Doe', billing)), [['--', 'Alex Doe']])
+  // Der übliche Hinweis bleibt Fußzeilentext
+  const notice = L('Hallo,', 'anbei.', { text: 'Alex', marker: 1 }, { text: 'Tel. +49 123 456789', marker: 1 }, 'If you have received this message in error, please notify the sender immediately and delete it.')
+  assert.equal(findSignatures(notice)[0].end, notice.length)
+  const contact = L('I found the on-call contact for tonight.', 'Alex Doe', 'Tel. +49 170 1234567')
+  assert.deepEqual(hidden(contact, 'Alex Kim alex.kim'), [])
+  assert.deepEqual(hidden(contact, 'Doe, Alex'), [['Alex Doe', 'Tel. +49 170 1234567']])
+})
