@@ -384,3 +384,51 @@ test('Kopfzeilen zitierter Nachrichten: Bereich und Kurzform', () => {
   // Ohne Zitat keine Kopfzeilen, „Von:“ im Fließtext zählt nicht
   assert.deepEqual(findHeaders(L('Hallo', 'Von: wem kommt das?', 'Grüße')), [])
 })
+
+test('Review Kopfzeilen: Inhalt nach dem Kopf, Weiterleitung, zwei Köpfe, nur Adresse', () => {
+  // S1: „An: …“ nach dem Kopf ist Inhalt, auch wenn der Kopf selbst kein „An:“ hatte
+  assert.equal(findHeaders(L('Ok', 'Von: Kim Fabrik', 'Gesendet: Montag', 'Betreff: x', 'An: Bitte bis Freitag weiterleiten.', 'Gruß'))[0].end, 4)
+  const s1 = L('Danke!', 'Von: Kim Fabrik <kim@fabrikam.de>', 'Gesendet: Montag', 'An: Alex Beispiel', 'Betreff: Angebot', 'An: Bitte bis Freitag weiterleiten.', 'Gruß Kim')
+  assert.deepEqual(findHeaders(s1), [{ start: 1, end: 5, label: 'Kim Fabrik · Montag' }])
+  // Wichtigkeit darf nach dem Betreff stehen, „Von:“ allein ist kein Kopf
+  assert.equal(findHeaders(L('Ok', 'Von: Kim Fabrik', 'Gesendet: Montag', 'Betreff: x', 'Wichtigkeit: Hoch', 'Text'))[0].end, 5)
+  assert.deepEqual(findHeaders(L('Ok', { text: 'Von: Kim', boundary: true }, 'Text')), [])
+  // S3: Weiterleitung ohne eigenen Text
+  const s3 = L('---------- Forwarded message ---------', 'From: Kim Fabrik <kim@fabrikam.de>', 'Date: Mon, Nov 23, 2026', 'Subject: Angebot', 'To: Alex', 'Hallo Alex.')
+  assert.deepEqual(findHeaders(s3), [{ start: 0, end: 5, label: 'Kim Fabrik · Mon, Nov 23, 2026' }])
+  // S4: „On … wrote:“ direkt unter einem Outlook-Kopf beginnt eine eigene Nachricht und bleibt stehen
+  const s4 = L('Danke!', 'From: Kim Fabrik', 'Sent: Monday', 'Subject: x', 'On Mon, Nov 23, 2026 at 9:00 AM Alex Doe <alex@example.com> wrote:', 'Erste Nachricht.')
+  assert.deepEqual(partStarts(s4), [0, 1, 4])
+  assert.deepEqual(findHeaders(s4), [{ start: 1, end: 4, label: 'Kim Fabrik · Monday' }])
+  // Markiertes Zitat direkt nach „Am … schrieb …:“ ist derselbe Teil
+  assert.deepEqual(partStarts(L('Ok', { text: 'Am 23.11.2026 um 09:00 schrieb Kim Fabrik <kim@fabrikam.de>:', boundary: true }, { text: 'Hallo.', boundary: true })), [0, 1])
+  // S5: nur Adresse
+  assert.equal(findHeaders(L('Ok', 'From: <kim@example.com>', 'Sent: Monday', 'Subject: x', 'Text'))[0].label, 'kim@example.com · Monday')
+})
+
+test('Review Name: Initiale, Akzente und der Name des Absenders bleiben sichtbar', () => {
+  const sig = (name: string) => L('Hallo,', 'passt.', { text: name, marker: 1 }, { text: 'Tel. +49 123 456789', marker: 1 })
+  assert.deepEqual(hidden(sig('J. Smith')), [['Tel. +49 123 456789']])
+  assert.deepEqual(hidden(sig('José Álvarez')), [['Tel. +49 123 456789']])
+  // Sieht nicht wie ein Name aus, gehört aber zum Absender
+  assert.deepEqual(hidden(sig('SMITH, J. (Contoso)'), 'Smith, John'), [['Tel. +49 123 456789']])
+  assert.deepEqual(hidden(sig('SMITH, J. (Contoso)')), [['SMITH, J. (Contoso)', 'Tel. +49 123 456789']])
+})
+
+test('Messung: Trennlinien, „Tel:“ allein und Fußzeilen ohne Gruß', () => {
+  // „--“ zwischen Signaturzeilen unterbricht den Block nicht
+  assert.deepEqual(
+    hidden(L('Hallo,', 'passt.', 'Vielen Dank vorab und beste Grüße', 'Kim', '--', 'Kim Fabrik', 'Leitung Integration | Fabrikam', 'Hafenweg 3, 20457 Hamburg', 'Tel:', '+49 40 1234567')),
+    [['--', 'Kim Fabrik', 'Leitung Integration | Fabrikam', 'Hafenweg 3, 20457 Hamburg', 'Tel:', '+49 40 1234567']]
+  )
+  // Benachrichtigung: Fußzeile ohne Gruß und Namen
+  const note = L('Ihr Bericht ist fertig.', 'Sie können ihn im Portal herunterladen.', 'Fabrikam AG · Hafenweg 3 · 20457 Hamburg', 'Sitz der Gesellschaft: Hamburg · HRB 123456', 'Copyright © 2026 Fabrikam AG. All rights reserved.')
+  assert.deepEqual(hidden(note), [note.slice(2).map((l) => l.text)])
+  assert.equal(findSignatures(note)[0].reason, 'footer')
+  // Ohne eindeutigen Fußzeilentext bleibt alles stehen, auch mit zwei einschlägigen Wörtern im Satz
+  assert.deepEqual(hidden(L('Hallo,', 'kurzes Update.', 'Der Vorstand und der Aufsichtsrat haben dem Vorschlag gestern in der Sitzung einstimmig zugestimmt.')), [])
+  assert.deepEqual(hidden(L('Hallo,', 'kurzes Update.', 'Das Amtsgericht hat den Termin auf den 12. Januar verlegt, wir müssen also umplanen.')), [])
+  assert.deepEqual(hidden(L('Hallo,', 'wir müssen das Copyright für die Bilder noch klären, bevor die Seite online geht.')), [])
+  // Aufzählung nach Doppelpunkt ist keine Fußzeile
+  assert.deepEqual(hidden(L('Hallo,', 'unsere neuen Daten:', 'Fabrikam AG · Hafenweg 3 · 20457 Hamburg', 'HRB 123456, Sitz der Gesellschaft: Hamburg, Registergericht Hamburg, USt-IdNr. DE123456789')), [])
+})

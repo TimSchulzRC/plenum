@@ -23,7 +23,7 @@ export interface SigRange {
   start: number
   // exklusiv: erste Zeile des nächsten Teils oder Ende
   end: number
-  reason: 'marker' | 'dashes' | 'mobile' | 'closing' | 'contact' | 'model'
+  reason: 'marker' | 'dashes' | 'mobile' | 'closing' | 'contact' | 'footer' | 'model'
 }
 
 // Grußformeln, nach denen Name und Signatur folgen
@@ -34,7 +34,20 @@ const CLOSING =
 const HEADER_FROM = /^(?:von|from|de|da)\s*:\s*\S/i
 const HEADER_REST = /^(?:gesendet|sent|datum|date|an|to|betreff|subject|cc|bcc|kopie|wichtigkeit|importance|priorität|priority|antwort an|reply-to|anlagen|attachments)\s*:/i
 const HEADER_DATE = /^(?:gesendet|sent|datum|date)\s*:\s*/i
-const ORIGINAL = /^-{2,}\s*(?:ursprüngliche nachricht|original message|weitergeleitete nachricht|forwarded message)\s*-{2,}$/i
+const ORIGINAL = /^(?:-{2,}\s*(?:ursprüngliche nachricht|original message|weitergeleitete nachricht|forwarded message)\s*-{2,}|(?:anfang der weitergeleiteten nachricht|begin forwarded message)\s*:)$/i
+// Felder eines Kopfes. Jedes kommt höchstens einmal vor.
+const FIELDS: [RegExp, string][] = [
+  [/^(?:von|from|de|da)\s*:/i, 'from'],
+  [/^(?:gesendet|sent|datum|date)\s*:/i, 'date'],
+  [/^(?:an|to)\s*:/i, 'to'],
+  [/^(?:cc|kopie)\s*:/i, 'cc'],
+  [/^bcc\s*:/i, 'bcc'],
+  [/^(?:antwort an|reply-to)\s*:/i, 'replyto'],
+  [/^(?:betreff|subject)\s*:/i, 'subject'],
+  [/^(?:wichtigkeit|importance|priorität|priority)\s*:/i, 'importance'],
+  [/^(?:anlagen|attachments)\s*:/i, 'attachments']
+]
+const fieldKey = (text: string) => FIELDS.find(([re]) => re.test(text.trim()))?.[1]
 const WROTE = /^(?:am|on)\s.{4,160}\s(?:schrieb|wrote)\b.{0,160}:$/i
 
 const PHONE_RE = /(?:\+|00)\d[\d\s/().-]{6,}\d|\(?0\d{2,5}\)?[\s/-]?\d[\d\s/-]{4,}\d/g
@@ -53,12 +66,13 @@ const ADDRESS = { test: (t: string) => ADDRESS_PLZ.test(t) || ADDRESS_STREET.tes
 // Rechtsform nach einem Namen, in üblicher Schreibweise: „Contoso GmbH“, nicht „AG“ für Arbeitsgruppe
 const COMPANY = /[A-ZÄÖÜ0-9][\w&.-]*\s+(?:GmbH|gGmbH|mbH|AG|KG|OHG|KGaA|SE|UG|e\.\s?K\.|e\.\s?V\.|Ltd\.?|Limited|Inc\.?|LLC|Corp\.?|PLC|S\.A\.|B\.V\.)(?=$|[\s,.;:|·&)–-])/
 const LEGAL =
-  /\b(?:geschäftsführ|vorstand|aufsichtsrat|amtsgericht|registergericht|handelsregister|hrb|hra|ust-?id|umsatzsteuer|steuer-?nr|sitz der gesellschaft|vat|registered office|company registration|datenschutz|data protection|privacy|impressum)/i
+  /\b(?:geschäftsführ|vorstand|aufsichtsrat|amtsgericht|registergericht|handelsregister|hrb|hra|ust-?id|umsatzsteuer|steuer-?nr|sitz der gesellschaft|vat|registered office|company registration|registry court|register court|commercial register|managing directors?|komplementär\w*|datenschutz|data protection|privacy|impressum)/i
 // Hinweise und Standardsätze aus Fußzeilen: Vertraulichkeit, Umwelt, Netzwerk von
 // Prüfungsgesellschaften, Streitbeilegung, Newsletter und Benachrichtigungen
 const DISCLAIMER =
   /\b(?:vertraulich|confidential|disclaimer|irrtümlich|in error|intended recipient|bestimmungsgemäß|unbefugte|unauthori[sz]ed|ausdrucken|before printing|the environment|der umwelt|member firms?|mitgliedsunternehmen|streitbeilegung|schlichtungsstelle|dispute resolution|unsubscribe (?:here|from)|click here to unsubscribe|newsletter abbestellen|vom newsletter abmelden|you(?: are)? receiv(?:e|ed|ing) this|sie erhalten diese (?:e-?mail|nachricht|benachrichtigung))/i
-const COPYRIGHT = /©|\bcopyright\b|all rights reserved|alle rechte vorbehalten/i
+// Copyright-Vermerk, nicht das Wort im Satz („wir müssen das Copyright klären“)
+const COPYRIGHT = /©|\(c\)\s*\d{4}|\bcopyright\s*(?:©|\(c\)|\d{4})|all rights reserved|alle rechte vorbehalten/i
 const JOB = /\b(?:geschäftsführer|consultant|berater|manager|leiter|leitung|head of|director|engineer|entwickler|developer|assistant|assistenz|vertrieb|sales|support|projekt|project|team|abteilung|department|ceo|cto|cfo|coo|partner|inhaber|owner|referent|sachbearbeit|specialist|spezialist|architekt)/i
 // Echte Rolle, die allein eine Signatur belegt („Senior Consultant“, „Leitung Integration“), nicht
 // allgemeine Wörter wie „Projekt“ oder „Team“
@@ -79,16 +93,26 @@ const IMPERATIVE =
 // Wendungen, die nur in Fußzeilen stehen, und einzelne Wörter, die auch im Inhalt vorkommen („unser
 // Datenschutz-Team“): Letztere zählen erst zu zweit.
 const FOOTER_PHRASE =
-  /\b(?:amtsgericht|registergericht|handelsregister|hrb|hra|ust-?id|umsatzsteuer-?id|steuer-?nr|sitz der gesellschaft|registered office|company registration|(?:irrtümlich|versehentlich|fälschlich\w*) erhalten|receiv\w+ (?:this|it)\b.{0,40}\bin error|intended recipient|bestimmungsgemäße[nr]? (?:empfänger|adressat)|unbefugte[sn]? (?:weitergabe|nutzung|verwendung|kopieren|kenntnisnahme)|unauthori[sz]ed (?:use|disclosure|copying|review|distribution|dissemination)|(?:vor dem|bevor sie) (?:aus)?drucken|before (?:you )?print(?:ing)?|member firms?|mitgliedsunternehmen|streitbeilegung|schlichtungsstelle|dispute resolution|unsubscribe (?:here|from)|click here to unsubscribe|newsletter abbestellen|vom newsletter abmelden|you(?: are)? receiv(?:e|ed|ing) this (?:e-?mail|message|notification|newsletter)|sie erhalten diese (?:e-?mail|nachricht|benachrichtigung))/i
+  /\b(?:HR[AB]\s*\d+|registergericht|handelsregister|ust-?id|umsatzsteuer-?id|steuer-?nr|sitz der gesellschaft|registered office|company registration|registry court|commercial register|(?:irrtümlich|versehentlich|fälschlich\w*) erhalten|receiv\w+ (?:this|it)\b.{0,40}\bin error|intended recipient|bestimmungsgemäße[nr]? (?:empfänger|adressat)|unbefugte[sn]? (?:weitergabe|nutzung|verwendung|kopieren|kenntnisnahme)|unauthori[sz]ed (?:use|disclosure|copying|review|distribution|dissemination)|(?:vor dem|bevor sie) (?:aus)?drucken|before (?:you )?print(?:ing)?|member firms?|mitgliedsunternehmen|streitbeilegung|schlichtungsstelle|dispute resolution|unsubscribe (?:here|from)|click here to unsubscribe|newsletter abbestellen|vom newsletter abmelden|you(?: are)? receiv(?:e|ed|ing) this (?:e-?mail|message|notification|newsletter)|sie erhalten diese (?:e-?mail|nachricht|benachrichtigung))/i
 const FOOTER_WORDS = /\b(?:geschäftsführ\w*|vorstand|aufsichtsrat|datenschutz\w*|data protection|privacy|impressum|vertraulich\w*|confidential|disclaimer|umwelt|environment|vat)\b/gi
+// Eindeutiger Fußzeilentext: Copyright-Vermerk oder ein langer Satz mit einer Wendung, die nur dort steht
+function strongBoilerplate(l: SigLine): boolean {
+  const t = l.text.trim()
+  if (PS.test(t) || IMPERATIVE.test(t) || /\?$/.test(t)) return false
+  return COPYRIGHT.test(t) || (t.length > 60 && FOOTER_PHRASE.test(t))
+}
+
 function boilerplate(l: SigLine): boolean {
   const t = l.text.trim()
   if (PS.test(t) || IMPERATIVE.test(t) || /\?$/.test(t)) return false
-  if (COPYRIGHT.test(t)) return true
-  if (t.length <= 60) return false
-  if (FOOTER_PHRASE.test(t)) return true
-  return new Set((t.match(FOOTER_WORDS) ?? []).map((w) => w.toLowerCase())).size >= 2
+  if (strongBoilerplate(l)) return true
+  return t.length > 60 && new Set((t.match(FOOTER_WORDS) ?? []).map((w) => w.toLowerCase())).size >= 2
 }
+
+// Trennlinie („--“, „---“, „___“, „- - -“) und Beschriftung ohne Wert („Tel:“ vor der Nummer in der
+// nächsten Zeile): weder Inhalt noch Beleg, sie unterbrechen einen Signaturblock nicht
+const ruleLine = (l: SigLine) => /^[-–—_=*\s]{2,}$/.test(l.text)
+const bareLabel = (l: SigLine) => /^(?:tel|telefon|phone|fon|mobil|mobile|fax|e-?mail|web)\.?\s*:?$/i.test(l.text.trim())
 
 // Inhalt, der nie in einer Signatur steht: ein P.S., eine Anweisung, eine Frage oder ein ganzer Satz
 // (ab sechs Wörtern mit Satzzeichen am Ende), auch mit Mailadresse oder Telefonnummer darin
@@ -110,7 +134,7 @@ function stray(text: string): number {
   let n = 0
   for (const w of rest.split(/[\s|·•,;:()/&+–-]+/)) {
     const word = w.replace(/\.$/, '')
-    if (/^[a-zäöüß]/.test(word) && !LABELS.has(word.toLowerCase())) n++
+    if (/^\p{Ll}/u.test(word) && !LABELS.has(word.toLowerCase())) n++
   }
   return n
 }
@@ -141,11 +165,13 @@ function filler(l: SigLine): boolean {
 }
 
 // Personenname: zwei bis vier groß geschriebene Wörter, optional mit Titel oder „i. V.“
-const PROPER_NAME = /^(?:(?:i\.\s?[AV]\.|ppa\.|pp\.)\s+)?(?:(?:Dr\.|Prof\.|Dipl\.-\w+\.?|Mag\.|Ing\.)\s+)*[A-ZÄÖÜ][a-zäöüßéèáó'’-]+(?:\s+(?:[A-ZÄÖÜ][a-zäöüßéèáó'’.-]*|von|van|de|der|zu)){1,3}$/
+// Auch mit Initiale („J. Smith“) und Buchstaben aller Sprachen („José Álvarez“)
+const PROPER_NAME =
+  /^(?:(?:i\.\s?[AV]\.|ppa\.|pp\.)\s+)?(?:(?:Dr\.|Prof\.|Dipl\.-\p{L}+\.?|Mag\.|Ing\.)\s+)*\p{Lu}(?:\.|[\p{L}'’-]+)(?:\s+(?:\p{Lu}(?:\.|[\p{L}'’.-]*)|von|van|de|der|zu|da|del|la|le)){1,3}$/u
 const properName = (l: SigLine) => PROPER_NAME.test(l.text.trim()) && !COMPANY.test(l.text) && !JOB.test(l.text)
 
 // Zeile, die in einem Signaturblock stehen darf
-const blockLine = (l: SigLine) => specific(l) || link(l) || boilerplate(l) || filler(l) || (!!l.image && l.text.length < 120 && stray(l.text) <= 1) || sentFrom(l.text)
+const blockLine = (l: SigLine) => specific(l) || link(l) || boilerplate(l) || filler(l) || ruleLine(l) || bareLabel(l) || (!!l.image && l.text.length < 120 && stray(l.text) <= 1) || sentFrom(l.text)
 
 // Ein Block ist nur dann Signatur, wenn jede Zeile hineinpasst und mindestens eine Angabe nur in
 // Signaturen vorkommt. Listen aus Links oder Mailadressen sind Inhalt.
@@ -187,9 +213,25 @@ function nameLike(t: string): boolean {
 }
 
 
-const headerLine = (text: string) => {
-  const t = text.trim()
-  return HEADER_FROM.test(t) || HEADER_REST.test(t) || ORIGINAL.test(t) || WROTE.test(t)
+// Ende des Kopfes, wenn bei from einer beginnt, sonst from. Ein Kopf ist die Zeile „Am … schrieb …:“
+// oder „Von:“ mit mindestens einem weiteren Feld, davor optional „-----Ursprüngliche Nachricht-----“.
+// Ein Feld, das sich wiederholt, oder ein Empfängerfeld mit einem Satz als Wert ist schon Inhalt
+// („An: Bitte bis Freitag weiterleiten.“). Gmail schreibt „To:“ erst nach dem Betreff.
+function headerEnd(lines: SigLine[], from: number, to: number): number {
+  let i = from
+  if (i < to && ORIGINAL.test(lines[i].text.trim())) i++
+  if (i < to && WROTE.test(lines[i].text.trim())) return i + 1
+  const start = i
+  if (!(i < to && fieldKey(lines[i].text) === 'from')) return start
+  const seen = new Set<string>()
+  while (i < to) {
+    const key = fieldKey(lines[i].text)
+    if (!key || seen.has(key)) break
+    if ((key === 'to' || key === 'cc' || key === 'bcc' || key === 'replyto') && /[.!?]$/.test(lines[i].text.trim())) break
+    seen.add(key)
+    i++
+  }
+  return seen.size >= 2 ? i : start
 }
 
 // Teile des Verlaufs: Grenzen aus dem HTML oder aus Kopfzeilen im Text
@@ -202,21 +244,23 @@ export function partStarts(lines: SigLine[]): number[] {
       WROTE.test(t) ||
       (HEADER_FROM.test(t) && lines.slice(i + 1, i + 5).some((x) => HEADER_REST.test(x.text.trim())))
     if (lines[i].boundary || textHeader) {
-      // Noch im Kopf des vorigen Teils („-----Ursprüngliche Nachricht-----“ vor „Von:“, die Zeile
-      // „Am … schrieb …:“ vor dem markierten Zitat): kein neuer Teil
+      // Noch im Kopf des vorigen Teils („-----Ursprüngliche Nachricht-----“ vor „Von:“), oder die
+      // Markierung des Zitats direkt nach seinem Kopf: kein neuer Teil. Ein neuer Kopf direkt nach
+      // dem alten („On … wrote:“ unter einem Outlook-Kopf) beginnt dagegen einen.
       const last = starts[starts.length - 1]
-      const inHeader = starts.length > 1 && lines.slice(last, i).every((l) => headerLine(l.text))
+      const end = bodyStart(lines, last, lines.length)
+      const inHeader = end > last && (i < end || (i === end && !textHeader))
       if (last !== i && !inHeader) starts.push(i)
     }
   }
   return starts
 }
 
-// Erste Inhaltszeile eines Teils: Kopfzeilen eines zitierten Teils („Von:“, „Betreff:“ …) überspringen
+// Erste Inhaltszeile eines Teils nach seinem Kopf. Der oberste Teil hat nur dann einen, wenn die
+// Mail mit einer Weiterleitung beginnt.
 export function bodyStart(lines: SigLine[], from: number, to: number): number {
-  let body = from
-  if (from > 0) while (body < to && headerLine(lines[body].text)) body++
-  return body
+  if (from === 0 && !(lines.length > 0 && (lines[0].boundary || ORIGINAL.test(lines[0].text.trim())))) return 0
+  return headerEnd(lines, from, to)
 }
 
 // Beginn der Signatur in einem Teil [from, to), oder undefined
@@ -291,9 +335,7 @@ function inPart(lines: SigLine[], from: number, to: number, sender?: string): Si
   // 5. Ohne Grußformel: am Ende ein Block, der mit dem Namen des Absenders beginnt und Telefon,
   // Anschrift oder Registerangabe enthält. Ein anderer Name ist ein Kontakt, den die Mail mitteilt.
   // Steht davor eine Zeile mit Doppelpunkt, ist es eine Aufzählung.
-  const from_ = sender ?? quotedSender(lines, from, body)
-  if (!from_) return undefined
-  const senderTokens = nameTokens(from_)
+  const senderTokens = nameTokens(sender ?? '')
   let start = to
   while (start - 1 > floor && blockLine(lines[start - 1])) start--
   while (start < to && !properName(lines[start])) start++
@@ -302,6 +344,14 @@ function inPart(lines: SigLine[], from: number, to: number, sender?: string): Si
   // Vor- und Nachname müssen passen, in beliebiger Reihenfolge: „Alex Doe“ ist nicht „Alex Kim“
   const isSender = start < to && [...nameTokens(lines[start].text)].filter((w) => senderTokens.has(w)).length >= 2
   if (start > floor && start < to && isSender && validBlock(block) && evidence && !/:\s*$/.test(lines[start - 1].text)) return { start, end: to, reason: 'contact' }
+
+  // 6. Fußzeile ohne Gruß und Namen (Benachrichtigungen, Newsletter, Fußzeile des Mailservers): am
+  // Ende nur Hinweistext, Angaben und Links, darunter mindestens ein eindeutiger Fußzeilentext
+  const footerLine = (l: SigLine) => boilerplate(l) || (specific(l) && !roleLine(l)) || link(l) || ruleLine(l) || bareLabel(l)
+  let fs = to
+  while (fs - 1 > floor && footerLine(lines[fs - 1])) fs--
+  while (fs < to && !(boilerplate(lines[fs]) || (specific(lines[fs]) && !roleLine(lines[fs])))) fs++
+  if (fs > floor && fs < to && lines.slice(fs, to).some(strongBoilerplate) && !/:\s*$/.test(lines[fs - 1].text)) return { start: fs, end: to, reason: 'footer' }
   return undefined
 }
 
@@ -312,15 +362,18 @@ function nameLine(l: SigLine): boolean {
   if (l.image || !t) return false
   if (properName({ text: t.split(/\s*[|·]\s*/)[0] })) return true
   // einzelner Vorname
-  return /^[A-ZÄÖÜ][a-zäöüßéèáó'’-]+$/.test(t) && !COMPANY.test(t) && !JOB.test(t)
+  return /^\p{Lu}[\p{L}'’-]+$/u.test(t) && !COMPANY.test(t) && !JOB.test(t)
 }
 
-function belowName<T extends { start: number; end: number }>(lines: SigLine[], r: T): T | undefined {
+function belowName<T extends { start: number; end: number }>(lines: SigLine[], r: T, sender?: string): T | undefined {
+  const senderTokens = nameTokens(sender ?? '')
+  // Zeile mit dem Namen des Absenders, auch wenn sie nicht wie ein Name aussieht („SMITH, J.“)
+  const senderLine = (l: SigLine) => l.text.length <= 60 && !specific(l) && !link(l) && [...nameTokens(l.text)].some((w) => senderTokens.has(w))
   let s = r.start
   if (s < r.end && /^--[\s\u00a0]?$/.test(lines[s].text)) s++
   const c = s < r.end ? closingLine(lines[s].text) : undefined
   if (c?.closing) s++
-  if (!c?.name && s < r.end && nameLine(lines[s])) s++
+  if (!c?.name && s < r.end && (nameLine(lines[s]) || senderLine(lines[s]))) s++
   return s < r.end ? { ...r, start: s } : undefined
 }
 
@@ -331,9 +384,12 @@ export function findSignatures(lines: SigLine[], sender?: string): SigRange[] {
   const out: SigRange[] = []
   starts.forEach((from, k) => {
     const to = starts[k + 1] ?? lines.length
-    const hit = inPart(lines, from, to, k === 0 ? sender : undefined)
-    // Nach einer Grußformel und bei „Gesendet von …“ steht der Beginn schon unter dem Namen
-    const visible = hit && (hit.reason === 'closing' || hit.reason === 'mobile' ? hit : belowName(lines, hit))
+    // Absender des Teils: bei der obersten Nachricht der Absender der Mail, sonst aus dem Kopf des Zitats
+    const body = bodyStart(lines, from, to)
+    const who = k === 0 && body === 0 ? sender : quotedSender(lines, from, body)
+    const hit = inPart(lines, from, to, who)
+    // Nach einer Grußformel, bei „Gesendet von …“ und in reinen Fußzeilen gibt es keinen Namen zu zeigen
+    const visible = hit && (hit.reason === 'closing' || hit.reason === 'mobile' || hit.reason === 'footer' ? hit : belowName(lines, hit, who))
     if (visible) out.push(visible)
   })
   return out
@@ -354,19 +410,14 @@ export function findHeaders(lines: SigLine[]): HeaderRange[] {
   const starts = partStarts(lines)
   const out: HeaderRange[] = []
   starts.forEach((from, k) => {
-    if (k === 0) return
     const to = starts[k + 1] ?? lines.length
     const end = bodyStart(lines, from, to)
     const block = lines.slice(from, end).map((l) => l.text.trim())
-    if (block.filter((t) => HEADER_FROM.test(t) || HEADER_REST.test(t)).length < 2) return
-    const sender = block.find((t) => HEADER_FROM.test(t))
+    if (block.filter((t) => fieldKey(t)).length < 2) return
+    const sender = block.find((t) => fieldKey(t) === 'from')?.replace(/^[^:]*:/, '') ?? ''
     const date = block.find((t) => HEADER_DATE.test(t))
-    const name = sender
-      ?.replace(/^[^:]*:/, '')
-      .replace(/<[^>]*>|\[[^\]]*\]/g, ' ')
-      .replace(/["']/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
+    // Anzeigename, sonst die Adresse („From: <kim@example.com>“)
+    const name = sender.replace(/<[^>]*>|\[[^\]]*\]/g, ' ').replace(/["']/g, '').replace(/\s+/g, ' ').trim() || (sender.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/)?.[0] ?? '')
     const label = [name, date?.replace(HEADER_DATE, '').trim()].filter(Boolean).join(' · ')
     out.push({ start: from, end, label: label || 'Kopfzeilen' })
   })
