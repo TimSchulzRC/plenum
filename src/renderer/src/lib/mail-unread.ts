@@ -16,7 +16,7 @@ export function useMailUnreadPolling(): void {
   useEffect(() => {
     const ids = key.split(',').filter(Boolean)
     const poll = () => {
-      for (const id of ids) void api.getMailUnread(id).then((n) => setMailUnread(id, n)).catch(() => {})
+      for (const id of ids) void api.getMailUnread(id).then((n) => n !== null && setMailUnread(id, n)).catch(() => {})
     }
     poll()
     const t = setInterval(poll, 120_000)

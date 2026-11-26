@@ -76,7 +76,7 @@ export interface ApiMethods {
   createEvent(accountId: string, event: NewCalendarEvent): void
   // E-Mail über Graph. Gastmandanten haben kein Postfach.
   getMailFolders(accountId: string): MailFolder[]
-  getMailUnread(accountId: string): number
+  getMailUnread(accountId: string): number | null
   listMail(accountId: string, folderId: string, next?: string): MailPage
   getMail(accountId: string, messageId: string): MailMessage
   openMailAttachment(accountId: string, messageId: string, attachmentId: string, mode: 'open' | 'save'): void

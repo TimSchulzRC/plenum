@@ -300,6 +300,10 @@ export class TeamsApi {
     return order.filter((a) => (a === 'graph' ? t.has('graph') || !!t.findBearer('graph.microsoft.com') : !!t.bearerFor(OUTLOOK_AUDIENCES)))
   }
 
+  hasMailToken(): boolean {
+    return this.mailApis(['graph', 'outlook']).length > 0
+  }
+
   // Outlook mit dem Mail-Token (nicht dem Such-Token), Anfrage in PascalCase, Antwort in camelCase.
   // Bei 401 noch einmal mit dem Token, den die Web-App inzwischen erneuert hat.
   private async mailRequest<T = any>(api: MailApi, url: string, init: { method?: string; body?: unknown } = {}): Promise<T> {

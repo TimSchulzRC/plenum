@@ -1277,22 +1277,41 @@ export class AccountService extends EventEmitter<AccountEvents> {
   // ---------- E-Mail ----------
 
   // Welche Ordner-ID zu welchem Standardordner gehört, ändert sich nicht: einmal je Sitzung fragen
-  private mailKinds?: Promise<Map<string, MailFolderKind>>
+  // Die Abfragen laufen nacheinander: Exchange drosselt schon bei wenigen gleichzeitigen Anfragen je
+  // Postfach (429, im Live-Test bei sieben). Was dabei scheitert, fragt der nächste Abruf erneut,
+  // was es nicht gibt (404, z. B. kein Archiv), nicht mehr. Die Zuordnung ändert sich nicht.
+  private mailKinds = new Map<string, MailFolderKind>()
+  private mailKindsDone = new Set<MailFolderKind>()
+  private mailKindsRun?: Promise<void>
 
-  async getMailFolders(): Promise<MailFolder[]> {
-    this.mailKinds ??= Promise.allSettled(WELL_KNOWN.map((k) => this.api.mailWellKnown(k).then((f: any) => [String(f.id), k] as const))).then((known) => {
-      const kinds = new Map<string, MailFolderKind>()
-      for (const r of known) if (r.status === 'fulfilled') kinds.set(r.value[0], r.value[1])
-      // Ohne Treffer (z. B. noch kein Token) beim nächsten Mal neu fragen
-      if (!kinds.size) this.mailKinds = undefined
-      return kinds
+  private resolveMailKinds(): Promise<void> {
+    this.mailKindsRun ??= (async () => {
+      for (const k of WELL_KNOWN) {
+        if (this.mailKindsDone.has(k)) continue
+        try {
+          const f = await this.api.mailWellKnown(k)
+          this.mailKinds.set(String(f.id), k)
+          this.mailKindsDone.add(k)
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 404) this.mailKindsDone.add(k)
+        }
+      }
+    })().finally(() => {
+      this.mailKindsRun = undefined
     })
-    const [list, kinds] = await Promise.all([this.api.mailFolders(), this.mailKinds])
-    const items: any[] = list?.value ?? []
-    return sortFolders(items.map((f) => mapFolder(f, kinds.get(String(f.id)))))
+    return this.mailKindsRun
   }
 
-  async getMailUnread(): Promise<number> {
+  async getMailFolders(): Promise<MailFolder[]> {
+    const list = await this.api.mailFolders()
+    await this.resolveMailKinds()
+    const items: any[] = list?.value ?? []
+    return sortFolders(items.map((f) => mapFolder(f, this.mailKinds.get(String(f.id)))))
+  }
+
+  // null, solange die Web-App noch keinen Token für Mail angefordert hat (kein Fehler, nur noch nichts da)
+  async getMailUnread(): Promise<number | null> {
+    if (!this.api.hasMailToken()) return null
     const f = await this.api.mailWellKnown('inbox')
     return Number(f?.unreadItemCount) || 0
   }
