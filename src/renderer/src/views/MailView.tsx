@@ -15,7 +15,8 @@ import {
   Mail20Regular,
   MailInbox20Regular,
   MailUnread20Regular,
-  TextCollapse20Regular,
+  DocumentHeader20Regular,
+  Signature20Regular,
   Compose20Regular,
   Send20Regular,
   Warning20Regular,
@@ -410,11 +411,20 @@ const modelCache = new Map<string, SigRange[]>()
 
 // Signaturen ausblenden: einmal eingestellt, gilt für alle Mails. Standard ist an.
 const HIDE_SIG_KEY = 'mail.hideSignatures'
-function loadHideSignatures(): boolean {
+// Kopfzeilen zitierter Nachrichten einklappen: eigener Schalter, ebenfalls Standard an
+const HIDE_HEAD_KEY = 'mail.hideHeaders'
+function loadHidden(key: string): boolean {
   try {
-    return localStorage.getItem(HIDE_SIG_KEY) !== '0'
+    return localStorage.getItem(key) !== '0'
   } catch {
     return true
+  }
+}
+function saveHidden(key: string, hidden: boolean): void {
+  try {
+    localStorage.setItem(key, hidden ? '1' : '0')
+  } catch {
+    /* ignore */
   }
 }
 
@@ -586,7 +596,8 @@ function MailReader({
   const [m, setM] = useState<MailMessage | null>(null)
   const [error, setError] = useState<string>()
   const [remote, setRemote] = useState(false)
-  const [hideSig, setHideSig] = useState(loadHideSignatures)
+  const [hideSig, setHideSig] = useState(() => loadHidden(HIDE_SIG_KEY))
+  const [hideHead, setHideHead] = useState(() => loadHidden(HIDE_HEAD_KEY))
   const [busy, setBusy] = useState(false)
   // Im dunklen Theme dunkel, einzeln auf hell umschaltbar, falls eine Mail umgekehrt schlecht aussieht
   const darkTheme = useDarkMode()
@@ -612,7 +623,7 @@ function MailReader({
   const modelKey = `${target.accountId}|${target.id}|${remote ? 'remote' : 'local'}`
   const [, setModelTick] = useState(0)
   const modelSig = modelOn ? modelCache.get(modelKey) : undefined
-  const doc = useMemo(() => (m ? mailDocument(m, remote, dark, { hide: hideSig, extra: modelSig }) : null), [m, remote, dark, hideSig, modelSig])
+  const doc = useMemo(() => (m ? mailDocument(m, remote, dark, { hide: hideSig, hideHeaders: hideHead, extra: modelSig }) : null), [m, remote, dark, hideSig, hideHead, modelSig])
 
   useEffect(() => {
     if (!m || !hideSig || !modelOn || modelCache.has(modelKey)) return
@@ -634,13 +645,12 @@ function MailReader({
   }, [m, hideSig, modelOn, modelKey, remote])
 
   const toggleSignatures = () => {
-    const next = !hideSig
-    setHideSig(next)
-    try {
-      localStorage.setItem(HIDE_SIG_KEY, next ? '1' : '0')
-    } catch {
-      /* ignore */
-    }
+    setHideSig(!hideSig)
+    saveHidden(HIDE_SIG_KEY, !hideSig)
+  }
+  const toggleHeaders = () => {
+    setHideHead(!hideHead)
+    saveHidden(HIDE_HEAD_KEY, !hideHead)
   }
 
   if (error && !m) {
@@ -683,12 +693,20 @@ function MailReader({
           Weiterleiten
         </Button>
         <div style={{ flex: 1 }} />
+        {doc.headers > 0 && (
+          <Tooltip
+            content={`Kopfzeilen der zitierten Nachrichten (Von, Gesendet, An, Betreff) ${hideHead ? 'ausgeblendet. Klicken zeigt sie.' : 'sichtbar. Klicken blendet sie aus.'}`}
+            relationship="label"
+          >
+            <ToggleButton size="small" appearance="subtle" icon={<DocumentHeader20Regular />} checked={hideHead} onClick={toggleHeaders} />
+          </Tooltip>
+        )}
         {doc.signatures > 0 && (
           <Tooltip
             content={`${doc.signatures === 1 ? '1 Signatur' : `${doc.signatures} Signaturen`} ${hideSig ? 'ausgeblendet. Klicken zeigt sie.' : 'sichtbar. Klicken blendet sie aus.'}`}
             relationship="label"
           >
-            <ToggleButton size="small" appearance="subtle" icon={<TextCollapse20Regular />} checked={hideSig} onClick={toggleSignatures}>
+            <ToggleButton size="small" appearance="subtle" icon={<Signature20Regular />} checked={hideSig} onClick={toggleSignatures}>
               {doc.signatures}
             </ToggleButton>
           </Tooltip>

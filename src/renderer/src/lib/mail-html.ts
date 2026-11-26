@@ -1,19 +1,24 @@
 import DOMPurify from 'dompurify'
 import type { MailMessage } from '@shared/types'
 import { darkColor, darkCss } from './mail-dark'
-import { bodyStart, findSignatures, partStarts, type OpenPart, type SigLine, type SigRange } from './mail-signature'
+import { bodyStart, findHeaders, findSignatures, partStarts, type OpenPart, type SigLine, type SigRange } from './mail-signature'
 
 export interface MailDoc {
   html: string
   blocked: number
   // Gefundene Signaturen (Regeln und, falls übergeben, Modell)
   signatures: number
+  // Kopfzeilen zitierter Nachrichten („Von / Gesendet / An / Betreff“)
+  headers: number
   // Teile des Verlaufs ohne Regel-Treffer, für das Sprachmodell
   unresolved: OpenPart[]
 }
 
 export interface SignatureOptions {
+  // Signaturen einklappen
   hide: boolean
+  // Kopfzeilen zitierter Nachrichten einklappen
+  hideHeaders?: boolean
   // Vom Sprachmodell gefundene Signaturen (Zeilen wie in unresolved)
   extra?: SigRange[]
 }
@@ -161,15 +166,24 @@ function wrapTableParts(frag: DocumentFragment): void {
   }
 }
 
-// Jede Signatur in <details> packen: zugeklappt, ein Klick auf „Signatur“ zeigt sie (ohne Skript)
-function wrapSignatures(root: Element, lines: DomLine[], ranges: SigRange[]): void {
+interface Fold {
+  start: number
+  end: number
+  label: string
+  cls: 'te-sig' | 'te-head'
+}
+
+// Bereiche in <details> packen: zugeklappt, ein Klick auf die Zeile zeigt sie (ohne Skript).
+// Von oben nach unten: Das Ende eines Bereichs ist oft der Anfang des nächsten, der dann noch an
+// seinem Platz stehen muss.
+function wrapFolds(root: Element, lines: DomLine[], folds: Fold[]): void {
   const doc = root.ownerDocument
-  for (const r of [...ranges].sort((a, b) => b.start - a.start)) {
-    // Platzhalter an der Stelle der ersten Signaturzeile (etwa in ihrer Tabellenzelle). Nach dem
+  for (const r of [...folds].sort((a, b) => a.start - b.start)) {
+    // Platzhalter an der Stelle der ersten Zeile (etwa in ihrer Tabellenzelle). Nach dem
     // Herauslösen läge der Anfang der Range sonst eine Ebene höher, bei Tabellen direkt in <tbody>.
     // Beginnt die Zeile mit einem Link oder einer Formatierung, kommt der Platzhalter davor: <details>
     // in einem <a> setzt der Parser im iframe auseinander. Nur wenn die Zeile das Element beginnt,
-    // sonst geriete Text davor mit in die Signatur.
+    // sonst geriete Text davor mit in den Bereich.
     let first: Node = lines[r.start].first
     while (first.parentNode && first.parentNode !== root && INLINE.has(first.parentNode.nodeName) && startsWith(first.parentNode, first)) first = first.parentNode
     const mark = doc.createElement('span')
@@ -181,17 +195,20 @@ function wrapSignatures(root: Element, lines: DomLine[], ranges: SigRange[]): vo
     const frag = range.extractContents()
     wrapTableParts(frag)
     const details = doc.createElement('details')
-    details.className = 'te-sig'
+    details.className = r.cls
     const summary = doc.createElement('summary')
-    summary.textContent = r.reason === 'model' ? 'Signatur (Apple Intelligence)' : 'Signatur'
+    summary.textContent = r.label
     details.append(summary, frag)
     mark.replaceWith(details)
   }
 }
 
-// Knopf „Signatur anzeigen“ im Dokument, hell oder dunkel
-const sigCss = (dark: boolean) =>
-  `details.te-sig{margin:4px 0 10px}details.te-sig>summary{display:inline-block;list-style:none;cursor:pointer;font-size:12px;color:${dark ? '#adadad' : '#707070'};padding:1px 9px;border:1px solid ${dark ? '#4a4a4a' : '#e0e0e0'};border-radius:10px;user-select:none}details.te-sig>summary::-webkit-details-marker{display:none}details.te-sig>summary::after{content:" anzeigen"}details.te-sig[open]>summary::after{content:" ausblenden"}details.te-sig[open]>summary{margin-bottom:6px}`
+// „Signatur anzeigen“ und die Kurzform der Kopfzeilen im Dokument, hell oder dunkel
+const foldCss = (dark: boolean) => {
+  const fg = dark ? '#adadad' : '#707070'
+  const line = dark ? '#4a4a4a' : '#e0e0e0'
+  return `details.te-sig{margin:4px 0 10px}details.te-sig>summary{display:inline-block;list-style:none;cursor:pointer;font-size:12px;color:${fg};padding:1px 9px;border:1px solid ${line};border-radius:10px;user-select:none}details.te-sig>summary::-webkit-details-marker,details.te-head>summary::-webkit-details-marker{display:none}details.te-sig>summary::after{content:" anzeigen"}details.te-sig[open]>summary::after{content:" ausblenden"}details.te-sig[open]>summary{margin-bottom:6px}details.te-head{margin:12px 0 6px}details.te-head>summary{list-style:none;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:12px;font-weight:600;color:${fg};user-select:none}details.te-head>summary::before{content:"▸ "}details.te-head[open]>summary::before{content:"▾ "}details.te-head[open]>summary{margin-bottom:4px}`
+}
 
 // Dokument für das iframe im Lesebereich. Drei Schichten Schutz:
 // 1. DOMPurify entfernt Skripte, Formulare, eingebettete Frames und Event-Attribute.
@@ -199,7 +216,7 @@ const sigCss = (dark: boolean) =>
 // 3. Eine eigene Content-Security-Policy lässt externe Bilder, Schriften und CSS-URLs nur zu, wenn
 //    remote true ist. Sonst lädt die Mail nichts nach (Tracking-Pixel), auch nicht über CSS.
 // dark: Farben der Mail für dunklen Hintergrund umrechnen (siehe mail-dark.ts)
-// Signaturen sucht mail-signature.ts, das Ausblenden braucht kein Skript (<details>).
+// Signaturen und Kopfzeilen sucht mail-signature.ts, das Einklappen braucht kein Skript (<details>).
 export function mailDocument(
   m: Pick<MailMessage, 'body' | 'bodyType' | 'inlineImages'> & Partial<Pick<MailMessage, 'from'>>,
   remote: boolean,
@@ -285,11 +302,16 @@ export function mailDocument(
     })
   const extra = (sig.extra ?? []).filter((x) => x.start > 0 && x.end <= lines.length && !found.some((r) => r.start < x.end && x.start < r.end))
   const all = [...found, ...extra]
-  if (sig.hide && all.length) wrapSignatures(root, lines, all)
+  const headers = findHeaders(lines)
+  const folds: Fold[] = [
+    ...(sig.hide ? all.map((r): Fold => ({ start: r.start, end: r.end, label: 'Signatur', cls: 'te-sig' })) : []),
+    ...(sig.hideHeaders ? headers.map((r): Fold => ({ ...r, cls: 'te-head' })) : [])
+  ]
+  if (folds.length) wrapFolds(root, lines, folds)
 
   const body = root.innerHTML
   const img = remote ? 'data: https: http:' : 'data:'
   const csp = `default-src 'none'; img-src ${img}; style-src 'unsafe-inline'${remote ? ' https:' : ''}; font-src data:${remote ? ' https:' : ''}`
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html{${dark ? 'background:#292929;color:#dbdbdb;color-scheme:dark' : 'background:#fff;color:#242424'}}${dark ? 'a{color:#8ab4f8}' : ''}body{margin:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:14px;line-height:1.45;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin:0 0 0 8px;padding-left:12px;border-left:2px solid ${dark ? '#4a4a4a' : '#d1d1d1'}}${sigCss(dark)}</style>${head}</head><body>${body}</body></html>`
-  return { html, blocked, signatures: all.length, unresolved }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html{${dark ? 'background:#292929;color:#dbdbdb;color-scheme:dark' : 'background:#fff;color:#242424'}}${dark ? 'a{color:#8ab4f8}' : ''}body{margin:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:14px;line-height:1.45;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin:0 0 0 8px;padding-left:12px;border-left:2px solid ${dark ? '#4a4a4a' : '#d1d1d1'}}${foldCss(dark)}</style>${head}</head><body>${body}</body></html>`
+  return { html, blocked, signatures: all.length, headers: headers.length, unresolved }
 }
