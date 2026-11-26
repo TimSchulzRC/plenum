@@ -142,20 +142,6 @@ export function CalendarView(): JSX.Element {
   // Konto für Teilnehmen und Chat: das aktive, wenn es eingeladen ist, sonst das erste
   const preferred = (m: Merged) => m.sources.find((s) => s.accountId === activeAccountId) ?? m.sources[0]
 
-  const chatFor = (accountId: string, ev: CalendarEvent) => {
-    const link = ev.joinUrl && normalizeJoinUrl(ev.joinUrl)
-    return useStore.getState().snapshots[accountId]?.chats.find((c) => c.id === ev.threadId || (link && c.meeting?.joinUrl && normalizeJoinUrl(c.meeting.joinUrl) === link))
-  }
-
-  // Besprechungschat: im bevorzugten Konto, sonst in einem anderen eingeladenen, das ihn kennt
-  const chatTarget = (m: Merged) => {
-    for (const s of [preferred(m), ...m.sources]) {
-      const chat = chatFor(s.accountId, s.event)
-      if (chat) return { accountId: s.accountId, chatId: chat.id }
-    }
-    return undefined
-  }
-
   const openChat = (target: { accountId: string; chatId: string }) => {
     const st = useStore.getState()
     st.setActiveAccount(target.accountId)
@@ -165,7 +151,7 @@ export function CalendarView(): JSX.Element {
 
   // Hat die Kopie eines Kontos keinen Link, gilt der einer anderen Kopie derselben Besprechung
   const joinUrlFor = (m: Merged, accountId: string) =>
-    m.sources.find((s) => s.accountId === accountId)?.event.joinUrl ?? m.sources.find((s) => s.event.joinUrl)?.event.joinUrl
+    m.sources.find((s) => s.accountId === accountId)?.event.joinUrl || m.sources.find((s) => s.event.joinUrl)?.event.joinUrl
 
   const join = (m: Merged, accountId: string) => {
     const url = joinUrlFor(m, accountId)
@@ -360,16 +346,7 @@ export function CalendarView(): JSX.Element {
             <EventDetails m={open.m} multi={multi} byId={byId} color={color} />
             <div style={{ display: 'flex', gap: 8 }}>
               {open.m.sources.some((s) => s.event.joinUrl) && <JoinButton m={open.m} preferred={preferred(open.m).accountId} byId={byId} onJoin={(id) => join(open.m, id)} />}
-              {(() => {
-                const target = chatTarget(open.m)
-                return (
-                  target && (
-                    <Button icon={<Chat20Regular />} onClick={() => openChat(target)}>
-                      Chat
-                    </Button>
-                  )
-                )
-              })()}
+              <ChatButton m={open.m} preferred={preferred(open.m).accountId} onOpen={openChat} />
             </div>
           </PopoverSurface>
         </Popover>
@@ -425,6 +402,26 @@ function EventDetails({ m, multi, byId, color }: { m: Merged; multi: boolean; by
       <div style={{ height: 6 }} />
     </>
   )
+}
+
+// Besprechungschat: im bevorzugten Konto, sonst in einem anderen eingeladenen, das ihn kennt.
+// Hört auf die Snapshots, damit der Knopf erscheint, sobald ein Chat nachgeladen ist.
+function ChatButton({ m, preferred, onOpen }: { m: Merged; preferred: string; onOpen: (target: { accountId: string; chatId: string }) => void }): JSX.Element | null {
+  const snapshots = useStore((s) => s.snapshots)
+  const sources = [...m.sources.filter((s) => s.accountId === preferred), ...m.sources.filter((s) => s.accountId !== preferred)]
+  for (const s of sources) {
+    const link = s.event.joinUrl && normalizeJoinUrl(s.event.joinUrl)
+    const chat = snapshots[s.accountId]?.chats.find((c) => c.id === s.event.threadId || (link && c.meeting?.joinUrl && normalizeJoinUrl(c.meeting.joinUrl) === link))
+    if (chat) {
+      const target = { accountId: s.accountId, chatId: chat.id }
+      return (
+        <Button icon={<Chat20Regular />} onClick={() => onOpen(target)}>
+          Chat
+        </Button>
+      )
+    }
+  }
+  return null
 }
 
 // Mit mehreren eingeladenen Konten lässt sich wählen, mit welchem man teilnimmt.
