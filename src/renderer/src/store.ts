@@ -4,7 +4,7 @@ import type { AccountInfo, AccountSnapshot, AppSettings, CallState, Presence, Up
 import { api, onEvent } from './api'
 import { track } from './analytics'
 
-export type View = 'activity' | 'chat' | 'teams' | 'calendar' | 'calls' | 'settings'
+export type View = 'activity' | 'chat' | 'teams' | 'mail' | 'calendar' | 'calls' | 'settings'
 
 export interface Selection {
   chatId?: string

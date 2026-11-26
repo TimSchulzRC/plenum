@@ -39,6 +39,7 @@ Das Update braucht Schreibrechte auf die App und ihren Ordner und klappt nicht, 
 - Chat-Liste wie in Teams: Favoriten (per Ziehen oder Rechtsklick sortierbar), eigene Abschnitte, Chats, Teams und Kanäle
 - Nachrichten senden, bearbeiten, löschen, zitieren (Klick aufs Zitat springt zur Originalnachricht), Reaktionen, Lesebestätigung, große Emojis
 - Kanäle mit Beiträgen und Antworten, Aktivität, Kalender (Woche/Arbeitswoche, Teilnehmen), Anrufverlauf, Personensuche
+- E-Mail aller Konten: Ordner, gemeinsamer Posteingang, Lesen (externe Bilder erst auf Wunsch), Antworten, Allen antworten, Weiterleiten, neue Mail mit Anhängen bis 3 MB, als ungelesen markieren, löschen
 - Status setzen, Benachrichtigungen, Dock-Badge
 - Besprechungen und Anrufe: Vorschau, Kamera, Mikrofon, Hand heben, Reaktionen, Hintergrundbilder (inkl. eigener Bilder), Geräteauswahl, Bildschirm teilen, Pop-out einzelner Videos in eigene Fenster, Kompaktansicht immer im Vordergrund, eingehende Anrufe
 - macOS-Videoeffekte (Menüleiste) stehen zur Verfügung, solange die App im Vordergrund ist
@@ -64,7 +65,7 @@ Die App sendet anonyme Nutzungsdaten und Fehlerberichte an PostHog (EU). Nachric
 
 ## Aufbau
 
-- **Engine pro Konto** (`src/main/engine/`): ein verstecktes Fenster mit `teams.microsoft.com` in einer eigenen Sitzung (`persist:acct-<id>`). Die App liest die Auth-Header der Web-App mit (`tokens.ts`) und ruft dieselben internen Dienste auf wie sie: Chat-Dienst, CSA (Teams, Kanäle, Ordner), Middle Tier (Personen, Kalender), Präsenz.
+- **Engine pro Konto** (`src/main/engine/`): ein verstecktes Fenster mit `teams.microsoft.com` in einer eigenen Sitzung (`persist:acct-<id>`). Die App liest die Auth-Header der Web-App mit (`tokens.ts`) und ruft dieselben internen Dienste auf wie sie: Chat-Dienst, CSA (Teams, Kanäle, Ordner), Middle Tier (Personen, Kalender), Präsenz. E-Mail läuft über Microsoft Graph mit dem Graph-Token der Web-App, sonst über Outlook REST. Senden geht immer über Outlook, nur dessen Token hat `Mail.Send`.
 - **Skript in der Web-App** (`src/preload/engine-main.ts`): hält die Seite „sichtbar“, liest Anrufzustand, Teilnehmer und Videostreams aus, bedient Knöpfe (Stummschalten, Kamera, Hand, Hintergründe, Geräte) und schickt Video über eine lokale WebRTC-Verbindung an die eigenen Fenster.
 - **Oberfläche** (`src/renderer/`): React mit Fluent UI. Hauptfenster, Anruffenster, Pop-out-Fenster für einzelne Videos, Klingelfenster.
 - **MCP-Server** (`src/main/mcp/`): HTTP-Server auf 127.0.0.1 mit JSON-RPC nach MCP (Streamable HTTP, ohne SSE). `tools.ts` enthält die lesenden Werkzeuge, `source.ts` verbindet sie mit den Konten. Einstellungen und Schlüssel liegen in `mcp.json` im Datenordner.

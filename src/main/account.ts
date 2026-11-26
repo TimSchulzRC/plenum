@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { Engine, enginePreloadPath } from './engine/engine'
 import { TeamsApi, ApiError, clientMessageId } from './engine/api'
 import { amsImageIds, replaceInlineImages } from './engine/ams'
+import { contentId, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN } from './engine/mail'
 import {
   conversationKind,
   htmlToText,
@@ -25,6 +26,12 @@ import type {
   Availability,
   CalendarEvent,
   NewCalendarEvent,
+  MailDraft,
+  MailFolder,
+  MailFolderKind,
+  MailMessage,
+  MailPage,
+  MailReplyKind,
   CallLogEntry,
   Channel,
   ChannelThread,
@@ -1267,6 +1274,104 @@ export class AccountService extends EventEmitter<AccountEvents> {
     log.info(`[calendar] Termin angelegt über ${source}`)
   }
 
+  // ---------- E-Mail ----------
+
+  // Welche Ordner-ID zu welchem Standardordner gehört, ändert sich nicht: einmal je Sitzung fragen
+  // Die Abfragen laufen nacheinander: Exchange drosselt schon bei wenigen gleichzeitigen Anfragen je
+  // Postfach (429, im Live-Test bei sieben). Was dabei scheitert, fragt der nächste Abruf erneut,
+  // was es nicht gibt (404, z. B. kein Archiv), nicht mehr. Die Zuordnung ändert sich nicht.
+  private mailKinds = new Map<string, MailFolderKind>()
+  private mailKindsDone = new Set<MailFolderKind>()
+  // Gleichzeitige Abrufe (Neu laden während des Zwei-Minuten-Abrufs) teilen sich einen
+  private mailFoldersRun?: Promise<MailFolder[]>
+
+  private async resolveMailKinds(): Promise<void> {
+    for (const k of WELL_KNOWN) {
+      if (this.mailKindsDone.has(k)) continue
+      try {
+        const f = await this.api.mailWellKnown(k)
+        this.mailKinds.set(String(f.id), k)
+        this.mailKindsDone.add(k)
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) this.mailKindsDone.add(k)
+      }
+    }
+  }
+
+  getMailFolders(): Promise<MailFolder[]> {
+    this.mailFoldersRun ??= (async () => {
+      const list = await this.api.mailFolders()
+      await this.resolveMailKinds()
+      const items: any[] = list?.value ?? []
+      return sortFolders(items.map((f) => mapFolder(f, this.mailKinds.get(String(f.id)))))
+    })().finally(() => {
+      this.mailFoldersRun = undefined
+    })
+    return this.mailFoldersRun
+  }
+
+  // null, solange die Web-App noch keinen Token für Mail angefordert hat (kein Fehler, nur noch nichts da)
+  async getMailUnread(): Promise<number | null> {
+    if (!this.api.hasMailToken()) return null
+    const f = await this.api.mailWellKnown('inbox')
+    return Number(f?.unreadItemCount) || 0
+  }
+
+  async listMail(folderId: string, next?: string): Promise<MailPage> {
+    const res = await this.api.mailMessages(folderId, next)
+    const items: any[] = res?.value ?? []
+    return { items: items.map((m) => mapSummary(m, this.id)), next: res?.['@odata.nextLink'] || undefined }
+  }
+
+  async getMail(id: string): Promise<MailMessage> {
+    const [m, att] = await Promise.all([this.api.mailMessage(id), listAttachments(this.api, id)])
+    const attachments = att.map(mapAttachment)
+    const body = String(m?.body?.content ?? '')
+    // Eingebettete Bilder (cid:…) als data:-URL, zusammen höchstens 8 MB. Was das HTML nicht
+    // einbettet, bleibt in der Anhangsliste.
+    const inlineImages: Record<string, string> = {}
+    const embedded = new Set<string>()
+    let budget = 8 * 1024 * 1024
+    for (const a of attachments.filter((x) => x.isInline).slice(0, 20)) {
+      if (a.size > budget) continue
+      try {
+        const full = await this.api.mailAttachment(id, a.id)
+        const cid = contentId(full?.contentId)
+        if (!cid || typeof full?.contentBytes !== 'string' || !body.includes(`cid:${cid}`)) continue
+        inlineImages[cid] = `data:${full.contentType || 'application/octet-stream'};base64,${full.contentBytes}`
+        embedded.add(a.id)
+        budget -= a.size
+      } catch (e) {
+        log.warn('[mail] Eingebettetes Bild nicht geladen', (e as Error).message)
+      }
+    }
+    return mapMessage(m, this.id, attachments.filter((a) => !embedded.has(a.id)), inlineImages)
+  }
+
+  async getMailAttachment(id: string, attachmentId: string): Promise<{ name: string; data: Uint8Array }> {
+    const a = await this.api.mailAttachment(id, attachmentId)
+    if (typeof a?.contentBytes !== 'string') throw new Error('Diesen Anhang kann die App nicht öffnen (keine Datei, z. B. eine angehängte Mail oder ein Link)')
+    return { name: a.name || 'Anhang', data: Buffer.from(a.contentBytes, 'base64') }
+  }
+
+  async setMailRead(id: string, isRead: boolean): Promise<void> {
+    await this.api.setMailRead(id, isRead)
+  }
+
+  async deleteMail(id: string): Promise<void> {
+    await this.api.moveMail(id, 'deleteditems')
+  }
+
+  async sendMail(draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): Promise<void> {
+    if (!draft.to.length && !draft.cc.length) throw new Error('Mindestens ein Empfänger fehlt')
+    const big = draft.attachments.find((f) => Buffer.from(f.data, 'base64').length > MAX_ATTACHMENT_BYTES)
+    if (big) throw new Error(`${big.name} ist größer als 3 MB`)
+    const draftId = await this.api.createMailDraft(draft, reply)
+    for (const f of draft.attachments) await this.api.addMailAttachment(draftId, f)
+    const { source } = await this.api.sendMailDraft(draftId)
+    log.info(`[mail] gesendet über ${source}`)
+  }
+
   async getActivity(): Promise<ActivityItem[]> {
     const res = await this.api.messages('48:notifications', 60)
     const items = (res?.messages ?? []).map((m: any) => mapActivity(m, this.names)).filter(Boolean) as ActivityItem[]
@@ -1358,5 +1463,15 @@ function safeThreadId(data: unknown): string | undefined {
     return (d as any)?.threadId
   } catch {
     return undefined
+  }
+}
+
+async function listAttachments(api: TeamsApi, id: string): Promise<any[]> {
+  try {
+    const res = await api.mailAttachments(id)
+    return res?.value ?? []
+  } catch (e) {
+    log.warn('[mail] Anhänge nicht geladen', (e as Error).message)
+    return []
   }
 }

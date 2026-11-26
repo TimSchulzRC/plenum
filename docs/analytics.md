@@ -34,7 +34,7 @@ Aktionen aus der Oberfläche tragen zusätzlich `duration_ms`, die Dauer des Auf
 | `app_started` | Start | `launch_ms`, `first_launch`, `updated_from`, `notifications` |
 | `app_updated` | erster Start nach einem Update | `from_version` |
 | `app_focused` | ein Fenster der App bekommt den Fokus, höchstens alle 30 Minuten | `route` |
-| `$screen` | Ansicht gewechselt | `$screen_name`: `welcome`, `chat`, `teams`, `activity`, `calendar`, `calls`, `settings` |
+| `$screen` | Ansicht gewechselt | `$screen_name`: `welcome`, `chat`, `teams`, `activity`, `mail`, `calendar`, `calls`, `settings` |
 | `keyboard_shortcut` | Tastenkürzel im Hauptfenster | `shortcut` |
 | `setting_changed` | Einstellung geändert | `setting`, `value` |
 | `feedback_sent` | Feedback abgeschickt | `kind`, `message`, `message_length` |
@@ -74,6 +74,15 @@ Aktionen aus der Oberfläche tragen zusätzlich `duration_ms`, die Dauer des Auf
 | Ereignis | Wann | Eigenschaften |
 | --- | --- | --- |
 | `calendar_event_created` | Termin angelegt | `all_day`, `teams_meeting`, `attendees` (Anzahl), `has_location`, `has_body` |
+
+### E-Mail
+
+| Ereignis | Wann | Eigenschaften |
+| --- | --- | --- |
+| `mail_sent` | Mail gesendet, beantwortet oder weitergeleitet | `kind` (`new`, `reply`, `replyAll`, `forward`), `recipients` (Anzahl), `attachments` (Anzahl) |
+| `mail_marked` | als gelesen oder ungelesen markiert | `read` |
+| `mail_deleted` | Mail gelöscht (nach „Gelöschte Elemente“) | |
+| `mail_attachment_opened` | Anhang geöffnet oder gespeichert | `mode` (`open`, `save`) |
 
 ### Anrufe und Besprechungen
 

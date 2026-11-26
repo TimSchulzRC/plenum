@@ -198,6 +198,84 @@ export interface NewCalendarEvent {
   body?: string
 }
 
+// ---------- E-Mail ----------
+
+export interface MailAddress {
+  name?: string
+  address: string
+}
+
+// Bekannte Ordner, damit die Oberfläche sie oben und mit eigenem Symbol zeigt
+export type MailFolderKind = 'inbox' | 'drafts' | 'sentitems' | 'archive' | 'deleteditems' | 'junkemail'
+
+export interface MailFolder {
+  id: string
+  name: string
+  kind?: MailFolderKind
+  unread: number
+  total: number
+}
+
+export interface MailSummary {
+  id: string
+  accountId: string
+  conversationId?: string
+  subject: string
+  from?: MailAddress
+  to: MailAddress[]
+  preview: string
+  received: number
+  isRead: boolean
+  isDraft: boolean
+  hasAttachments: boolean
+  importance: 'low' | 'normal' | 'high'
+  flagged: boolean
+}
+
+export interface MailAttachment {
+  id: string
+  name: string
+  contentType?: string
+  size: number
+  isInline: boolean
+}
+
+export interface MailMessage extends MailSummary {
+  cc: MailAddress[]
+  // Antwortadresse, wenn der Absender eine andere als From angibt
+  replyTo: MailAddress[]
+  bodyType: 'html' | 'text'
+  body: string
+  attachments: MailAttachment[]
+  // Eingebettete Bilder (cid:…) als data:-URL, Schlüssel ist die Content-ID ohne spitze Klammern
+  inlineImages: Record<string, string>
+}
+
+export interface MailPage {
+  items: MailSummary[]
+  // Nächste Seite (nur Graph-Adressen)
+  next?: string
+}
+
+export interface MailFile {
+  name: string
+  contentType: string
+  // Base64
+  data: string
+}
+
+// Neue Mail, Antwort oder Weiterleitung. text ist der eigene Text (Klartext), bei Antworten hängt
+// Graph die ursprüngliche Nachricht selbst darunter.
+export interface MailDraft {
+  to: string[]
+  cc: string[]
+  subject: string
+  text: string
+  attachments: MailFile[]
+}
+
+export type MailReplyKind = 'reply' | 'replyAll' | 'forward'
+
 export type ActivityType = 'mention' | 'reply' | 'reaction' | 'call' | 'meeting' | 'membership' | 'like' | 'other'
 
 export interface ActivityItem {

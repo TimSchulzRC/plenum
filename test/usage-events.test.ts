@@ -69,3 +69,11 @@ test('Neuer Termin: nur Merkmale, nie Titel, Ort, Text oder Adressen', () => {
   })
   assert.doesNotMatch(JSON.stringify(spec), /Geheim|Elbe|fabrikam|Agenda|acc-1/)
 })
+
+test('Mail gesendet: Art und Anzahl, nie Adressen, Betreff, Text oder Dateinamen', () => {
+  const draft = { to: ['kim@fabrikam.de'], cc: ['robin@fabrikam.de'], subject: 'Geheim', text: 'Vertraulich', attachments: [{ name: 'plan.pdf', contentType: 'application/pdf', data: 'AAA' }] }
+  const spec = usageFor('sendMail', ['acc-1', draft, { id: 'AAMk', kind: 'replyAll' }], ctx)
+  assert.deepEqual(spec, { event: 'mail_sent', props: { kind: 'replyAll', recipients: 2, attachments: 1 } })
+  assert.doesNotMatch(JSON.stringify(spec), /fabrikam|Geheim|Vertraulich|plan|AAMk|acc-1/)
+  assert.equal(usageFor('sendMail', ['acc-1', draft], ctx)?.props?.kind, 'new')
+})

@@ -6,6 +6,7 @@ import { copyLoginCookies, engineSession } from './engine/engine'
 import { CallManager } from './calls'
 import { handleMediaProtocol, registerMediaScheme } from './media-protocol'
 import { imageAction } from './image-actions'
+import { deliverAttachment } from './mail-files'
 import { store } from './store'
 import { createMainWindow, uiWindows } from './windows'
 import { Updater } from './updater'
@@ -328,6 +329,17 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     removeFromFolder: (id, folderId, itemId) => get(id).folderActions([{ action: 'RemoveItem', folderId, itemId }]),
     getCalendar: (id, s, e) => get(id).getCalendar(s, e),
     createEvent: (id, ev) => get(id).createEvent(ev),
+    getMailFolders: (id) => get(id).getMailFolders(),
+    getMailUnread: (id) => get(id).getMailUnread(),
+    listMail: (id, folderId, next) => get(id).listMail(folderId, next),
+    getMail: (id, mid) => get(id).getMail(mid),
+    openMailAttachment: async (id, mid, aid, mode) => {
+      const { name, data } = await get(id).getMailAttachment(mid, aid)
+      await deliverAttachment(sender(), name, data, mode)
+    },
+    setMailRead: (id, mid, isRead) => get(id).setMailRead(mid, isRead),
+    deleteMail: (id, mid) => get(id).deleteMail(mid),
+    sendMail: (id, draft, reply) => get(id).sendMail(draft, reply),
     getActivity: (id) => get(id).getActivity(),
     markActivityRead: (id) => get(id).markActivityRead(),
     getCallHistory: (id) => get(id).getCallHistory(),

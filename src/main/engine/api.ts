@@ -1,10 +1,32 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Engine } from './engine'
-import type { Family } from './tokens'
+import { OUTLOOK_AUDIENCES, type Family } from './tokens'
 import { log } from '../log'
 import { uploadAmsImage } from './ams'
-import { firstWriter, graphEventBody, outlookEventBody } from './events'
-import type { NewCalendarEvent } from '@shared/types'
+import { firstWriter, graphEventBody, mayTryNextWriter, outlookEventBody } from './events'
+import {
+  attachmentBody,
+  attachmentUrl,
+  attachmentsUrl,
+  camelize,
+  CREATE_REPLY,
+  folderListUrl,
+  folderName,
+  MAIL_BASE,
+  MAIL_TEXTS,
+  mailPageApi,
+  messageActionUrl,
+  messageUrl,
+  messagesUrl,
+  newDraftBody,
+  NO_MAIL_TOKEN,
+  pascalize,
+  recipientsPatch,
+  replyDraftBody,
+  wellKnownUrl,
+  type MailApi
+} from './mail'
+import type { MailDraft, MailFile, MailFolderKind, MailReplyKind, NewCalendarEvent } from '@shared/types'
 
 export class ApiError extends Error {
   constructor(
@@ -259,12 +281,122 @@ export class TeamsApi {
     if (tokens.has('graph') || tokens.findBearer('graph.microsoft.com')) {
       tries.push(['graph', () => this.json('graph', 'https://graph.microsoft.com/v1.0/me/events', { method: 'POST', body: graphEventBody(ev) })])
     }
-    if (tokens.has('outlook') || tokens.findBearer('outlook.office')) {
+    const outlook = tokens.bearerFor(OUTLOOK_AUDIENCES)
+    if (outlook) {
       const version = ev.teamsMeeting ? 'beta' : 'v2.0'
-      tries.push(['outlook', () => this.json('outlook', `https://outlook.office.com/api/${version}/me/events`, { method: 'POST', body: outlookEventBody(ev) })])
+      const headers = { authorization: `Bearer ${outlook}` }
+      tries.push(['outlook', () => this.json('outlook', `https://outlook.office.com/api/${version}/me/events`, { method: 'POST', body: outlookEventBody(ev), headers })])
     }
     try {
       return await firstWriter(tries)
+    } catch (e) {
+      throw new ApiError((e as { status?: number }).status ?? 0, (e as Error).message)
+    }
+  }
+
+  // ---------- E-Mail: Graph, sonst Outlook (siehe mail.ts) ----------
+  private mailApis(order: MailApi[]): MailApi[] {
+    const t = this.engine.tokens
+    return order.filter((a) => (a === 'graph' ? t.has('graph') || !!t.findBearer('graph.microsoft.com') : !!t.bearerFor(OUTLOOK_AUDIENCES)))
+  }
+
+  hasMailToken(): boolean {
+    return this.mailApis(['graph', 'outlook']).length > 0
+  }
+
+  // Outlook mit dem Mail-Token (nicht dem Such-Token), Anfrage in PascalCase, Antwort in camelCase.
+  // Bei 401 noch einmal mit dem Token, den die Web-App inzwischen erneuert hat.
+  private async mailRequest<T = any>(api: MailApi, url: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+    if (api === 'graph') return this.json('graph', url, init)
+    const body = init.body === undefined ? undefined : pascalize(init.body)
+    const send = (token: string) => this.json('outlook', url, { ...init, body, headers: { authorization: `Bearer ${token}` } }).then(camelize)
+    const token = this.engine.tokens.bearerFor(OUTLOOK_AUDIENCES)
+    if (!token) throw new ApiError(0, NO_MAIL_TOKEN)
+    try {
+      return await send(token)
+    } catch (e) {
+      const fresh = this.engine.tokens.bearerFor(OUTLOOK_AUDIENCES)
+      if (!(e instanceof ApiError && e.status === 401) || !fresh || fresh === token) throw e
+      return send(fresh)
+    }
+  }
+
+  // Erster Weg, der klappt. Zum nächsten nur, wenn der vorige sicher nichts getan hat (mayTryNextWriter),
+  // auch beim Schreiben: sonst entstünde ein Entwurf doppelt.
+  private async mail<T = any>(build: (api: MailApi) => [string, { method?: string; body?: unknown }?]): Promise<T> {
+    const apis = this.mailApis(['graph', 'outlook'])
+    if (!apis.length) throw new ApiError(0, NO_MAIL_TOKEN)
+    let last: unknown
+    for (const api of apis) {
+      const [url, init] = build(api)
+      try {
+        return await this.mailRequest<T>(api, url, init)
+      } catch (e) {
+        last = e
+        if (!(e instanceof ApiError && mayTryNextWriter(e.status))) throw e
+      }
+    }
+    throw last
+  }
+
+  mailFolders(): Promise<any> {
+    return this.mail((api) => [folderListUrl(api)])
+  }
+
+  mailWellKnown(kind: MailFolderKind): Promise<any> {
+    return this.mail((api) => [wellKnownUrl(api, kind)])
+  }
+
+  // Folgeseiten gehen an den Dienst, der sie geliefert hat
+  mailMessages(folderId: string, next?: string): Promise<any> {
+    if (next === undefined) return this.mail((api) => [messagesUrl(api, folderId)])
+    const api = mailPageApi(next)
+    if (!api) throw new ApiError(0, 'Ungültige Folgeseite')
+    return this.mailRequest(api, next)
+  }
+
+  mailMessage(id: string): Promise<any> {
+    return this.mail((api) => [messageUrl(api, id)])
+  }
+
+  mailAttachments(id: string): Promise<any> {
+    return this.mail((api) => [attachmentsUrl(api, id)])
+  }
+
+  mailAttachment(id: string, attachmentId: string): Promise<any> {
+    return this.mail((api) => [attachmentUrl(api, id, attachmentId)])
+  }
+
+  setMailRead(id: string, isRead: boolean): Promise<any> {
+    return this.mail((api) => [messageActionUrl(api, id), { method: 'PATCH', body: { isRead } }])
+  }
+
+  // In „Gelöschte Elemente“ verschieben, wie Entf in Outlook
+  moveMail(id: string, destination: MailFolderKind): Promise<any> {
+    return this.mail((api) => [messageActionUrl(api, id, 'move'), { method: 'POST', body: { destinationId: folderName(api, destination) } }])
+  }
+
+  // Entwurf: neue Mail oder Antwort/Weiterleitung mit Zitat, bei Antworten danach die Empfänger
+  async createMailDraft(draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): Promise<string> {
+    const res = reply
+      ? await this.mail((api) => [messageActionUrl(api, reply.id, CREATE_REPLY[api][reply.kind]), { method: 'POST', body: replyDraftBody(draft, reply.kind) }])
+      : await this.mail((api) => [`${MAIL_BASE[api]}/messages`, { method: 'POST', body: newDraftBody(draft) }])
+    if (!res?.id) throw new ApiError(0, 'Kein Entwurf angelegt')
+    const id = String(res.id)
+    if (reply) await this.mail((api) => [messageActionUrl(api, id), { method: 'PATCH', body: recipientsPatch(draft) }])
+    return id
+  }
+
+  addMailAttachment(draftId: string, file: MailFile): Promise<any> {
+    return this.mail((api) => [messageActionUrl(api, draftId, 'attachments'), { method: 'POST', body: attachmentBody(file) }])
+  }
+
+  // Entwurf verschicken. Mail.Send hat nur der Outlook-Token der Web-App, Graph kommt nur dran, wenn
+  // Outlook sicher nichts verschickt hat (siehe firstWriter), etwa weil ein Token fehlt.
+  async sendMailDraft(draftId: string): Promise<{ source: string }> {
+    const tries = this.mailApis(['outlook', 'graph']).map((api): [string, () => Promise<any>] => [api, () => this.mailRequest(api, messageActionUrl(api, draftId, 'send'), { method: 'POST' })])
+    try {
+      return await firstWriter(tries, MAIL_TEXTS)
     } catch (e) {
       throw new ApiError((e as { status?: number }).status ?? 0, (e as Error).message)
     }

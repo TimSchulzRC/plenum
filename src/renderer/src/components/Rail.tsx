@@ -7,6 +7,8 @@ import {
   CalendarLtr24Regular,
   Call24Filled,
   Call24Regular,
+  Mail24Filled,
+  Mail24Regular,
   Settings24Regular,
   Settings24Filled
 } from '@fluentui/react-icons'
@@ -15,6 +17,7 @@ import type { ComponentType } from 'react'
 import { chatBadge } from '@shared/badge'
 import { useActive, useStore, type View } from '../store'
 import { UpdateButton } from './UpdateButton'
+import { useMailUnread, useMailUnreadPolling } from '../lib/mail-unread'
 
 interface Item {
   view: View
@@ -27,15 +30,19 @@ interface Item {
 const ITEMS: Item[] = [
   { view: 'activity', label: 'Aktivität', shortcut: '⌘ 1', icon: Alert24Regular, active: Alert24Filled },
   { view: 'chat', label: 'Chat', shortcut: '⌘ 2', icon: Chat24Regular, active: Chat24Filled },
-  { view: 'calendar', label: 'Kalender', shortcut: '⌘ 3', icon: CalendarLtr24Regular, active: CalendarLtr24Filled },
-  { view: 'calls', label: 'Anrufe', shortcut: '⌘ 4', icon: Call24Regular, active: Call24Filled }
+  { view: 'mail', label: 'E-Mail', shortcut: '⌘ 3', icon: Mail24Regular, active: Mail24Filled },
+  { view: 'calendar', label: 'Kalender', shortcut: '⌘ 4', icon: CalendarLtr24Regular, active: CalendarLtr24Filled },
+  { view: 'calls', label: 'Anrufe', shortcut: '⌘ 5', icon: Call24Regular, active: Call24Filled }
 ]
 
 export function Rail(): JSX.Element {
   const view = useStore((s) => s.view)
   const accounts = useStore((s) => s.accounts)
   const { account } = useActive()
+  useMailUnreadPolling()
+  const mail = useMailUnread((s) => Object.values(s.counts).reduce((n, c) => n + c, 0))
   const badges: Partial<Record<View, number>> = {
+    mail,
     activity: account?.activityUnread ?? 0,
     // Die Chatliste zeigt alle Konten, also zählt der Chat-Knopf auch alle
     chat: accounts.reduce((n, a) => n + chatBadge(a), 0)

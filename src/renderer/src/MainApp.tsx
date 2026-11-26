@@ -13,13 +13,14 @@ import { initStore, useActive, useStore, type View } from './store'
 import { ActivityView } from './views/ActivityView'
 import { CalendarView } from './views/CalendarView'
 import { CallsView } from './views/CallsView'
+import { MailView } from './views/MailView'
 import { ChatView } from './views/ChatView'
 import { SettingsView } from './views/SettingsView'
 import { TeamsView } from './views/TeamsView'
 
 initStore()
 
-const KEYS: Record<string, View> = { '1': 'activity', '2': 'chat', '3': 'calendar', '4': 'calls' }
+const KEYS: Record<string, View> = { '1': 'activity', '2': 'chat', '3': 'mail', '4': 'calendar', '5': 'calls' }
 
 export default function MainApp(): JSX.Element {
   const accounts = useStore((s) => s.accounts)
@@ -56,6 +57,7 @@ export default function MainApp(): JSX.Element {
 
   let content: JSX.Element
   if (view === 'settings') content = <SettingsView />
+  else if (view === 'mail') content = <MailView />
   else if (!snapshot) content = <Loading />
   else if (view === 'chat') content = <ChatView />
   else if (view === 'teams') content = <TeamsView />

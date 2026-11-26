@@ -6,6 +6,11 @@ import type {
   BridgeMessage,
   CalendarEvent,
   NewCalendarEvent,
+  MailDraft,
+  MailFolder,
+  MailMessage,
+  MailPage,
+  MailReplyKind,
   CallAction,
   CallLogEntry,
   CallState,
@@ -69,6 +74,15 @@ export interface ApiMethods {
   removeFromFolder(accountId: string, folderId: string, itemId: string): void
   getCalendar(accountId: string, start: number, end: number): CalendarEvent[]
   createEvent(accountId: string, event: NewCalendarEvent): void
+  // E-Mail über Graph. Gastmandanten haben kein Postfach.
+  getMailFolders(accountId: string): MailFolder[]
+  getMailUnread(accountId: string): number | null
+  listMail(accountId: string, folderId: string, next?: string): MailPage
+  getMail(accountId: string, messageId: string): MailMessage
+  openMailAttachment(accountId: string, messageId: string, attachmentId: string, mode: 'open' | 'save'): void
+  setMailRead(accountId: string, messageId: string, isRead: boolean): void
+  deleteMail(accountId: string, messageId: string): void
+  sendMail(accountId: string, draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): void
   getActivity(accountId: string): ActivityItem[]
   markActivityRead(accountId: string): void
   getCallHistory(accountId: string): CallLogEntry[]
