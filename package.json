@@ -29,7 +29,8 @@
     "dist": "electron-vite build && electron-builder --mac --dir",
     "dist:dmg": "electron-vite build && electron-builder --mac dmg",
     "dist:release": "electron-vite build && electron-builder --mac dmg zip --arm64 --x64 --publish never",
-    "icons": "node scripts/icons.mjs"
+    "icons": "node scripts/icons.mjs",
+    "teams-emoji": "node scripts/teams-emoji.mjs"
   },
   "devDependencies": {
     "@fluentui/react-components": "^9.75.2",

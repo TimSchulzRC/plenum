@@ -1,4 +1,4 @@
-import { Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Tooltip } from '@fluentui/react-components'
+import { Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Popover, PopoverSurface, PopoverTrigger, Tooltip } from '@fluentui/react-components'
 import {
   MoreHorizontal20Regular,
   Copy20Regular,
@@ -8,7 +8,8 @@ import {
   Call20Regular,
   Video20Regular,
   Important16Filled,
-  TextQuote20Regular
+  TextQuote20Regular,
+  EmojiAdd20Regular
 } from '@fluentui/react-icons'
 import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Message } from '@shared/types'
@@ -16,6 +17,7 @@ import { api } from '../api'
 import { clock, messageTime } from '../lib/format'
 import { fitImage, isImageOnly, reactionEmoji, renderMessageHtml, REACTIONS } from '../lib/html'
 import { PersonAvatar } from './Avatars'
+import { EmojiPicker } from './EmojiPicker'
 import { openImage } from './ImageViewer'
 
 interface Props {
@@ -183,6 +185,7 @@ function isEmojiOnly(msg: Message): boolean {
 export const MessageItem = memo(function MessageItem({ msg, accountId, myMri, myName, showHeader, names, onReply, onEdit, onChanged }: Props) {
   const [hover, setHover] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
   if (msg.kind === 'system') {
     return msg.systemText ? <div className="msg-system">{msg.systemText}</div> : null
   }
@@ -204,7 +207,7 @@ export const MessageItem = memo(function MessageItem({ msg, accountId, myMri, my
     const has = msg.reactions.find((r) => r.key === key)?.users.some((u) => u.mri === myMri)
     void api.setReaction(accountId, msg.conversationId, msg.id, key, !has).then(() => onChanged?.())
   }
-  const showToolbar = (hover || menuOpen) && msg.kind !== 'deleted' && !msg.pending
+  const showToolbar = (hover || menuOpen || pickerOpen) && msg.kind !== 'deleted' && !msg.pending
   return (
     <div className={`msg-row ${mine ? 'mine' : ''} ${showHeader ? 'first' : ''}`} data-mid={msg.id}>
       {!mine && <div className="msg-avatar">{showHeader && <PersonAvatar mri={msg.from} name={msg.fromName || names(msg.from)} size={32} />}</div>}
@@ -227,6 +230,21 @@ export const MessageItem = memo(function MessageItem({ msg, accountId, myMri, my
                   {r.emoji}
                 </button>
               ))}
+              <Popover open={pickerOpen} onOpenChange={(_e, d) => setPickerOpen(d.open)} positioning="below-end" trapFocus>
+                <PopoverTrigger disableButtonEnhancement>
+                  <button className="tool" title="Weitere Reaktionen">
+                    <EmojiAdd20Regular />
+                  </button>
+                </PopoverTrigger>
+                <PopoverSurface style={{ padding: 0 }}>
+                  <EmojiPicker
+                    onPick={(id) => {
+                      setPickerOpen(false)
+                      react(id)
+                    }}
+                  />
+                </PopoverSurface>
+              </Popover>
               <span className="sep" />
               {canEdit && (
                 <Tooltip content="Bearbeiten" relationship="label">

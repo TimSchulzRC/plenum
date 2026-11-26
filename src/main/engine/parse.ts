@@ -262,7 +262,7 @@ export function mapActivity(raw: any, names: NameLookup): ActivityItem | null {
   }
   const type = typeMap[rawType] || 'other'
   const actorName = act.sourceUserImDisplayName || names(act.sourceUserId) || act.sourceAppDisplayName || ''
-  const reactionEmoji: Record<string, string> = { like: '👍', heart: '❤️', laugh: '😆', surprised: '😮', sad: '😢', angry: '😡' }
+  const reactionEmoji: Record<string, string> = { like: '👍', heart: '❤️', laugh: '😆', surprised: '😮', sad: '🙁', angry: '😠' }
   let title = ''
   switch (rawType) {
     case 'mention':

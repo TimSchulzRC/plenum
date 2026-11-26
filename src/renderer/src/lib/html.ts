@@ -1,6 +1,7 @@
 import DOMPurify from 'dompurify'
 import { needsProxy, proxyUrl } from './media'
 import { messageTime } from './format'
+import catalog from './teams-emoji.json'
 
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (node.tagName === 'A') {
@@ -134,34 +135,53 @@ export const REACTIONS: { key: string; emoji: string; label: string }[] = [
   { key: 'heart', emoji: '❤️', label: 'Herz' },
   { key: 'laugh', emoji: '😆', label: 'Lachen' },
   { key: 'surprised', emoji: '😮', label: 'Überrascht' },
-  { key: 'sad', emoji: '😢', label: 'Traurig' },
-  { key: 'angry', emoji: '😡', label: 'Wütend' }
+  { key: 'sad', emoji: '🙁', label: 'Traurig' },
+  { key: 'angry', emoji: '😠', label: 'Wütend' }
 ]
 
+// Ältere Schlüssel, die im Teams-Katalog fehlen
 const EXTRA: Record<string, string> = {
-  yes: '✅',
-  no: '❌',
-  clap: '👏',
-  fire: '🔥',
   thinking: '🤔',
   pray: '🙏',
-  party: '🎉',
   tada: '🎉',
-  smile: '🙂',
-  wink: '😉',
-  cool: '😎',
-  cry: '😭',
-  muscle: '💪',
   rocket: '🚀',
-  eyes: '👀',
-  ok: '👌'
+  eyes: '👀'
+}
+
+export interface TeamsEmoji {
+  id: string
+  emoji: string
+  name: string
+  search: string
+}
+
+// Emoji-Katalog von Teams (scripts/teams-emoji.mjs). Die ID ist der Schlüssel der Reaktion.
+export const EMOJI_CATEGORIES: { title: string; items: TeamsEmoji[] }[] = catalog.categories.map((c) => ({
+  title: c.title,
+  items: c.items.map(([id, emoji, name, search]) => ({ id, emoji, name, search }))
+}))
+
+const CATALOG = new Map<string, string>(Object.entries(catalog.aliases))
+for (const c of EMOJI_CATEGORIES) for (const e of c.items) CATALOG.set(e.id, e.emoji)
+
+// Hautton 1–5 hängt Teams als "-tone3" an die ID
+function withTone(emoji: string, tone: number): string {
+  const [first, ...rest] = [...emoji]
+  if (rest[0] === '\ufe0f') rest.shift()
+  return first + String.fromCodePoint(0x1f3fa + tone) + rest.join('')
 }
 
 export function reactionEmoji(key: string): string {
   const r = REACTIONS.find((x) => x.key === key)
   if (r) return r.emoji
-  if (EXTRA[key]) return EXTRA[key]
-  // Neue Schlüssel wie "1f44d_thumbsup" oder "1f600-1f3fb_..."
+  const known = CATALOG.get(key) ?? EXTRA[key]
+  if (known) return known
+  const tone = key.match(/^(.+?)-tone-?([1-5])$/)
+  if (tone) {
+    const base = CATALOG.get(tone[1])
+    if (base) return withTone(base, Number(tone[2]))
+  }
+  // Unbekannte Schlüssel wie "1f44d_thumbsup" oder "1f600-1f3fb_..." tragen den Code selbst
   const m = key.match(/^([0-9a-f]{4,6}(?:[-_][0-9a-f]{4,6})*)(?:_|$)/i)
   if (m) {
     try {
