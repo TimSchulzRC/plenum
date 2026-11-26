@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { BrowserWindow, desktopCapturer, dialog, ipcMain, screen, shell, webContents, type DesktopCapturerSource } from 'electron'
+import { BrowserWindow, desktopCapturer, dialog, ipcMain, screen, shell, systemPreferences, webContents, type DesktopCapturerSource } from 'electron'
 import type { AccountService } from './account'
 import type { BackgroundList, BridgeMessage, CallAction, CallDevices, CallParticipant, CallState, IncomingCall, MediaStreamInfo } from '@shared/types'
 import { createCallWindow, createIncomingWindow, createPopoutWindow, uiWindows } from './windows'
@@ -7,6 +7,7 @@ import { log } from './log'
 import { analytics } from './analytics'
 import { isTeamsUrl } from './engine/hosts'
 import { cleanCallName } from '@shared/call-names'
+import { displayResponse } from './display-response'
 
 type Broadcast = (event: string, payload: unknown) => void
 
@@ -31,6 +32,14 @@ function cleanParticipants(list: CallParticipant[] | undefined): CallParticipant
     out.push({ ...p, id, name, external: external || p.external })
   }
   return out
+}
+
+// Hinweise im Anruffenster, wenn Teams nach "Teilen" keine Quelle anfragt
+const SHARE_FAILED: Record<string, string> = {
+  disabled: 'Teilen geht erst, wenn der Anruf verbunden ist.',
+  no_tray: 'Teams hat das Teilen-Menü nicht geöffnet. Versuch es gleich noch einmal.',
+  source: 'Diese Quelle ließ sich nicht teilen. Nimm ein anderes Fenster oder den ganzen Bildschirm.',
+  unknown: 'Teams hat das Teilen nicht gestartet. Versuch es gleich noch einmal.'
 }
 
 type CallOrigin = 'meeting' | 'call' | 'incoming' | 'web_view'
@@ -61,6 +70,7 @@ export class CallManager {
   private normalBounds?: Electron.Rectangle
   private closeTimer?: NodeJS.Timeout
   private pendingDisplay?: { cb: (s: any) => void; sources: DesktopCapturerSource[] }
+  private loadingDisplay?: { cb: (s: any) => void }
   private probes = new Map<string, (r: unknown) => void>()
   // Zählt Anrufstarts, damit alte Zeitgeber einen neueren Start nicht beenden
   private pendingSeq = 0
@@ -85,23 +95,38 @@ export class CallManager {
     acct.engine.ses.setDisplayMediaRequestHandler(
       (_req, cb) => {
         void (async () => {
-          let sources: DesktopCapturerSource[]
-          try {
-            sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
-          } catch (e) {
-            // z.B. ohne Berechtigung zur Bildschirmaufnahme. Ohne Antwort hinge die Freigabe in der Web-App.
-            log.warn('desktopCapturer.getSources failed', (e as Error).message)
-            analytics.track('screen_share_failed', { reason: 'sources' })
-            denyDisplay(cb)
-            return
-          }
-          this.pendingDisplay = { cb, sources }
+          // Eine ältere Anfrage ohne Antwort zuerst ablehnen. Sonst wartet die Web-App ewig auf sie.
+          this.denyPendingDisplay()
+          const t0 = Date.now()
+          // Die Quellen zu lesen dauert ein paar Sekunden. So lange zeigt die Auswahl, dass sie lädt.
+          // Wer währenddessen abbricht, lehnt die Anfrage sofort ab (denyPendingDisplay).
+          const req = { cb }
+          this.loadingDisplay = req
           const target = this.callWindow && !this.callWindow.isDestroyed() ? this.callWindow : BrowserWindow.getFocusedWindow()
           if (target) {
             if (this.compact) this.setCompact(false)
             target.show()
             target.focus()
           }
+          this.broadcast('display-sources-loading', true)
+          // Ohne Freigabe in den Systemeinstellungen liefert macOS keine Quellen. Die Auswahl zeigt dann
+          // einen Hinweis. getSources trotzdem aufrufen: Erst das fragt beim ersten Mal nach der
+          // Berechtigung und trägt die App in die Liste ein. Vorher meldet macOS schon "denied".
+          const access = process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('screen') : 'granted'
+          log.info('display media requested, screen access', access)
+          let sources: DesktopCapturerSource[] = []
+          try {
+            sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
+            log.info(`display sources: ${sources.length} after ${Date.now() - t0} ms`)
+          } catch (e) {
+            // Electron lehnt hier mit einem String ab, nicht mit einem Error
+            log.warn('desktopCapturer.getSources failed', e instanceof Error ? e.message : String(e))
+          }
+          if (!sources.length) analytics.track('screen_share_failed', { reason: access === 'granted' ? 'sources' : 'permission' })
+          // Während des Ladens abgebrochen, das Anruffenster geschlossen oder eine neue Anfrage: schon abgelehnt
+          if (this.loadingDisplay !== req) return
+          this.loadingDisplay = undefined
+          this.pendingDisplay = { cb, sources }
           this.broadcast(
             'display-sources',
             sources.map((s) => ({ id: s.id, name: s.name, thumbnail: s.thumbnail.toDataURL(), kind: s.id.startsWith('screen') ? 'screen' : 'window' }))
@@ -112,16 +137,36 @@ export class CallManager {
     )
   }
 
+  private denyPendingDisplay(): void {
+    const l = this.loadingDisplay
+    this.loadingDisplay = undefined
+    if (l) denyDisplay(l.cb)
+    const p = this.pendingDisplay
+    this.pendingDisplay = undefined
+    if (p) denyDisplay(p.cb)
+  }
+
   pickDisplaySource(id: string | null): void {
     const p = this.pendingDisplay
     this.pendingDisplay = undefined
-    if (!p) return
+    if (!p) {
+      // Abbrechen, solange die Quellen noch laden
+      this.denyPendingDisplay()
+      return
+    }
     const src = id ? p.sources.find((s) => s.id === id) : undefined
     if (!src) {
       denyDisplay(p.cb)
       return
     }
-    p.cb({ video: src, audio: src.id.startsWith('screen') ? 'loopback' : undefined })
+    try {
+      p.cb(displayResponse(src))
+    } catch (e) {
+      // Electron hat die Anfrage dann schon abgelehnt, getDisplayMedia scheitert in Teams
+      log.warn(`display source ${src.id.startsWith('screen') ? 'screen' : 'window'} rejected`, e instanceof Error ? e.message : String(e))
+      analytics.track('screen_share_failed', { reason: 'source' })
+      this.broadcast('call-notice', SHARE_FAILED.source)
+    }
   }
 
   private accountByWc(id: number): AccountService | undefined {
@@ -166,10 +211,18 @@ export class CallManager {
         break
       }
       case 'call-start-failed':
-        if (this.activeAccountId === acct.id && this.state?.phase === 'connecting') this.failPending('web_app')
+        // reason: Text, mit dem Teams die Anrufart sperrt, z.B. "Keine verfügbare Kamera gefunden"
+        if (this.activeAccountId === acct.id && this.state?.phase === 'connecting') this.failPending('web_app', typeof msg.reason === 'string' ? msg.reason.slice(0, 120) : undefined)
         break
       case 'display-media-requested':
         break
+      case 'share-failed': {
+        // Teams hat nach "Teilen" keine Quelle angefragt
+        const reason = typeof msg.reason === 'string' ? msg.reason : 'unknown'
+        analytics.track('screen_share_failed', { reason })
+        if (this.activeAccountId === acct.id) this.broadcast('call-notice', SHARE_FAILED[reason] ?? SHARE_FAILED.unknown)
+        break
+      }
       case 'log':
         log.info(`[engine ${acct.id}] ${String(msg.text).slice(0, 800)}`)
         break
@@ -208,6 +261,7 @@ export class CallManager {
       if (this.activeAccountId === acct.id) {
         // Ein angenommener Anruf meldet „idle“, bis Teams verbunden hat: dann noch kein Ende
         if (this.state) this.finishStats()
+        this.denyPendingDisplay()
         this.activeAccountId = undefined
         this.conversationId = undefined
         this.state = null
@@ -340,6 +394,7 @@ export class CallManager {
     }
     // Der Befehl reist im Link mit: Teams leitet beim Laden um, die endgültige Seite führt ihn aus.
     const action = video ? 'startVideoCall' : 'startAudioCall'
+    log.info('call start', video ? 'video' : 'audio')
     acct.engine.navigate(`${url}${url.includes('?') ? '&' : '?'}tmAction=${action}`)
     this.beginStats('call')
     this.openCallWindow()
@@ -348,6 +403,7 @@ export class CallManager {
 
   private resetCall(): void {
     this.finishStats()
+    this.denyPendingDisplay()
     this.conversationId = undefined
     this.state = null
     this.activeAccountId = undefined
@@ -366,14 +422,14 @@ export class CallManager {
   }
 
   // Start gescheitert: Fehler kurz zeigen, dann wie "Verlassen"
-  private failPending(reason: 'timeout' | 'web_app'): void {
+  private failPending(reason: 'timeout' | 'web_app', detail?: string): void {
     if (!this.state) return
     if (this.stats && !this.stats.reported) {
       analytics.track('call_start_failed', { origin: this.stats.origin, reason, seconds: Math.round((Date.now() - this.stats.requestedAt) / 1000) })
       this.stats.reported = true
     }
     const seq = this.pendingSeq
-    this.state = { ...this.state, error: 'Der Anruf konnte nicht gestartet werden.' }
+    this.state = { ...this.state, error: detail ? `Der Anruf konnte nicht gestartet werden. Teams meldet: ${detail}` : 'Der Anruf konnte nicht gestartet werden.' }
     this.broadcast('call-state', this.state)
     setTimeout(() => {
       if (seq === this.pendingSeq && this.state?.phase === 'connecting') this.cancelPending(true)
@@ -443,6 +499,8 @@ export class CallManager {
       }
     })
     this.callWindow.on('closed', () => {
+      // Die Quellenauswahl lebt in diesem Fenster
+      this.denyPendingDisplay()
       this.callWindow = null
       this.compact = false
     })
@@ -460,6 +518,8 @@ export class CallManager {
     // Anruf, den die Web-App selbst gestartet hat (z. B. in der Webansicht)
     if (!this.stats) this.beginStats('web_view')
     const st = this.stats!
+    // Fürs Log: wie lange jeder Schritt vom Klick bis zum Anruf dauert
+    if (st.lastPhase !== state.phase) log.info(`call phase ${state.phase} after ${((Date.now() - st.requestedAt) / 1000).toFixed(1)} s (${st.origin})`)
     st.lastPhase = state.phase
     st.maxParticipants = Math.max(st.maxParticipants, state.participants.length)
     st.sharedScreen ||= state.sharing

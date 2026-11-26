@@ -113,8 +113,24 @@ function BarButton({ icon, label, active, badge, className, ...rest }: BarButton
   )
 }
 
-function ScreenPicker({ sources, onDone }: { sources: DisplaySource[]; onDone: (id: string | null) => void }): JSX.Element {
-  const sorted = useMemo(() => [...sources].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'screen' ? -1 : 1)), [sources])
+// macOS gibt ohne Freigabe in den Systemeinstellungen keine Bildschirme und Fenster heraus
+function NoSources(): JSX.Element {
+  if (window.teams.platform !== 'darwin') return <p className="cw-muted">Keine Quellen gefunden.</p>
+  return (
+    <div className="cw-picker-empty">
+      <p className="cw-muted">
+        Keine Quellen gefunden. Erlaube Teams Everywhere die Bildschirmaufnahme unter Systemeinstellungen › Datenschutz & Sicherheit › Bildschirm- & Systemaudioaufnahme (fehlt die App dort, mit „+“ hinzufügen) und starte sie danach neu.
+      </p>
+      <Button size="small" onClick={() => void api.openScreenCaptureSettings()}>
+        Systemeinstellungen öffnen
+      </Button>
+    </div>
+  )
+}
+
+function ScreenPicker({ sources, onDone }: { sources: DisplaySource[] | 'loading'; onDone: (id: string | null) => void }): JSX.Element {
+  const loading = sources === 'loading'
+  const sorted = useMemo(() => (sources === 'loading' ? [] : [...sources].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'screen' ? -1 : 1))), [sources])
   const [selected, setSelected] = useState<string | null>(sorted[0]?.id ?? null)
   const screens = sorted.filter((s) => s.kind === 'screen')
   const windows = sorted.filter((s) => s.kind === 'window')
@@ -155,7 +171,8 @@ function ScreenPicker({ sources, onDone }: { sources: DisplaySource[]; onDone: (
               {grid(windows)}
             </>
           )}
-          {sources.length === 0 && <p className="cw-muted">Keine Quellen gefunden. Prüfe die Berechtigung für Bildschirmaufnahme in den Systemeinstellungen.</p>}
+          {loading && <Spinner size="small" label="Bildschirme und Fenster werden geladen …" />}
+          {!loading && sorted.length === 0 && <NoSources />}
         </div>
         <div className="cw-modal-foot">
           <Button appearance="secondary" onClick={() => onDone(null)}>
@@ -418,7 +435,8 @@ export default function CallApp(): JSX.Element {
   const [pinned, setPinned] = useState<string | null>(null)
   const [showPeople, setShowPeople] = useState(false)
   const [showEffects, setShowEffects] = useState(false)
-  const [sources, setSources] = useState<DisplaySource[] | null>(null)
+  const [sources, setSources] = useState<DisplaySource[] | 'loading' | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [fit, setFit] = useVideoFit()
   const now = useNow(!!state?.startedAt)
 
@@ -430,12 +448,23 @@ export default function CallApp(): JSX.Element {
 
   useEffect(() => {
     const offCompact = (window.teams.on as unknown as (e: string, cb: (p: unknown) => void) => () => void)('call-compact', (p) => setCompact(!!p))
-    const offSources = onEvent('display-sources', (list) => setSources(list))
+    // Die Liste gehört zur Ladeanzeige davor. Nach "Abbrechen" kommt sie nicht mehr an.
+    const offSources = onEvent('display-sources', (list) => setSources((cur) => (cur === 'loading' ? list : cur)))
+    const offLoading = onEvent('display-sources-loading', () => setSources('loading'))
+    const offNotice = onEvent('call-notice', (text) => setNotice(text))
     return () => {
       offCompact()
       offSources()
+      offLoading()
+      offNotice()
     }
   }, [])
+
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(() => setNotice(null), 8000)
+    return () => clearTimeout(t)
+  }, [notice])
 
   useEffect(() => {
     document.title = state?.title ? `${state.title} | Besprechung` : 'Besprechung'
@@ -655,6 +684,14 @@ export default function CallApp(): JSX.Element {
           <span>Verlassen</span>
         </button>
       </header>
+      {notice && !ownShare && (
+        <div className="cw-share-banner" role="status">
+          <span>{notice}</span>
+          <Button size="small" appearance="subtle" onClick={() => setNotice(null)}>
+            OK
+          </Button>
+        </div>
+      )}
       {ownShare && inCall && (
         <div className="cw-share-banner">
           <ShareScreenStart24Regular />
@@ -669,7 +706,7 @@ export default function CallApp(): JSX.Element {
         {showPeople && state && <PeoplePanel state={state} onClose={() => setShowPeople(false)} />}
         {showEffects && state && <EffectsPanel onClose={() => setShowEffects(false)} />}
       </main>
-      {sources && <ScreenPicker sources={sources} onDone={pickSource} />}
+      {sources && <ScreenPicker key={sources === 'loading' ? 'loading' : 'list'} sources={sources} onDone={pickSource} />}
     </div>
   )
 }
