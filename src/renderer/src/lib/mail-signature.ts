@@ -78,7 +78,7 @@ const IMPERATIVE =
 // Wendungen, die nur in Fußzeilen stehen, und einzelne Wörter, die auch im Inhalt vorkommen („unser
 // Datenschutz-Team“): Letztere zählen erst zu zweit.
 const FOOTER_PHRASE =
-  /\b(?:amtsgericht|registergericht|handelsregister|hrb|hra|ust-?id|umsatzsteuer-?id|steuer-?nr|sitz der gesellschaft|registered office|company registration|irrtümlich|in error|intended recipient|bestimmungsgemäß|unbefugte|unauthori[sz]ed|ausdrucken|before printing|member firms?|mitgliedsunternehmen|streitbeilegung|schlichtungsstelle|dispute resolution|unsubscribe (?:here|from)|click here to unsubscribe|newsletter abbestellen|vom newsletter abmelden|you(?: are)? receiv(?:e|ed|ing) this|sie erhalten diese (?:e-?mail|nachricht|benachrichtigung))/i
+  /\b(?:amtsgericht|registergericht|handelsregister|hrb|hra|ust-?id|umsatzsteuer-?id|steuer-?nr|sitz der gesellschaft|registered office|company registration|(?:irrtümlich|versehentlich|fälschlich\w*) erhalten|receiv\w+ (?:this|it)\b.{0,40}\bin error|intended recipient|bestimmungsgemäße[nr]? (?:empfänger|adressat)|unbefugte[sn]? (?:weitergabe|nutzung|verwendung|kopieren|kenntnisnahme)|unauthori[sz]ed (?:use|disclosure|copying|review|distribution|dissemination)|(?:vor dem|bevor sie) (?:aus)?drucken|before (?:you )?print(?:ing)?|member firms?|mitgliedsunternehmen|streitbeilegung|schlichtungsstelle|dispute resolution|unsubscribe (?:here|from)|click here to unsubscribe|newsletter abbestellen|vom newsletter abmelden|you(?: are)? receiv(?:e|ed|ing) this (?:e-?mail|message|notification|newsletter)|sie erhalten diese (?:e-?mail|nachricht|benachrichtigung))/i
 const FOOTER_WORDS = /\b(?:geschäftsführ\w*|vorstand|aufsichtsrat|datenschutz\w*|data protection|privacy|impressum|vertraulich\w*|confidential|disclaimer|umwelt|environment|vat)\b/gi
 function boilerplate(l: SigLine): boolean {
   const t = l.text.trim()
@@ -289,7 +289,8 @@ function inPart(lines: SigLine[], from: number, to: number, sender?: string): Si
   while (start < to && !properName(lines[start])) start++
   const block = lines.slice(start, to)
   const evidence = block.some((l) => !prose(l) && stray(l.text) <= 1 && (PHONE.test(l.text) || ADDRESS.test(l.text) || LEGAL.test(l.text)))
-  const isSender = start < to && [...nameTokens(lines[start].text)].some((w) => senderTokens.has(w))
+  // Vor- und Nachname müssen passen, in beliebiger Reihenfolge: „Alex Doe“ ist nicht „Alex Kim“
+  const isSender = start < to && [...nameTokens(lines[start].text)].filter((w) => senderTokens.has(w)).length >= 2
   if (start > floor && start < to && isSender && validBlock(block) && evidence && !/:\s*$/.test(lines[start - 1].text)) return { start, end: to, reason: 'contact' }
   return undefined
 }
