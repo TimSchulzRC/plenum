@@ -55,9 +55,10 @@ export function handleMediaProtocol(getAccount: (id: string) => AccountService |
           if (u.host === 'avatar' || u.host === 'mailavatar') {
             if (!acct.engine.tokens.has('mt')) return { body: new ArrayBuffer(0), type: 'text/plain', at: 0, status: 503 }
             const id = decodeURIComponent(rawId ?? '')
-            // Mails kennen nur die Adresse: erst die Person in Teams suchen, ohne Treffer bleiben die Initialen
+            // Mails kennen nur die Adresse: erst die Person in Teams suchen, ohne Treffer bleiben die Initialen.
+            // Fehlschläge merkt sich die Suche selbst (mail-people.ts), hier nichts zwischenspeichern.
             const mri = u.host === 'avatar' ? id : await acct.mriForMailAddress(id)
-            if (!mri) return { body: new ArrayBuffer(0), type: 'text/plain', at: Date.now(), status: 404 }
+            if (!mri) return { body: new ArrayBuffer(0), type: 'text/plain', at: 0, status: 404 }
             target = acct.api.profilePictureUrl(mri, u.searchParams.get('name') ?? '', u.searchParams.get('size') ?? 'HR96x96')
           } else if (u.host === 'team') {
             if (!acct.engine.tokens.has('mt')) return { body: new ArrayBuffer(0), type: 'text/plain', at: 0, status: 503 }

@@ -1280,19 +1280,16 @@ export class AccountService extends EventEmitter<AccountEvents> {
   // Profilbilder zu Absendern und Empfängern: Adresse → MRI, dann wie in Chats (media-protocol.ts)
   private mailPeople = new MailDirectory((list) => this.lookupMailAddresses(list))
 
+  // Erst unter den Personen aus Chats suchen, das klappt auch, wenn Teams gerade nicht antwortet
   mriForMailAddress(address: string): Promise<string | undefined> {
-    return this.mailPeople.resolve(address)
+    const a = address.trim().toLowerCase()
+    const known = mailMatches([a], [this.me, ...this.people.values()]).get(a)
+    return known ? Promise.resolve(known) : this.mailPeople.resolve(a)
   }
 
-  // Erst unter den Personen aus Chats suchen, den Rest fragt ein Abruf bei Teams
   private async lookupMailAddresses(list: string[]): Promise<Map<string, string>> {
-    const found = mailMatches(list, [this.me, ...this.people.values()])
-    const rest = list.filter((a) => !found.has(a))
-    if (rest.length) {
-      const res = await this.api.fetchShortProfilesByMail(rest)
-      for (const [a, mri] of mailMatches(rest, res?.value ?? [])) found.set(a, mri)
-    }
-    return found
+    const res = await this.api.fetchShortProfilesByMail(list)
+    return mailMatches(list, res?.value ?? [])
   }
 
   // Welche Ordner-ID zu welchem Standardordner gehört, ändert sich nicht: einmal je Sitzung fragen
