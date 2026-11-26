@@ -457,17 +457,18 @@ function AccountChats({
   // Die Filter Chats und Besprechungen blenden Kanäle aus Teams aus, außer dem offenen
   const filterShowsChannels = filter !== 'meetings' && filter !== 'chats'
 
+  // Was der zugeklappte Block zeigt: Ungelesenes und der offene Chat. Daraus kommt auch die Zahl im Kopf.
+  const shown = snapshot ? collect((r) => isSelected(r) || (isUnreadRow(r) && matches(r)), filterShowsChannels) : []
+
   let body: JSX.Element | null
   if (!snapshot) {
     body = mode === 'unread' ? null : <div style={{ padding: multi ? '6px 12px 10px' : 20, color: 'var(--fg-3)' }}>Chats werden geladen …</div>
   } else if (mode === 'unread') {
-    // Zugeklappt: nur Ungelesenes und der offene Chat
-    const rows = collect((r) => isSelected(r) || (isUnreadRow(r) && matches(r)), filterShowsChannels)
     body =
-      rows.length === 0 ? null : (
+      shown.length === 0 ? null : (
         <>
-          <div className="acct-note">{rows.some(isUnreadRow) ? 'Ungelesen' : 'Geöffnet'}</div>
-          {rows.map((r) => renderRow(r, { key: 'unread' }))}
+          <div className="acct-note">{shown.some(isUnreadRow) ? 'Ungelesen' : 'Geöffnet'}</div>
+          {shown.map((r) => renderRow(r, { key: 'unread' }))}
         </>
       )
   } else {
@@ -511,11 +512,9 @@ function AccountChats({
   }
 
   if (!head) return body
-  // Zahl im Kopf aus denselben Zeilen, die der zugeklappte Block zeigt, also auch mit Filter
-  const unread = snapshot ? collect((r) => isUnreadRow(r) && matches(r), filterShowsChannels).length : 0
   return (
     <>
-      {head(unread)}
+      {head(shown.filter(isUnreadRow).length)}
       <div ref={bodyRef}>{body}</div>
     </>
   )
