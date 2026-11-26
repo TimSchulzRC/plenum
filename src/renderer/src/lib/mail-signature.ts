@@ -32,13 +32,14 @@ const CLOSING =
 
 // Kopf eines zitierten Teils, als Text erkannt (falls das HTML keine Markierung hat)
 const HEADER_FROM = /^(?:von|from|de|da)\s*:\s*\S/i
-const HEADER_REST = /^(?:gesendet|sent|datum|date|an|to|betreff|subject|cc|bcc|kopie|wichtigkeit|importance|priorität|priority|antwort an|reply-to|anlagen|attachments)\s*:/i
-const HEADER_DATE = /^(?:gesendet|sent|datum|date)\s*:\s*/i
-const ORIGINAL = /^(?:-{2,}\s*(?:ursprüngliche nachricht|original message|weitergeleitete nachricht|forwarded message)\s*-{2,}|(?:anfang der weitergeleiteten nachricht|begin forwarded message)\s*:)$/i
+const HEADER_REST = /^(?:gesendet|sent|datum|date|received|empfangen|an|to|betreff|subject|cc|bcc|kopie|wichtigkeit|importance|priorität|priority|antwort an|reply-to|anlagen|attachments)\s*:/i
+const HEADER_DATE = /^(?:gesendet|sent|datum|date|received|empfangen)\s*:\s*/i
+// Auch mit Leerzeichen zwischen den Strichen („- - - Original Message - - -“)
+const ORIGINAL = /^(?:-[-\s]*(?:ursprüngliche nachricht|original message|weitergeleitete nachricht|forwarded message)[-\s]*-|(?:anfang der weitergeleiteten nachricht|begin forwarded message)\s*:)$/i
 // Felder eines Kopfes. Jedes kommt höchstens einmal vor.
 const FIELDS: [RegExp, string][] = [
   [/^(?:von|from|de|da)\s*:/i, 'from'],
-  [/^(?:gesendet|sent|datum|date)\s*:/i, 'date'],
+  [/^(?:gesendet|sent|datum|date|received|empfangen)\s*:/i, 'date'],
   [/^(?:an|to)\s*:/i, 'to'],
   [/^(?:cc|kopie)\s*:/i, 'cc'],
   [/^bcc\s*:/i, 'bcc'],
@@ -62,11 +63,13 @@ const has = (re: RegExp, t: string) => {
 // Vierstellig nur mit Länderkürzel: „2026 Berlin Summit“ ist ein Jahr.
 const ADDRESS_PLZ = /(?:^|[\s,|·])(?:\d{5}|(?:A|AT|CH|D|DE|NL|B|L)-\s?\d{4,5})\s+[A-ZÄÖÜ][\wäöüß.-]+(?:\s+(?:[A-ZÄÖÜ(][\wäöüß.()-]*|am|an|im|in|a\.|bei|ob|vor|der))*\s*(?:$|[|·,;–])/
 const ADDRESS_STREET = /(?:straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer)\s*\d+[a-z]?\b/i
-const ADDRESS = { test: (t: string) => ADDRESS_PLZ.test(t) || ADDRESS_STREET.test(t) }
+// „San Francisco, CA 94107“
+const ADDRESS_US = /\b[A-Z][A-Za-z .]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/
+const ADDRESS = { test: (t: string) => ADDRESS_PLZ.test(t) || ADDRESS_STREET.test(t) || ADDRESS_US.test(t) }
 // Rechtsform nach einem Namen, in üblicher Schreibweise: „Contoso GmbH“, nicht „AG“ für Arbeitsgruppe
 const COMPANY = /[A-ZÄÖÜ0-9][\w&.-]*\s+(?:GmbH|gGmbH|mbH|AG|KG|OHG|KGaA|SE|UG|e\.\s?K\.|e\.\s?V\.|Ltd\.?|Limited|Inc\.?|LLC|Corp\.?|PLC|S\.A\.|B\.V\.)(?=$|[\s,.;:|·&)–-])/
 const LEGAL =
-  /\b(?:geschäftsführ|vorstand|aufsichtsrat|amtsgericht|registergericht|handelsregister|hrb|hra|ust-?id|umsatzsteuer|steuer-?nr|sitz der gesellschaft|vat|registered office|company registration|registry court|register court|commercial register|managing directors?|komplementär\w*|datenschutz|data protection|privacy|impressum)/i
+  /\b(?:geschäftsführ|vorstand|aufsichtsrat|amtsgericht|registergericht|handelsregister|hrb|hra|ust-?id|umsatzsteuer|steuer-?nr|sitz der gesellschaft|vat|registered office|company registration|registry court|register court|commercial register|managing directors?|komplementär\w*|vertreten durch|represented by|management\s*:|postanschrift|datenschutz|data protection|privacy|impressum)/i
 // Hinweise und Standardsätze aus Fußzeilen: Vertraulichkeit, Umwelt, Netzwerk von
 // Prüfungsgesellschaften, Streitbeilegung, Newsletter und Benachrichtigungen
 const DISCLAIMER =
@@ -112,7 +115,8 @@ function boilerplate(l: SigLine): boolean {
 // Trennlinie („--“, „---“, „___“, „- - -“) und Beschriftung ohne Wert („Tel:“ vor der Nummer in der
 // nächsten Zeile): weder Inhalt noch Beleg, sie unterbrechen einen Signaturblock nicht
 const ruleLine = (l: SigLine) => /^[-–—_=*\s]{2,}$/.test(l.text)
-const bareLabel = (l: SigLine) => /^(?:tel|telefon|phone|fon|mobil|mobile|fax|e-?mail|web)\.?\s*:?$/i.test(l.text.trim())
+const bareLabel = (l: SigLine) =>
+  /^[|·\s]*(?:(?:tel|telefon|phone|fon|mobil|mobile|fax|e-?mail|web|internet|website|homepage)\.?\s*:?|unsubscribe|abmelden|abbestellen|chat with me (?:on|in) teams!?)$/i.test(l.text.trim())
 
 // Inhalt, der nie in einer Signatur steht: ein P.S., eine Anweisung, eine Frage oder ein ganzer Satz
 // (ab sechs Wörtern mit Satzzeichen am Ende), auch mit Mailadresse oder Telefonnummer darin
@@ -277,6 +281,16 @@ function quotedSender(lines: SigLine[], from: number, body: number): string | un
   return undefined
 }
 
+const imageOnly = (l: SigLine) => !!l.image && !l.text.trim()
+
+// Zeile direkt nach der Grußformel, die sagt, wer unterschreibt: Name, Team oder Firma, aber keine
+// Rolle und keine Kontaktangabe
+function signer(l: SigLine): boolean {
+  const t = l.text.trim()
+  if (!nameLike(t) || l.image || prose(l) || roleLine(l) || link(l)) return false
+  return !(PHONE.test(t) || ADDRESS.test(t) || LEGAL.test(t))
+}
+
 function inPart(lines: SigLine[], from: number, to: number, sender?: string): SigRange | undefined {
   // Kopfzeilen eines zitierten Teils gehören nicht zum Inhalt, den wir schützen
   const body = bodyStart(lines, from, to)
@@ -301,7 +315,7 @@ function inPart(lines: SigLine[], from: number, to: number, sender?: string): Si
     // Fußzeile, die der Mailserver unter die Signatur setzt (Register, Anschrift, Vertraulichkeit):
     // Besteht der Rest des Teils nur aus solchen Zeilen, gehört er dazu
     const rest = lines.slice(end, to)
-    const footerLine = (l: SigLine) => specific(l) || link(l) || boilerplate(l)
+    const footerLine = (l: SigLine) => specific(l) || link(l) || boilerplate(l) || ruleLine(l) || bareLabel(l)
     if (start < end && rest.length && rest.every(footerLine) && rest.some((l) => boilerplate(l) || (specific(l) && !roleLine(l)))) end = to
     if (start < end) return { start, end, reason: 'marker' }
   }
@@ -325,8 +339,13 @@ function inPart(lines: SigLine[], from: number, to: number, sender?: string): Si
     const c = closingLine(lines[i].text)
     if (!c.closing) continue
     let start = i + 1
-    // Eine Namenszeile bleibt sichtbar, Firma oder Abteilung darunter gehören zur Signatur
-    if (!c.name && start < to && nameLike(lines[start].text.trim()) && !JOB.test(lines[start].text) && !specific(lines[start]) && !link(lines[start]) && !lines[start].image) start++
+    // Wer unterschreibt, bleibt sichtbar: die Zeile nach dem Gruß mit Name, Team oder Firma, auch
+    // wenn ein Bild (Logo, Foto) dazwischen steht. Was darunter folgt, gehört zur Signatur.
+    if (!c.name) {
+      let n = start
+      while (n < to && imageOnly(lines[n])) n++
+      if (n < to && signer(lines[n])) start = n + 1
+    }
     if (validBlock(lines.slice(start, to))) return { start, end: to, reason: 'closing' }
     floor = start - 1
     break
@@ -354,7 +373,10 @@ function inPart(lines: SigLine[], from: number, to: number, sender?: string): Si
   // Anschrift direkt davor kann eine Angabe sein, die die Mail mitteilt, und bleibt sichtbar.
   const footerTop = (l: SigLine) => boilerplate(l) || (specific(l) && !roleLine(l) && (COMPANY.test(l.text) || LEGAL.test(l.text)))
   while (fs < to && !footerTop(lines[fs])) fs++
-  if (fs > floor && fs < to && lines.slice(fs, to).some(strongBoilerplate) && !/:\s*$/.test(lines[fs - 1].text)) return { start: fs, end: to, reason: 'footer' }
+  // Eine Zeile mit Doppelpunkt davor leitet eine Aufzählung ein („unsere neuen Daten:“), außer sie ist
+  // selbst eine Beschriftung der Fußzeile („Registry Court:“)
+  const intro = /:\s*$/.test(lines[fs - 1]?.text ?? '') && !bareLabel(lines[fs - 1]) && !LEGAL.test(lines[fs - 1].text)
+  if (fs > floor && fs < to && lines.slice(fs, to).some(strongBoilerplate) && !intro) return { start: fs, end: to, reason: 'footer' }
   return undefined
 }
 
@@ -376,7 +398,10 @@ function belowName<T extends { start: number; end: number }>(lines: SigLine[], r
   if (s < r.end && /^--[\s\u00a0]?$/.test(lines[s].text)) s++
   const c = s < r.end ? closingLine(lines[s].text) : undefined
   if (c?.closing) s++
-  if (!c?.name && s < r.end && (nameLine(lines[s]) || senderLine(lines[s]))) s++
+  // Ein Bild zwischen Gruß und Name bleibt mit dem Namen sichtbar
+  let n = s
+  while (n < r.end && imageOnly(lines[n])) n++
+  if (!c?.name && n < r.end && (nameLine(lines[n]) || senderLine(lines[n]))) s = n + 1
   return s < r.end ? { ...r, start: s } : undefined
 }
 
@@ -420,7 +445,7 @@ export function findHeaders(lines: SigLine[]): HeaderRange[] {
     const sender = block.find((t) => fieldKey(t) === 'from')?.replace(/^[^:]*:/, '') ?? ''
     const date = block.find((t) => HEADER_DATE.test(t))
     // Anzeigename, sonst die Adresse („From: <kim@example.com>“)
-    const name = sender.replace(/<[^>]*>|\[[^\]]*\]/g, ' ').replace(/["']/g, '').replace(/\s+/g, ' ').trim() || (sender.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/)?.[0] ?? '')
+    const name = sender.replace(/<[^>]*>|\[[^\]]*\]/g, ' ').replace(/["']/g, '').replace(/\s+/g, ' ').replace(/\s*(?:im auftrag von|on behalf of)\b.*$/i, '').replace(/[\s;,]+$/, '').trim() || (sender.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/)?.[0] ?? '')
     const label = [name, date?.replace(HEADER_DATE, '').trim()].filter(Boolean).join(' · ')
     out.push({ start: from, end, label: label || 'Kopfzeilen' })
   })
@@ -474,7 +499,7 @@ export function plausibleSignature(lines: SigLine[]): boolean {
 // Antwort des Modells (erste Signaturzeile je Teil, ab 1 gezählt) in Bereiche umrechnen. Die erste
 // Inhaltszeile bleibt immer stehen, ebenso die erste Zeile, die das Modell gesehen hat: Im Test an
 // echten Mails war diese Antwort in 7 von 7 Fällen falsch und versteckte Inhalt. Längere Blöcke als
-// 15 Zeilen sind Feldlisten oder Benachrichtigungen, keine Signaturen.
+// 25 Zeilen sind Feldlisten oder Benachrichtigungen, keine Signaturen.
 export function modelRanges(starts: (number | null)[], req: { of: number[]; parts?: MailSignaturePart[] }, parts: OpenPart[]): SigRange[] {
   const out: SigRange[] = []
   starts.forEach((n, i) => {
@@ -482,7 +507,7 @@ export function modelRanges(starts: (number | null)[], req: { of: number[]; part
     if (!p || !n || n < 2 || n > p.lines.length) return
     if (req.parts && n <= req.parts[i].first) return
     const hidden = p.lines.slice(n - 1)
-    if (hidden.filter((l) => !boilerplate(l)).length > 15 || !plausibleSignature(hidden)) return
+    if (hidden.filter((l) => !boilerplate(l)).length > 25 || !plausibleSignature(hidden)) return
     // Die Signatur beginnt mit einem Personennamen oder einer Angabe, die nur in Signaturen steht
     const top = hidden[0]
     const name = top.text.split(/\s*[|·]\s*/)[0]
