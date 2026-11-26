@@ -12,7 +12,7 @@ export function orderAccounts<T extends Pick<AccountInfo, 'id' | 'parentId'>>(ac
 
 // Kopf eines Blocks: Organisation vorn, damit zwei Konten derselben Person unterscheidbar sind
 export function accountTitle(a: Named): { name: string; sub: string } {
-  if (a.parentId) return { name: a.tenantName || 'Mandant', sub: 'Gast' }
+  if (a.parentId) return { name: a.tenantName || 'Mandant', sub: a.upn ? `Gast · ${a.upn}` : 'Gast' }
   const domain = a.upn?.split('@')[1]
   return { name: a.tenantName || domain || a.label, sub: a.upn || '' }
 }

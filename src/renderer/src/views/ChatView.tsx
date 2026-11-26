@@ -134,7 +134,7 @@ function ChatList(): JSX.Element {
   )
 }
 
-const HEAD_HEIGHT = 34
+const HEAD_HEIGHT = 36
 const EXPANDED_KEY = 'chatlist.expanded'
 
 function loadExpanded(): Record<string, boolean> {
@@ -146,12 +146,12 @@ function loadExpanded(): Record<string, boolean> {
 }
 
 // Ein Block je Konto bzw. Mandant. Zugeklappt zeigt er nur Ungelesenes und den offenen Chat.
-// Die Köpfe kleben oben und unten am Rand, so bleiben alle Konten sichtbar.
+// Die Köpfe stapeln sich oben und unten am Rand, so bleiben alle Konten mit ihren Zahlen sichtbar.
 function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: AccountInfo[]; activeId?: string; q: string; filter: Filter; limit: number }): JSX.Element {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(loadExpanded)
   const bodies = useRef<Record<string, HTMLDivElement | null>>({})
   const isOpen = (id: string) => expanded[id] ?? id === (activeId ?? accounts[0]?.id)
-  const toggle = (id: string) => {
+  const toggle = (id: string, index: number) => {
     const open = !isOpen(id)
     const next = { ...expanded, [id]: open }
     setExpanded(next)
@@ -165,7 +165,7 @@ function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: Acc
     requestAnimationFrame(() => {
       const body = bodies.current[id]
       const scroller = body?.parentElement
-      if (body && scroller) scroller.scrollTop = body.offsetTop - HEAD_HEIGHT
+      if (body && scroller) scroller.scrollTop = body.offsetTop - (index + 1) * HEAD_HEIGHT
     })
   }
   return (
@@ -174,7 +174,7 @@ function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: Acc
         const open = isOpen(a.id)
         return (
           <Fragment key={a.id}>
-            <AccountHead account={a} open={open} first={i === 0} style={{ top: 0, bottom: (accounts.length - 1 - i) * HEAD_HEIGHT, zIndex: 2 + i }} onToggle={() => toggle(a.id)} />
+            <AccountHead account={a} open={open} style={{ top: i * HEAD_HEIGHT, bottom: (accounts.length - 1 - i) * HEAD_HEIGHT, zIndex: 2 + i }} onToggle={() => toggle(a.id, i)} />
             <div ref={(el) => void (bodies.current[a.id] = el)}>
               <AccountScope.Provider value={a.id}>
                 <AccountChats accountId={a.id} q={q} filter={filter} limit={limit} mode={open ? 'full' : 'unread'} />
@@ -187,16 +187,17 @@ function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: Acc
   )
 }
 
-function AccountHead({ account, open, first, style, onToggle }: { account: AccountInfo; open: boolean; first: boolean; style: CSSProperties; onToggle: () => void }): JSX.Element {
+function AccountHead({ account, open, style, onToggle }: { account: AccountInfo; open: boolean; style: CSSProperties; onToggle: () => void }): JSX.Element {
   const count = chatBadge(account)
   const { name, sub } = accountTitle(account)
   return (
-    <button className={`acct-head ${first ? 'first' : ''} ${account.parentId ? 'child' : ''}`} style={style} onClick={onToggle} aria-expanded={open} title={[name, sub].filter(Boolean).join(' · ')}>
-      {open ? <ChevronDown16Regular /> : <ChevronRight16Regular />}
+    <button className="acct-head" style={style} onClick={onToggle} aria-expanded={open} title={[name, sub].filter(Boolean).join(' · ')}>
       {account.parentId ? <Avatar shape="square" size={20} name={name} color="colorful" /> : <PersonAvatar mri={account.mri} name={account.label} size={20} accountId={account.id} showPresence={false} />}
       <span className="acct-name">{name}</span>
       <span className="acct-sub">{sub}</span>
       {account.status !== 'ready' ? <span className="acct-state">{statusText(account.status)}</span> : count > 0 && <span className="acct-count">{count > 99 ? '99+' : count}</span>}
+      {/* Pfeil rechts, damit der Kontokopf nicht wie ein Abschnitt (Favoriten, Chats) aussieht */}
+      {open ? <ChevronDown16Regular /> : <ChevronRight16Regular />}
     </button>
   )
 }
@@ -268,11 +269,13 @@ function AccountChats({ accountId, q, filter, limit, mode }: { accountId: string
 
   // Auswahl auf den ersten Eintrag setzen, wenn noch keiner gewählt ist
   useEffect(() => {
-    if (!active || selection.chatId || selection.channelId || selection.newChat) return
+    // Bei mehreren Konten nichts vorauswählen: Der offene Chat bleibt auch im zugeklappten Block stehen,
+    // ein automatisch gewählter wäre dort ein Eintrag, den niemand geöffnet hat
+    if (!active || multi || selection.chatId || selection.channelId || selection.newChat) return
     const first = sections.flatMap((s) => s.rows)[0]
     if (first?.type === 'chat') useStore.getState().select({ chatId: first.chat.id })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot?.accountId, sections.length, active])
+  }, [snapshot?.accountId, sections.length, active, multi])
 
   const isSelected = (r: Row) =>
     active && !selection.newChat && (r.type === 'chat' ? r.chat.id === selection.chatId : r.channel.id === selection.channelId && !selection.chatId)
@@ -426,14 +429,20 @@ function AccountChats({ accountId, q, filter, limit, mode }: { accountId: string
     const rows: Row[] = []
     const add = (r: Row) => {
       const id = rowId(r)
-      if (seen.has(id) || !(isUnreadRow(r) || isSelected(r)) || !matches(r)) return
+      if (seen.has(id) || !(isSelected(r) || (isUnreadRow(r) && matches(r)))) return
       seen.add(id)
       rows.push(r)
     }
     for (const sec of sections) sec.rows.forEach(add)
     if (filter !== 'meetings' && filter !== 'chats') for (const t of snapshot.teams) if (!t.isArchived) for (const c of t.channels) add({ type: 'channel', team: t, channel: c })
     rows.sort((a, b) => lastOf(b) - lastOf(a))
-    return <>{rows.map((r) => renderRow(r, { key: 'unread' }))}</>
+    if (rows.length === 0) return null
+    return (
+      <>
+        <div className="acct-note">{rows.some(isUnreadRow) ? 'Ungelesen' : 'Geöffnet'}</div>
+        {rows.map((r) => renderRow(r, { key: 'unread' }))}
+      </>
+    )
   }
 
   return (
@@ -483,8 +492,10 @@ function nameOf(r: Row): string {
 }
 
 function ChatRow({ chat, selected, compact, onSelect }: { chat: ChatSummary; selected: boolean; compact: boolean; onSelect: () => void }): JSX.Element {
-  const inCall = useStore((s) => !!s.callState && s.callState.title !== '' && (s.callState.conversationId === chat.id || (chat.kind === 'meeting' && s.callState.title === chat.title)))
   const accountId = useScopedAccountId()
+  const inCall = useStore(
+    (s) => !!s.callState && s.callState.accountId === accountId && s.callState.title !== '' && (s.callState.conversationId === chat.id || (chat.kind === 'meeting' && s.callState.title === chat.title))
+  )
   const hover = useHoverPrefetch(() => !selected && prefetchChat(accountId, chat))
   const lm = chat.lastMessage
   let preview = lm?.text ?? ''

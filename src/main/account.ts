@@ -123,6 +123,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
   // Nachricht als Erwähnung im Aktivitäts-Feed ein zweites Mal meldet.
   private notifiedAt = new Map<string, number>()
   private csaRetries = 0
+  // Gastmandant, dessen Web-App im falschen Mandanten läuft: keine Daten übernehmen
+  private wrongTenant = false
 
   constructor(
     public record: AccountRecord,
@@ -198,7 +200,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
     const me = this.engine.tokens.me
     // Gastmandant: Die Web-App muss im vorgegebenen Mandanten laufen, sonst zeigte der Block
     // die Chats des Hauptkontos ein zweites Mal
-    if (this.record.parentId && me.tid && this.record.tenantId && me.tid !== this.record.tenantId) {
+    this.wrongTenant = !!(this.record.parentId && me.tid && this.record.tenantId && me.tid !== this.record.tenantId)
+    if (this.wrongTenant) {
       log.warn(`[${this.id}] Web-App läuft nicht im Gastmandanten`)
       this.engine.setStatus('error', `Teams hat ${this.record.tenantName ?? 'den Mandanten'} nicht geöffnet.`)
       return
@@ -223,7 +226,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
   }
 
   async fullSync(): Promise<void> {
-    if (this.syncing || !this.started) return
+    if (this.syncing || !this.started || this.wrongTenant) return
     this.syncing = true
     try {
       if (this.engine.tokens.has('csa')) {
@@ -493,7 +496,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
 
   private async runDeltaSync(initial: boolean): Promise<void> {
     // Nach stop() (Konto entfernt) keine Abfragen und Benachrichtigungen mehr
-    if (!this.started || !this.engine.tokens.has('chatsvc')) return
+    if (!this.started || this.wrongTenant || !this.engine.tokens.has('chatsvc')) return
     const touched = [...this.realtimeConvs]
     this.realtimeConvs.clear()
     let data: any

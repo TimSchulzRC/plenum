@@ -113,12 +113,12 @@ export function TeamAvatar({ team, size = 32 }: { team: Team; size?: 20 | 24 | 2
 export function AccountChip(): JSX.Element | null {
   const account = useStore((s) => (s.accounts.length > 1 ? s.accounts.find((a) => a.id === s.activeAccountId) : undefined))
   if (!account) return null
-  const { name, sub } = accountTitle(account)
+  const { name } = accountTitle(account)
   return (
     <span className="acct-chip" title={`Du schreibst als ${account.upn ?? account.label}${account.parentId ? ` (Gast bei ${name})` : ''}`}>
       {account.parentId ? <Avatar shape="square" size={16} name={name} color="colorful" /> : <PersonAvatar mri={account.mri} name={account.label} size={16} accountId={account.id} showPresence={false} />}
       <span>{name}</span>
-      {account.parentId && <span className="acct-chip-sub">{sub}</span>}
+      {account.parentId && <span className="acct-chip-sub">Gast</span>}
     </span>
   )
 }

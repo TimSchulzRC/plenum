@@ -498,22 +498,23 @@ button {
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 34px;
-  padding: 0 8px 0 4px;
+  height: 36px;
+  padding: 0 10px 0 8px;
   border: 0;
-  border-top: 1px solid var(--border);
-  background: var(--pane);
+  border-radius: var(--radius);
+  /* eigenes Band, damit Konten sich von Abschnitten wie „Chats“ abheben; deckend wegen sticky */
+  background: color-mix(in srgb, var(--pane), var(--fg) 6%);
   color: var(--fg-2);
   font: inherit;
   font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
-.acct-head.first {
-  border-top-color: transparent;
+.acct-head:hover {
+  background: color-mix(in srgb, var(--pane), var(--fg) 10%);
 }
-.acct-head.child {
-  padding-left: 18px;
+.acct-head:not(:first-child) {
+  margin-top: 6px;
 }
 .acct-head > svg {
   flex-shrink: 0;
@@ -538,6 +539,11 @@ button {
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: 12px;
+  color: var(--fg-4);
+}
+.acct-note {
+  padding: 6px 10px 2px;
+  font-size: 11.5px;
   color: var(--fg-4);
 }
 .acct-head .acct-state {
@@ -574,6 +580,7 @@ button {
   text-overflow: ellipsis;
 }
 .acct-chip .acct-chip-sub {
+  flex-shrink: 0;
   font-weight: 400;
   color: var(--fg-4);
 }

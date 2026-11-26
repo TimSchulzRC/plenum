@@ -22,4 +22,5 @@ test('Kopfzeile nennt Organisation, sonst Domain, sonst Namen', () => {
   assert.deepEqual(accountTitle({ id: 'a', label: 'Alex', upn: 'alex@contoso.com' }), { name: 'contoso.com', sub: 'alex@contoso.com' })
   assert.deepEqual(accountTitle({ id: 'a', label: 'Neues Konto' }), { name: 'Neues Konto', sub: '' })
   assert.deepEqual(accountTitle({ id: 'g', label: 'Alex', tenantName: 'Fabrikam', parentId: 'a' }), { name: 'Fabrikam', sub: 'Gast' })
+  assert.deepEqual(accountTitle({ id: 'g', label: 'Alex', upn: 'alex@contoso.com', tenantName: 'Fabrikam', parentId: 'a' }), { name: 'Fabrikam', sub: 'Gast · alex@contoso.com' })
 })
