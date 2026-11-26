@@ -1,49 +1,92 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// E-Mail über Microsoft Graph mit dem Graph-Token der Teams-Web-App (Mail.ReadWrite).
+// E-Mail mit den Tokens der Teams-Web-App. Erster Weg ist Microsoft Graph (Mail.ReadWrite), zweiter
+// Outlook REST v2.0 (Mail.ReadWrite und Mail.Send): Nicht jede Sitzung der Web-App holt einen
+// Graph-Token, und senden darf nur der Outlook-Token. Beide verwenden dieselben IDs.
 // Ohne Electron-Abhängigkeit, damit die Tests die Datei direkt laden.
 import type { MailAddress, MailAttachment, MailDraft, MailFile, MailFolder, MailFolderKind, MailMessage, MailSummary } from '@shared/types'
 import type { WriteTexts } from './events'
 
+export type MailApi = 'graph' | 'outlook'
+
 export const GRAPH = 'https://graph.microsoft.com/v1.0'
+export const MAIL_BASE: Record<MailApi, string> = { graph: `${GRAPH}/me`, outlook: 'https://outlook.office.com/api/v2.0/me' }
 
 // Reihenfolge der bekannten Ordner in der Liste
 export const WELL_KNOWN: MailFolderKind[] = ['inbox', 'drafts', 'sentitems', 'archive', 'deleteditems', 'junkemail']
+const OUTLOOK_FOLDER: Record<MailFolderKind, string> = { inbox: 'Inbox', drafts: 'Drafts', sentitems: 'SentItems', archive: 'Archive', deleteditems: 'DeletedItems', junkemail: 'JunkEmail' }
 
-const SUMMARY_FIELDS = 'id,conversationId,subject,from,toRecipients,bodyPreview,receivedDateTime,isRead,isDraft,hasAttachments,importance,flag'
+const SUMMARY = ['id', 'conversationId', 'subject', 'from', 'toRecipients', 'bodyPreview', 'receivedDateTime', 'isRead', 'isDraft', 'hasAttachments', 'importance', 'flag']
+const FOLDER = ['id', 'displayName', 'unreadItemCount', 'totalItemCount']
 
-export function folderListUrl(): string {
-  return `${GRAPH}/me/mailFolders?$top=100&$select=id,displayName,unreadItemCount,totalItemCount`
+const pascal = (k: string) => k.charAt(0).toUpperCase() + k.slice(1)
+const select = (api: MailApi, list: string[]) => (api === 'graph' ? list : list.map(pascal)).join(',')
+// Bekannte Ordner heißen bei Outlook Inbox, SentItems …, eigene Ordner haben ihre ID
+export const folderName = (api: MailApi, folder: string) => (api === 'outlook' && folder in OUTLOOK_FOLDER ? OUTLOOK_FOLDER[folder as MailFolderKind] : folder)
+const folderRef = (api: MailApi, folder: string) => encodeURIComponent(folderName(api, folder))
+const folders = (api: MailApi) => (api === 'graph' ? 'mailFolders' : 'MailFolders')
+
+export function folderListUrl(api: MailApi): string {
+  return `${MAIL_BASE[api]}/${folders(api)}?$top=100&$select=${select(api, FOLDER)}`
 }
 
-export function wellKnownUrl(kind: MailFolderKind): string {
-  return `${GRAPH}/me/mailFolders/${kind}?$select=id,displayName,unreadItemCount,totalItemCount`
+export function wellKnownUrl(api: MailApi, kind: MailFolderKind): string {
+  return `${MAIL_BASE[api]}/${folders(api)}/${folderRef(api, kind)}?$select=${select(api, FOLDER)}`
 }
 
-export function messagesUrl(folderId: string, top = 40): string {
-  return `${GRAPH}/me/mailFolders/${encodeURIComponent(folderId)}/messages?$top=${top}&$select=${SUMMARY_FIELDS}&$orderby=receivedDateTime desc`
+export function messagesUrl(api: MailApi, folderId: string, top = 40): string {
+  return `${MAIL_BASE[api]}/${folders(api)}/${folderRef(api, folderId)}/messages?$top=${top}&$select=${select(api, SUMMARY)}&$orderby=${api === 'graph' ? 'receivedDateTime' : 'ReceivedDateTime'} desc`
 }
 
-export function messageUrl(id: string): string {
-  return `${GRAPH}/me/messages/${encodeURIComponent(id)}?$select=${SUMMARY_FIELDS},ccRecipients,replyTo,body`
+export function messageUrl(api: MailApi, id: string): string {
+  return `${MAIL_BASE[api]}/messages/${encodeURIComponent(id)}?$select=${select(api, [...SUMMARY, 'ccRecipients', 'replyTo', 'body'])}`
 }
 
-export function attachmentsUrl(id: string): string {
-  return `${GRAPH}/me/messages/${encodeURIComponent(id)}/attachments?$select=id,name,contentType,size,isInline`
+export function attachmentsUrl(api: MailApi, id: string): string {
+  return `${MAIL_BASE[api]}/messages/${encodeURIComponent(id)}/attachments?$select=${select(api, ['id', 'name', 'contentType', 'size', 'isInline'])}`
 }
 
-export function attachmentUrl(messageId: string, attachmentId: string): string {
-  return `${GRAPH}/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`
+export function attachmentUrl(api: MailApi, messageId: string, attachmentId: string): string {
+  return `${MAIL_BASE[api]}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`
 }
 
-// Nächste Seite nur, wenn sie wieder auf Graph zeigt: Die Adresse kommt vom Server und bekommt den Token.
-export function isGraphPage(url: string | undefined): url is string {
-  if (!url) return false
+export function messageActionUrl(api: MailApi, id: string, action = ''): string {
+  return `${MAIL_BASE[api]}/messages/${encodeURIComponent(id)}${action ? `/${action}` : ''}`
+}
+
+// Folgeseite nur, wenn sie wieder auf Graph bzw. Outlook zeigt: Die Adresse kommt vom Server und
+// bekommt den Token. Der Ordner steht darin als mailFolders('inbox'), wir fragen mit mailFolders/inbox.
+export function mailPageApi(url: string | undefined): MailApi | undefined {
+  if (!url) return undefined
   try {
     const u = new URL(url)
-    return u.origin === 'https://graph.microsoft.com' && /^\/v1\.0\/me\/mailFolders\/[^/]+\/messages$/.test(u.pathname)
+    if (u.origin === 'https://graph.microsoft.com' && /^\/v1\.0\/me\/mailFolders(?:\/[^/()]+|\('[^/']+'\))\/messages$/.test(u.pathname)) return 'graph'
+    if (u.origin === 'https://outlook.office.com' && /^\/api\/v2\.0\/me\/mailfolders(?:\/[^/()]+|\('[^/']+'\))\/messages$/i.test(u.pathname)) return 'outlook'
   } catch {
-    return false
+    /* ungültig */
   }
+  return undefined
+}
+
+// Outlook antwortet in PascalCase (Subject, EmailAddress …), Graph in camelCase. Die Zuordnung unten
+// erwartet camelCase. Schlüssel mit @ (@odata.nextLink) bleiben, wie sie sind.
+export function camelize(v: any): any {
+  if (Array.isArray(v)) return v.map(camelize)
+  if (!v || typeof v !== 'object') return v
+  const out: Record<string, unknown> = {}
+  for (const [k, x] of Object.entries(v)) out[k.startsWith('@') ? k : k.charAt(0).toLowerCase() + k.slice(1)] = camelize(x)
+  return out
+}
+
+// Anfragen an Outlook brauchen PascalCase, Anhänge dort einen eigenen Typnamen
+export function pascalize(v: any): any {
+  if (Array.isArray(v)) return v.map(pascalize)
+  if (!v || typeof v !== 'object') return v
+  const out: Record<string, unknown> = {}
+  for (const [k, x] of Object.entries(v)) {
+    if (k === '@odata.type') out[k] = x === '#microsoft.graph.fileAttachment' ? '#Microsoft.OutlookServices.FileAttachment' : x
+    else out[k.startsWith('@') ? k : pascal(k)] = pascalize(x)
+  }
+  return out
 }
 
 function address(r: any): MailAddress | undefined {
@@ -81,7 +124,7 @@ export function mapSummary(m: any, accountId: string): MailSummary {
     isDraft: !!m.isDraft,
     hasAttachments: !!m.hasAttachments,
     importance: imp === 'high' || imp === 'low' ? imp : 'normal',
-    flagged: m.flag?.flagStatus === 'flagged'
+    flagged: String(m.flag?.flagStatus ?? '').toLowerCase() === 'flagged'
   }
 }
 
@@ -119,18 +162,29 @@ export function newDraftBody(d: MailDraft): Record<string, unknown> {
   return { subject: d.subject, body: { contentType: 'HTML', content: textToHtml(d.text) }, toRecipients: recipients(d.to), ccRecipients: recipients(d.cc) }
 }
 
-// POST /me/messages/{id}/createReply | createReplyAll | createForward. Graph setzt comment über das
-// Zitat der ursprünglichen Nachricht. Die Empfänger gehen so raus, wie die Oberfläche sie zeigt.
+// POST …/messages/{id}/createReply | createReplyAll | createForward. Graph und Outlook setzen comment
+// über das Zitat der ursprünglichen Nachricht. Die Empfänger setzt danach ein PATCH (recipientsPatch),
+// so wie die Oberfläche sie zeigt: Outlook nimmt beim Anlegen nur den Kommentar.
 export function replyDraftBody(d: MailDraft): Record<string, unknown> {
-  return { comment: textToHtml(d.text), message: { toRecipients: recipients(d.to), ccRecipients: recipients(d.cc) } }
+  return { comment: textToHtml(d.text) }
 }
 
-export const CREATE_REPLY: Record<'reply' | 'replyAll' | 'forward', string> = { reply: 'createReply', replyAll: 'createReplyAll', forward: 'createForward' }
+export function recipientsPatch(d: MailDraft): Record<string, unknown> {
+  return { toRecipients: recipients(d.to), ccRecipients: recipients(d.cc) }
+}
+
+export const CREATE_REPLY: Record<MailApi, Record<'reply' | 'replyAll' | 'forward', string>> = {
+  graph: { reply: 'createReply', replyAll: 'createReplyAll', forward: 'createForward' },
+  outlook: { reply: 'createreply', replyAll: 'createreplyall', forward: 'createforward' }
+}
 
 // POST /me/messages/{id}/attachments
 export function attachmentBody(f: MailFile): Record<string, unknown> {
   return { '@odata.type': '#microsoft.graph.fileAttachment', name: f.name, contentType: f.contentType || 'application/octet-stream', contentBytes: f.data }
 }
+
+export const NO_MAIL_TOKEN =
+  'Die Teams-Web-App hat für dieses Konto noch keinen Zugriff auf E-Mails angefordert. Versuche es in ein paar Minuten erneut.'
 
 export const MAIL_TEXTS: WriteTexts = {
   noToken: 'Nicht gesendet: Die Teams-Web-App hat für dieses Konto noch keinen Zugriff zum Senden angefordert. Die Mail liegt unter „Entwürfe“.',

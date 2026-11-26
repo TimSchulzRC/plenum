@@ -7,7 +7,6 @@ import { CallManager } from './calls'
 import { handleMediaProtocol, registerMediaScheme } from './media-protocol'
 import { imageAction } from './image-actions'
 import { deliverAttachment } from './mail-files'
-import { OUTLOOK_AUDIENCES } from './engine/tokens'
 import { store } from './store'
 import { createMainWindow, uiWindows } from './windows'
 import { Updater } from './updater'
@@ -298,10 +297,7 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     debugRaw: async (id, family, url, method, body) => {
       if (!process.env.TM_DEBUG_PORT) throw new Error('Nur im Entwicklungsmodus')
       const a = get(id)
-      // Für Outlook der Mail-Token, nicht der Such-Token, den die Web-App ebenfalls an outlook.office.com schickt
-      const outlook = family === 'outlook' ? a.engine.tokens.bearerFor(OUTLOOK_AUDIENCES) : undefined
-      const headers = outlook ? { authorization: `Bearer ${outlook}` } : undefined
-      return a.api.json(family as Parameters<typeof a.api.json>[0], url.replace(/^(chatsvc|csa|mt):/, (_m, f: string) => a.api.base(f as 'chatsvc')), { method, body, headers })
+      return a.api.json(family as Parameters<typeof a.api.json>[0], url.replace(/^(chatsvc|csa|mt):/, (_m, f: string) => a.api.base(f as 'chatsvc')), { method, body })
     },
     getSnapshot: (id) => {
       const a = accounts.get(id)

@@ -1,16 +1,24 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  attachmentBody,
+  camelize,
   contentId,
-  isGraphPage,
+  folderName,
+  mailPageApi,
   mapFolder,
   mapSummary,
   messagesUrl,
   newDraftBody,
+  pascalize,
+  recipientsPatch,
   replyDraftBody,
   sortFolders,
-  textToHtml
+  textToHtml,
+  wellKnownUrl
 } from '../src/main/engine/mail.ts'
+
+const isGraphPage = (u?: string) => mailPageApi(u) === 'graph'
 import { fileSize, mergeMail, replyDraft } from '../src/renderer/src/lib/mail.ts'
 
 test('Folgeseiten nur von Graph, sonst bekäme eine fremde Adresse den Token', () => {
@@ -20,7 +28,11 @@ test('Folgeseiten nur von Graph, sonst bekäme eine fremde Adresse den Token', (
   assert.equal(isGraphPage('http://graph.microsoft.com/v1.0/me/mailFolders/AAMk/messages'), false)
   assert.equal(isGraphPage('https://graph.microsoft.com/v1.0/me/sendMail'), false)
   assert.equal(isGraphPage(undefined), false)
-  assert.match(messagesUrl('inbox'), /^https:\/\/graph\.microsoft\.com\/v1\.0\/me\/mailFolders\/inbox\/messages\?/)
+  // So liefert Graph die Folgeseite tatsächlich (Live-Test)
+  assert.equal(isGraphPage("https://graph.microsoft.com/v1.0/me/mailFolders('inbox')/messages?$select=id&$orderby=receivedDateTime+desc&$top=40&$skip=40"), true)
+  assert.equal(isGraphPage("https://graph.microsoft.com/v1.0/me/mailFolders('AAMkAD-x_y=')/messages?$skip=40"), true)
+  assert.equal(isGraphPage("https://graph.microsoft.com/v1.0/me/mailFolders('a')/b/messages"), false)
+  assert.match(messagesUrl('graph', 'inbox'), /^https:\/\/graph\.microsoft\.com\/v1\.0\/me\/mailFolders\/inbox\/messages\?/)
 })
 
 test('Mail aus Graph: Absender, Vorschau, Wichtigkeit, Markierung', () => {
@@ -76,9 +88,9 @@ test('Entwürfe: neue Mail und Antwort mit den Empfängern aus der Oberfläche',
   assert.deepEqual(n.toRecipients, [{ emailAddress: { address: 'kim@fabrikam.de' } }])
   assert.deepEqual(n.ccRecipients, [{ emailAddress: { address: 'robin@fabrikam.de' } }])
   assert.equal((n.body as { contentType: string }).contentType, 'HTML')
-  const r = replyDraftBody(d) as { comment: string; message: { toRecipients: unknown[] } }
+  const r = replyDraftBody(d) as { comment: string }
   assert.match(r.comment, /Hi/)
-  assert.equal(r.message.toRecipients.length, 1)
+  assert.deepEqual(recipientsPatch(d), { toRecipients: n.toRecipients, ccRecipients: n.ccRecipients })
 })
 
 test('Content-ID ohne spitze Klammern', () => {
@@ -128,4 +140,37 @@ test('Antwortadresse (Reply-To) statt Absender', () => {
   assert.deepEqual(replyDraft(withReplyTo, 'reply', ['alex@contoso.com']).to, ['support@fabrikam.de'])
   assert.deepEqual(replyDraft(withReplyTo, 'replyAll', ['alex@contoso.com']).to, ['support@fabrikam.de', 'sam@contoso.com'])
   assert.deepEqual(replyDraft({ ...src, replyTo: [] }, 'reply', ['alex@contoso.com']).to, ['kim@fabrikam.de'])
+})
+
+test('Outlook als zweiter Weg: Adressen, Ordnernamen und Folgeseiten', () => {
+  assert.equal(
+    messagesUrl('outlook', 'inbox'),
+    'https://outlook.office.com/api/v2.0/me/MailFolders/Inbox/messages?$top=40&$select=Id,ConversationId,Subject,From,ToRecipients,BodyPreview,ReceivedDateTime,IsRead,IsDraft,HasAttachments,Importance,Flag&$orderby=ReceivedDateTime desc'
+  )
+  assert.match(wellKnownUrl('outlook', 'deleteditems'), /\/MailFolders\/DeletedItems\?/)
+  assert.equal(folderName('outlook', 'deleteditems'), 'DeletedItems')
+  assert.equal(folderName('outlook', 'AAMkFolder'), 'AAMkFolder')
+  assert.equal(folderName('graph', 'deleteditems'), 'deleteditems')
+  assert.equal(mailPageApi("https://outlook.office.com/api/v2.0/me/MailFolders('Inbox')/messages?$skip=40"), 'outlook')
+  assert.equal(mailPageApi('https://outlook.office.com/api/v2.0/me/sendmail'), undefined)
+  assert.equal(mailPageApi('https://outlook.office.com.evil.example/api/v2.0/me/MailFolders/Inbox/messages'), undefined)
+})
+
+test('Outlook-Antworten in camelCase, Anfragen in PascalCase', () => {
+  const m = camelize({ Id: 'AAMk1', Subject: 'Hallo', From: { EmailAddress: { Name: 'Kim', Address: 'kim@fabrikam.de' } }, Importance: 'High', Flag: { FlagStatus: 'Flagged' }, ReceivedDateTime: '2026-11-26T09:15:00Z', '@odata.etag': 'W/1' })
+  const s = mapSummary(m, 'acc')
+  assert.equal(s.id, 'AAMk1')
+  assert.deepEqual(s.from, { name: 'Kim', address: 'kim@fabrikam.de' })
+  assert.equal(s.importance, 'high')
+  assert.equal(s.flagged, true)
+  assert.equal((m as Record<string, unknown>)['@odata.etag'], 'W/1')
+  const d = { to: ['kim@fabrikam.de'], cc: [], subject: 'Angebot', text: 'Hi', attachments: [] }
+  assert.deepEqual(pascalize(newDraftBody(d)).ToRecipients, [{ EmailAddress: { Address: 'kim@fabrikam.de' } }])
+  assert.deepEqual(pascalize({ isRead: true }), { IsRead: true })
+  assert.deepEqual(pascalize(attachmentBody({ name: 'a.txt', contentType: 'text/plain', data: 'QQ==' })), {
+    '@odata.type': '#Microsoft.OutlookServices.FileAttachment',
+    Name: 'a.txt',
+    ContentType: 'text/plain',
+    ContentBytes: 'QQ=='
+  })
 })

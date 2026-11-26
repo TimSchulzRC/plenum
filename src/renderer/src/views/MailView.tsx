@@ -29,7 +29,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import type { AccountInfo, MailFolder, MailFolderKind, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
 import { api } from '../api'
 import { fmt, listTime } from '../lib/format'
-import { accountColor, calendarAccountName, ipcErrorText } from '../lib/calendar'
+import { accountTitle } from '@shared/accounts'
+import { accountColor, ipcErrorText } from '../lib/calendar'
 import { addressLabel, fileSize, mergeMail } from '../lib/mail'
 import { mailDocument } from '../lib/mail-html'
 import { setMailUnread } from '../lib/mail-unread'
@@ -252,7 +253,7 @@ export function MailView(): JSX.Element {
                   >
                     {isCollapsed ? <ChevronRight16Regular /> : <ChevronDown16Regular />}
                     <span className="acct-dot" style={{ background: color(a.id) }} />
-                    <span>{calendarAccountName(a)}</span>
+                    <span>{accountTitle(a).name}</span>
                   </button>
                 )}
                 {!isCollapsed && (
@@ -390,7 +391,7 @@ function Count({ n }: { n: number }): JSX.Element | null {
   return n > 0 ? <span className="folder-count">{n > 999 ? '999+' : n}</span> : null
 }
 
-const name = (a?: AccountInfo) => (a ? calendarAccountName(a) : 'Konto')
+const name = (a?: AccountInfo) => (a ? accountTitle(a).name : 'Konto')
 
 function MailReader({
   target,
@@ -488,7 +489,7 @@ function MailReader({
         {m.cc.length > 0 && <div className="mail-to">Cc: {m.cc.map(addressLabel).join('; ')}</div>}
         {multi && account && (
           <div className="mail-to" title={account.upn}>
-            <span className="acct-dot" style={{ background: color(account.id) } as CSSProperties} /> {calendarAccountName(account)}
+            <span className="acct-dot" style={{ background: color(account.id) } as CSSProperties} /> {accountTitle(account).name}
           </div>
         )}
         {m.attachments.length > 0 && (

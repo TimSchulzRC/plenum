@@ -3,7 +3,8 @@ import { Attach20Regular, Dismiss12Regular, Send20Regular } from '@fluentui/reac
 import { useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AccountInfo, MailFile, MailMessage, MailReplyKind } from '@shared/types'
 import { api } from '../api'
-import { calendarAccountName, ipcErrorText, parseAttendees } from '../lib/calendar'
+import { accountTitle } from '@shared/accounts'
+import { ipcErrorText, parseAttendees } from '../lib/calendar'
 import { addressLabel, fileSize, replyDraft } from '../lib/mail'
 import { fmt } from '../lib/format'
 
@@ -68,7 +69,7 @@ export function MailCompose({
         : reading
           ? 'Dateien werden noch gelesen'
           : account && account.status !== 'ready'
-          ? `${calendarAccountName(account)} ist nicht verbunden`
+          ? `${accountTitle(account).name} ist nicht verbunden`
           : undefined
 
   const addFiles = async (list: FileList | null) => {
@@ -144,13 +145,13 @@ export function MailCompose({
         {state.kind === 'new' && accounts.length > 1 ? (
           <Field label="Von" orientation="horizontal">
             <Dropdown
-              value={account ? calendarAccountName(account) : ''}
+              value={account ? accountTitle(account).name : ''}
               selectedOptions={[accountId]}
               onOptionSelect={(_e, d) => d.optionValue && setAccountId(d.optionValue)}
               button={{ children: <From a={account} color={color} /> }}
             >
               {accounts.map((a) => (
-                <Option key={a.id} value={a.id} text={calendarAccountName(a)} disabled={a.status !== 'ready'}>
+                <Option key={a.id} value={a.id} text={accountTitle(a).name} disabled={a.status !== 'ready'}>
                   <From a={a} color={color} />
                 </Option>
               ))}
@@ -233,7 +234,7 @@ function From({ a, color }: { a?: AccountInfo; color: (id: string) => string }):
   return (
     <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', minWidth: 0 }}>
       <span className="acct-dot" style={{ background: color(a.id) } as CSSProperties} />
-      <span>{calendarAccountName(a)}</span>
+      <span>{accountTitle(a).name}</span>
       {a.upn && <span style={{ color: 'var(--fg-3)', fontSize: 12 }}>{a.upn}</span>}
     </span>
   )
