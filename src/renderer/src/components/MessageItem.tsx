@@ -9,7 +9,8 @@ import {
   Video20Regular,
   Important16Filled,
   TextQuote20Regular,
-  EmojiAdd20Regular
+  EmojiAdd20Regular,
+  ArrowReply20Regular
 } from '@fluentui/react-icons'
 import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Message } from '@shared/types'
@@ -29,6 +30,8 @@ interface Props {
   names: (mri: string) => string
   onReply?: (m: Message) => void
   onEdit?: (m: Message) => void
+  // Kanalbeitrag: öffnet den Thread zum Antworten
+  onThread?: (m: Message) => void
   onChanged?: () => void
 }
 
@@ -182,7 +185,7 @@ function isEmojiOnly(msg: Message): boolean {
   return EMOJI_ONLY.test(t)
 }
 
-export const MessageItem = memo(function MessageItem({ msg, accountId, myMri, myName, showHeader, names, onReply, onEdit, onChanged }: Props) {
+export const MessageItem = memo(function MessageItem({ msg, accountId, myMri, myName, showHeader, names, onReply, onEdit, onThread, onChanged }: Props) {
   const [hover, setHover] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -246,6 +249,13 @@ export const MessageItem = memo(function MessageItem({ msg, accountId, myMri, my
                 </PopoverSurface>
               </Popover>
               <span className="sep" />
+              {onThread && (
+                <Tooltip content="Im Thread antworten" relationship="label">
+                  <button className="tool" onClick={() => onThread(msg)}>
+                    <ArrowReply20Regular />
+                  </button>
+                </Tooltip>
+              )}
               {canEdit && (
                 <Tooltip content="Bearbeiten" relationship="label">
                   <button className="tool" onClick={() => onEdit(msg)}>

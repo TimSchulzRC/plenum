@@ -1209,75 +1209,102 @@ button {
 }
 
 /* ---------- Kanäle ---------- */
-.posts {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 0;
+/* Beiträge sehen aus wie Chatnachrichten, Antworten liegen im Thread rechts daneben */
+.channel-post.open .bubble {
+  outline: 1.5px solid var(--brand-fg);
 }
-.post {
-  max-width: 980px;
-  margin: 0 auto 14px;
-  padding: 0 28px;
-}
-.post-card {
-  background: var(--surface);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-}
-.main-pane.channel {
-  background: var(--pane);
-}
-.post-root {
-  padding: 14px 16px;
+.thread-summary-row {
   display: flex;
-  gap: 12px;
+  margin-top: 4px;
+  /* Bündig mit der Sprechblase: Avatar 32px + Abstand 10px, minus Innenabstand des Knopfs */
+  padding-left: 36px;
 }
-.post-replies {
-  border-top: 1px solid var(--border);
-  background: var(--surface-2);
+.channel-post.mine .thread-summary-row {
+  justify-content: flex-end;
+  padding-left: 0;
 }
-.post-reply {
-  display: flex;
-  gap: 10px;
-  padding: 10px 16px 10px 60px;
-}
-.post-reply + .post-reply {
-  border-top: 1px solid var(--border);
-}
-.post-content {
-  flex: 1;
-  min-width: 0;
-  font-size: 14px;
-  line-height: 20px;
-  user-select: text;
-  overflow-wrap: anywhere;
-}
-.post-content .bubble {
-  background: transparent !important;
-  padding: 0;
-  border-radius: 0;
-}
-.post-footer {
-  border-top: 1px solid var(--border);
-  padding: 6px 12px 6px 60px;
-  display: flex;
+.thread-summary {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
-}
-.link-btn {
+  padding: 3px 6px;
   border: 0;
-  background: transparent;
-  color: var(--brand-fg);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 4px 8px;
   border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--fg-3);
+  cursor: pointer;
 }
-.link-btn:hover {
+.thread-summary:hover {
   background: var(--hover-soft);
+}
+.thread-summary:hover .thread-count {
+  text-decoration: underline;
+}
+.thread-avatars {
+  display: inline-flex;
+}
+.thread-avatars > * {
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--content);
+}
+.thread-avatars > * + * {
+  margin-left: -3px;
+}
+.thread-count {
+  color: var(--brand-fg);
+  font-weight: 600;
+}
+.thread-pane {
+  width: clamp(320px, 38%, 560px);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--content);
+  border-left: 1px solid var(--border);
+}
+.thread-pane .pane-header {
+  padding-left: 16px;
+}
+.thread-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--fg-3);
+}
+.thread-title b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+  color: var(--fg);
+}
+.thread-pane .messages-inner {
+  padding: 0 16px;
+}
+.thread-pane .msg-col {
+  max-width: 86%;
+}
+.thread-pane .composer-wrap {
+  padding: 0 16px 16px;
+}
+.thread-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 4px;
+  font-size: 12.5px;
+  color: var(--fg-3);
+}
+.thread-divider::before,
+.thread-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-strong);
 }
 
 /* ---------- Teams-Liste ---------- */

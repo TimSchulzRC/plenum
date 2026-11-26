@@ -1,12 +1,12 @@
-import { Spinner } from '@fluentui/react-components'
-import { ChevronDown16Regular, ChevronRight16Regular, LockClosed12Regular, ArrowReply16Regular } from '@fluentui/react-icons'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Spinner, Tooltip } from '@fluentui/react-components'
+import { ChevronDown16Regular, ChevronRight16Regular, Dismiss20Regular, LockClosed12Regular } from '@fluentui/react-icons'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject, type UIEvent } from 'react'
 import type { Channel, ChannelThread, Message, Team } from '@shared/types'
 import { api, onEvent } from '../api'
 import { PersonAvatar, TeamAvatar } from '../components/Avatars'
-import { Composer } from '../components/Composer'
-import { MessageBody, Reactions } from '../components/MessageItem'
-import { messageTime } from '../lib/format'
+import { Composer, type ComposerHandle } from '../components/Composer'
+import { MessageItem } from '../components/MessageItem'
+import { dayLabel, listTime, sameDay } from '../lib/format'
 import { cacheKey, channelCache, fetchChannel, fetchReplies, prefetchChannel, replyCache, prefetchReplies, useHoverPrefetch } from '../lib/prefetch'
 import { personName, useActive, useStore } from '../store'
 
@@ -119,9 +119,14 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
   const [threads, setThreads] = useState<ChannelThread[]>(() => channelCache.peek(cacheKey(accountId, channel.id)) ?? [])
   const [loading, setLoading] = useState(() => !channelCache.peek(cacheKey(accountId, channel.id)))
   const [error, setError] = useState<string>()
-  const scroller = useRef<HTMLDivElement>(null)
-  const stick = useRef(true)
+  // Wie in Teams öffnet ein Beitrag seinen Thread rechts neben dem Kanal
+  const [openId, setOpenId] = useState<string>()
+  const threadComposer = useRef<ComposerHandle>(null)
   const names = useCallback((m: string) => personName(snapshot, m), [snapshot])
+  // Wie ein Chat: Beiträge nach ihrer Zeit, neue Antworten schieben einen Beitrag nicht nach unten
+  const posts = useMemo(() => [...threads].sort((a, b) => a.root.time - b.root.time), [threads])
+  const open = openId ? threads.find((t) => t.id === openId) : undefined
+  const { scroller, stick, onScroll } = useStickToBottom(posts)
 
   const load = useCallback(async () => {
     try {
@@ -155,65 +160,88 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
     }
   }, [accountId, channel.id, load])
 
-  useLayoutEffect(() => {
-    if (stick.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight
-  }, [threads])
+  const openThread = (id: string) => {
+    setOpenId(id)
+    setTimeout(() => threadComposer.current?.focus(), 50)
+  }
+
+  const rows: JSX.Element[] = []
+  let prev: ChannelThread | undefined
+  for (const t of posts) {
+    if (!prev || !sameDay(prev.root.time, t.root.time)) rows.push(<div key={`d-${t.id}`} className="day-sep">{dayLabel(t.root.time)}</div>)
+    rows.push(
+      <ChannelPost
+        key={t.id}
+        thread={t}
+        accountId={accountId}
+        channelId={channel.id}
+        myMri={me?.mri}
+        myName={me?.displayName}
+        names={names}
+        open={t.id === openId}
+        onOpen={() => openThread(t.id)}
+        onChanged={() => void load()}
+      />
+    )
+    prev = t
+  }
 
   return (
-    <div className="main-pane channel">
-      <div className="pane-header">
-        <TeamAvatar team={team} size={32} />
-        <div className="grow" style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-          <div style={{ minWidth: 0 }}>
-            <div className="title">{channel.displayName}</div>
-            <div className="subtitle">{team.displayName}</div>
-          </div>
-          <div className="tabs">
-            <button className="tab active">Beiträge</button>
+    <>
+      <div className="main-pane channel">
+        <div className="pane-header">
+          <TeamAvatar team={team} size={32} />
+          <div className="grow" style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+            <div style={{ minWidth: 0 }}>
+              <div className="title">{channel.displayName}</div>
+              <div className="subtitle">{team.displayName}</div>
+            </div>
+            <div className="tabs">
+              <button className="tab active">Beiträge</button>
+            </div>
           </div>
         </div>
-      </div>
-      <div
-        className="posts"
-        ref={scroller}
-        onScroll={(e) => {
-          const el = e.currentTarget
-          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-        }}
-      >
-        {loading && threads.length === 0 && (
-          <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}>
-            <Spinner size="small" />
+        <div className="messages" ref={scroller} onScroll={onScroll}>
+          <div className="messages-inner">
+            {loading && threads.length === 0 && (
+              <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}>
+                <Spinner size="small" />
+              </div>
+            )}
+            {error && threads.length === 0 && <div className="empty-state">Beiträge konnten nicht geladen werden: {error}</div>}
+            {!loading && !error && threads.length === 0 && <div className="empty-state">Noch keine Beiträge in diesem Kanal.</div>}
+            {rows}
           </div>
-        )}
-        {error && threads.length === 0 && <div className="empty-state">Beiträge konnten nicht geladen werden: {error}</div>}
-        {!loading && !error && threads.length === 0 && <div className="empty-state">Noch keine Beiträge in diesem Kanal.</div>}
-        {threads.map((t) => (
-          <Post key={t.id} thread={t} accountId={accountId} channelId={channel.id} myMri={me?.mri} myName={me?.displayName} names={names} onChanged={() => void load()} />
-        ))}
+        </div>
+        <Composer
+          withSubject
+          placeholder={`Nachricht in ${channel.displayName}`}
+          onSend={async (p) => {
+            await api.sendMessage(accountId, channel.id, p.html, { subject: p.subject, importance: p.importance })
+            stick.current = true
+            setTimeout(() => void load(), 800)
+          }}
+        />
       </div>
-      <Composer
-        withSubject
-        placeholder="Neuen Beitrag verfassen"
-        onSend={async (p) => {
-          await api.sendMessage(accountId, channel.id, p.html, { subject: p.subject, importance: p.importance })
-          stick.current = true
-          setTimeout(() => void load(), 800)
-        }}
-      />
-    </div>
+      {open && (
+        <ThreadPane
+          key={open.id}
+          thread={open}
+          accountId={accountId}
+          channelId={channel.id}
+          myMri={me?.mri}
+          myName={me?.displayName}
+          names={names}
+          composer={threadComposer}
+          onClose={() => setOpenId(undefined)}
+          onChanged={() => void load()}
+        />
+      )}
+    </>
   )
 }
 
-function Post({
-  thread,
-  accountId,
-  channelId,
-  myMri,
-  myName,
-  names,
-  onChanged
-}: {
+interface ThreadProps {
   thread: ChannelThread
   accountId: string
   channelId: string
@@ -221,103 +249,145 @@ function Post({
   myName?: string
   names: (m: string) => string
   onChanged: () => void
-}): JSX.Element {
-  const [expanded, setExpanded] = useState(false)
-  // Nachgeladene und selbst gesendete Antworten. Sie ergänzen die Vorschau aus dem Server-Stand,
-  // statt sie zu ersetzen, sonst kämen neue Antworten anderer nicht mehr an.
-  const [extra, setExtra] = useState<Message[]>([])
-  const [loadedAll, setLoadedAll] = useState(false)
-  const [replying, setReplying] = useState(false)
+}
+
+// Beitrag im Kanal: Nachricht wie im Chat, darunter wer geantwortet hat, wie oft und wann zuletzt
+function ChannelPost({ thread, accountId, channelId, myMri, myName, names, open, onOpen, onChanged }: ThreadProps & { open: boolean; onOpen: () => void }): JSX.Element {
+  const hover = useHoverPrefetch(() => prefetchReplies(accountId, channelId, thread.id))
+  const count = Math.max(thread.replyCount, thread.replies.length)
+  const lastReply = thread.replies[thread.replies.length - 1]?.time ?? thread.lastActivity
+  // Die letzten drei, die geantwortet haben, die jüngste Antwort zuerst
+  const people = [...new Set([...thread.replies].reverse().map((m) => m.from))].slice(0, 3)
+  const byMri = new Map(thread.replies.map((m) => [m.from, m.fromName]))
+  return (
+    <div className={`channel-post ${open ? 'open' : ''} ${thread.root.isMine ? 'mine' : ''}`}>
+      <MessageItem msg={thread.root} accountId={accountId} myMri={myMri} myName={myName} showHeader names={names} onThread={onOpen} onChanged={onChanged} />
+      {count > 0 && (
+        <div className="thread-summary-row">
+          <button className="thread-summary" onClick={onOpen} {...hover}>
+            {people.length > 0 && (
+              <span className="thread-avatars">
+                {people.map((m) => (
+                  <PersonAvatar key={m} mri={m} name={byMri.get(m) || names(m)} size={20} showPresence={false} />
+                ))}
+              </span>
+            )}
+            <span className="thread-count">
+              {count} {count === 1 ? 'Antwort' : 'Antworten'}
+            </span>
+            <span>Letzte Antwort {listTime(lastReply)}</span>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ThreadPane({ thread, accountId, channelId, myMri, myName, names, composer, onClose, onChanged }: ThreadProps & { composer: RefObject<ComposerHandle | null>; onClose: () => void }): JSX.Element {
+  const key = cacheKey(accountId, `${channelId};${thread.id}`)
+  // Alle Antworten vom Server. Die Vorschau im Beitrag enthält nur die letzten.
+  const [fetched, setFetched] = useState<Message[] | undefined>(() => replyCache.peek(key))
+  // Selbst gesendete Antworten, bis sie vom Server kommen
+  const [sent, setSent] = useState<Message[]>([])
+  const first = useRef(true)
+
+  // Beim Öffnen und bei jedem neuen Stand des Kanals neu laden, damit Antworten,
+  // Reaktionen und Änderungen auch außerhalb der Vorschau ankommen
+  useEffect(() => {
+    let alive = true
+    if (!first.current) replyCache.markStale(key)
+    first.current = false
+    fetchReplies(accountId, channelId, thread.id)
+      .then((r) => alive && setFetched(r))
+      .catch(() => alive && setFetched((f) => f ?? []))
+    return () => {
+      alive = false
+    }
+  }, [accountId, channelId, thread, key])
+
   const replies = useMemo(() => {
     const byId = new Map<string, Message>()
-    for (const m of [...extra, ...thread.replies]) byId.set(m.id, m)
+    for (const m of [...sent, ...thread.replies, ...(fetched ?? [])]) if (m.id !== thread.id) byId.set(m.id, m)
     return [...byId.values()].sort((a, b) => a.time - b.time)
-  }, [extra, thread.replies])
-  const visible = expanded ? replies : replies.slice(-2)
-  const hiddenCount = Math.max(0, (loadedAll ? replies.length : Math.max(thread.replyCount, replies.length)) - visible.length)
+  }, [sent, thread.replies, thread.id, fetched])
+  const count = Math.max(thread.replyCount, replies.length)
   const root = thread.root
-  const hoverMore = useHoverPrefetch(() => prefetchReplies(accountId, channelId, thread.id))
+  const { scroller, stick, onScroll } = useStickToBottom(replies)
 
-  const expand = async () => {
-    setExpanded(true)
-    if (!loadedAll) {
-      // Vorgeladene Antworten sofort zeigen, dann auffrischen
-      const cached = replyCache.peek(cacheKey(accountId, `${channelId};${thread.id}`))
-      if (cached) setExtra((prev) => [...prev, ...cached.filter((m) => m.id !== thread.id)])
-      try {
-        const r = await fetchReplies(accountId, channelId, thread.id)
-        setExtra((prev) => [...prev, ...r.filter((m) => m.id !== thread.id)])
-        setLoadedAll(true)
-      } catch {
-        /* Fallback: vorhandene Antworten */
-      }
-    }
+  const rows: JSX.Element[] = []
+  let prev: Message | undefined
+  for (const m of replies) {
+    const showHeader = !prev || prev.from !== m.from || m.time - prev.time > 5 * 60_000 || prev.kind !== 'text' || !sameDay(prev.time, m.time)
+    rows.push(<MessageItem key={m.id} msg={m} accountId={accountId} myMri={myMri} myName={myName} showHeader={showHeader} names={names} onChanged={onChanged} />)
+    prev = m
   }
 
   return (
-    <div className="post">
-      <div className="post-card">
-        <div className="post-root">
-          <PersonAvatar mri={root.from} name={root.fromName || names(root.from)} size={32} />
-          <div className="post-content">
-            <div className="msg-meta" style={{ marginLeft: 0 }}>
-              <b>{root.fromName || names(root.from)}</b>
-              <span>{messageTime(root.time)}</span>
-              {root.editedTime && <span>Bearbeitet</span>}
-            </div>
-            {root.kind === 'system' ? <div className="msg-system" style={{ justifyContent: 'flex-start' }}>{root.systemText}</div> : <div className="bubble"><MessageBody msg={root} accountId={accountId} myName={myName} /></div>}
-            <Reactions msg={root} accountId={accountId} myMri={myMri} names={names} onChanged={onChanged} />
-          </div>
+    <div className="thread-pane">
+      <div className="pane-header">
+        <div className="grow thread-title">
+          <span>Thread</span>
+          <ChevronRight16Regular />
+          <b>{root.subject || root.text || 'Beitrag'}</b>
         </div>
-        {(replies.length > 0 || hiddenCount > 0) && (
-          <div className="post-replies">
-            {hiddenCount > 0 && !expanded && (
-              <div style={{ padding: '6px 16px 0 60px' }}>
-                <button className="link-btn" onClick={() => void expand()} {...hoverMore}>
-                  {hiddenCount} {hiddenCount === 1 ? 'weitere Antwort' : 'weitere Antworten'}
-                </button>
-              </div>
-            )}
-            {visible.map((m) => (
-              <div key={m.id} className="post-reply">
-                <PersonAvatar mri={m.from} name={m.fromName || names(m.from)} size={24} />
-                <div className="post-content">
-                  <div className="msg-meta" style={{ marginLeft: 0 }}>
-                    <b>{m.fromName || names(m.from)}</b>
-                    <span>{messageTime(m.time)}</span>
-                  </div>
-                  <div className="bubble">
-                    <MessageBody msg={m} accountId={accountId} myName={myName} />
-                  </div>
-                  <Reactions msg={m} accountId={accountId} myMri={myMri} names={names} onChanged={onChanged} />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        {replying ? (
-          <div style={{ padding: '0 12px 12px 48px', borderTop: '1px solid var(--border)' }}>
-            <Composer
-              compact
-              autoFocus
-              onCancel={() => setReplying(false)}
-              placeholder="Antworten"
-              onSend={async (p) => {
-                const msg = await api.sendMessage(accountId, channelId, p.html, { replyToId: thread.id, importance: p.importance })
-                setExtra((prev) => [...prev, msg])
-                setReplying(false)
-                setTimeout(onChanged, 1000)
-              }}
-            />
-          </div>
-        ) : (
-          <div className="post-footer">
-            <button className="link-btn" onClick={() => setReplying(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <ArrowReply16Regular /> Antworten
-            </button>
-          </div>
-        )}
+        <Tooltip content="Thread schließen" relationship="label">
+          <button className="icon-btn" onClick={onClose}>
+            <Dismiss20Regular />
+          </button>
+        </Tooltip>
       </div>
+      <div className="messages" ref={scroller} onScroll={onScroll}>
+        <div className="messages-inner">
+          <MessageItem msg={root} accountId={accountId} myMri={myMri} myName={myName} showHeader names={names} onChanged={onChanged} />
+          {count > 0 && (
+            <div className="thread-divider">
+              {count} {count === 1 ? 'Antwort' : 'Antworten'}
+            </div>
+          )}
+          {!fetched && count > replies.length && (
+            <div style={{ padding: 12, display: 'flex', justifyContent: 'center' }}>
+              <Spinner size="tiny" />
+            </div>
+          )}
+          {rows}
+        </div>
+      </div>
+      <Composer
+        ref={composer}
+        placeholder="Im Thread antworten"
+        onSend={async (p) => {
+          const msg = await api.sendMessage(accountId, channelId, p.html, { replyToId: thread.id, importance: p.importance })
+          stick.current = true
+          setSent((s) => [...s, msg])
+          setTimeout(onChanged, 1000)
+        }}
+      />
     </div>
   )
+}
+
+// Hält eine Liste unten, solange niemand hochgescrollt hat. Auch wenn sie schmaler wird
+// (Thread geht auf) oder Bilder nachladen.
+function useStickToBottom(content: unknown) {
+  const scroller = useRef<HTMLDivElement>(null)
+  const stick = useRef(true)
+  useLayoutEffect(() => {
+    if (stick.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight
+  }, [content])
+  useEffect(() => {
+    const el = scroller.current
+    const inner = el?.firstElementChild
+    if (!el || !inner) return
+    const ro = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight
+    })
+    ro.observe(el)
+    ro.observe(inner)
+    return () => ro.disconnect()
+  }, [])
+  const onScroll = (e: UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget
+    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
+  return { scroller, stick, onScroll }
 }
