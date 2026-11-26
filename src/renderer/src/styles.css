@@ -56,6 +56,7 @@
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 12px;
+  --list-width: 312px;
   --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'Helvetica Neue', sans-serif;
 }
 
@@ -358,7 +359,7 @@ button {
   box-shadow: var(--shadow);
 }
 .list-pane {
-  width: 312px;
+  width: var(--list-width);
   min-width: 260px;
   display: flex;
   flex-direction: column;
@@ -1305,6 +1306,21 @@ button {
   flex: 1;
   height: 1px;
   background: var(--border-strong);
+}
+/* Schmales Fenster: Neben dem Thread bliebe für den Kanal zu wenig Platz,
+   der Thread deckt dann den Kanal ab wie in Teams */
+@media (max-width: 1219px) {
+  .workspace {
+    position: relative;
+  }
+  .thread-pane {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+    width: calc(100% - var(--list-width));
+  }
 }
 
 /* ---------- Teams-Liste ---------- */
