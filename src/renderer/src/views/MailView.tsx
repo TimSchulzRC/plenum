@@ -153,7 +153,7 @@ export function MailView(): JSX.Element {
           const same = (s: Source) => s.accountId === accountId && s.folderId === folderId && s.next === cursor
           try {
             const p = await api.listMail(accountId, folderId, cursor)
-            setSources((prev) => prev && prev.map((s) => (same(s) ? { ...s, items: [...s.items, ...p.items.filter((i) => !s.items.some((x) => x.id === i.id))], next: p.next } : s)))
+            setSources((prev) => prev && prev.map((s) => (same(s) ? { ...s, items: [...s.items, ...p.items.filter((i) => !s.items.some((x) => x.id === i.id))], next: p.next, error: undefined } : s)))
           } catch (e) {
             setSources((prev) => prev && prev.map((s) => (same(s) ? { ...s, error: ipcErrorText(e) } : s)))
           }

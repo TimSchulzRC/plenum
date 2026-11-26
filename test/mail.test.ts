@@ -88,8 +88,12 @@ test('Entwürfe: neue Mail und Antwort mit den Empfängern aus der Oberfläche',
   assert.deepEqual(n.toRecipients, [{ emailAddress: { address: 'kim@fabrikam.de' } }])
   assert.deepEqual(n.ccRecipients, [{ emailAddress: { address: 'robin@fabrikam.de' } }])
   assert.equal((n.body as { contentType: string }).contentType, 'HTML')
-  const r = replyDraftBody(d) as { comment: string }
+  const r = replyDraftBody(d, 'replyAll') as { comment: string; toRecipients?: unknown }
   assert.match(r.comment, /Hi/)
+  assert.equal(r.toRecipients, undefined)
+  // Weiterleiten: Empfänger schon beim Anlegen, bei Outlook als ToRecipients
+  assert.deepEqual((replyDraftBody(d, 'forward') as { toRecipients: unknown }).toRecipients, n.toRecipients)
+  assert.deepEqual(pascalize(replyDraftBody(d, 'forward')).ToRecipients, [{ EmailAddress: { Address: 'kim@fabrikam.de' } }])
   assert.deepEqual(recipientsPatch(d), { toRecipients: n.toRecipients, ccRecipients: n.ccRecipients })
 })
 

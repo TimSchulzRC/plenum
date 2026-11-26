@@ -300,13 +300,21 @@ export class TeamsApi {
     return order.filter((a) => (a === 'graph' ? t.has('graph') || !!t.findBearer('graph.microsoft.com') : !!t.bearerFor(OUTLOOK_AUDIENCES)))
   }
 
-  // Outlook mit dem Mail-Token (nicht dem Such-Token), Anfrage in PascalCase, Antwort in camelCase
-  private mailRequest<T = any>(api: MailApi, url: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+  // Outlook mit dem Mail-Token (nicht dem Such-Token), Anfrage in PascalCase, Antwort in camelCase.
+  // Bei 401 noch einmal mit dem Token, den die Web-App inzwischen erneuert hat.
+  private async mailRequest<T = any>(api: MailApi, url: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
     if (api === 'graph') return this.json('graph', url, init)
+    const body = init.body === undefined ? undefined : pascalize(init.body)
+    const send = (token: string) => this.json('outlook', url, { ...init, body, headers: { authorization: `Bearer ${token}` } }).then(camelize)
     const token = this.engine.tokens.bearerFor(OUTLOOK_AUDIENCES)
     if (!token) throw new ApiError(0, NO_MAIL_TOKEN)
-    const body = init.body === undefined ? undefined : pascalize(init.body)
-    return this.json('outlook', url, { ...init, body, headers: { authorization: `Bearer ${token}` } }).then(camelize)
+    try {
+      return await send(token)
+    } catch (e) {
+      const fresh = this.engine.tokens.bearerFor(OUTLOOK_AUDIENCES)
+      if (!(e instanceof ApiError && e.status === 401) || !fresh || fresh === token) throw e
+      return send(fresh)
+    }
   }
 
   // Erster Weg, der klappt. Zum nächsten nur, wenn der vorige sicher nichts getan hat (mayTryNextWriter),
@@ -367,7 +375,7 @@ export class TeamsApi {
   // Entwurf: neue Mail oder Antwort/Weiterleitung mit Zitat, bei Antworten danach die Empfänger
   async createMailDraft(draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): Promise<string> {
     const res = reply
-      ? await this.mail((api) => [messageActionUrl(api, reply.id, CREATE_REPLY[api][reply.kind]), { method: 'POST', body: replyDraftBody(draft) }])
+      ? await this.mail((api) => [messageActionUrl(api, reply.id, CREATE_REPLY[api][reply.kind]), { method: 'POST', body: replyDraftBody(draft, reply.kind) }])
       : await this.mail((api) => [`${MAIL_BASE[api]}/messages`, { method: 'POST', body: newDraftBody(draft) }])
     if (!res?.id) throw new ApiError(0, 'Kein Entwurf angelegt')
     const id = String(res.id)
