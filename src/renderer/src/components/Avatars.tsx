@@ -1,8 +1,8 @@
 import { Avatar, AvatarGroup, AvatarGroupItem, type PresenceBadgeStatus } from '@fluentui/react-components'
 import { CalendarLtr20Regular, PeopleTeam20Regular } from '@fluentui/react-icons'
 import { accountTitle } from '@shared/accounts'
-import type { Availability, ChatSummary, Presence, Team } from '@shared/types'
-import { avatarUrl, teamPictureUrl } from '../lib/media'
+import type { Availability, ChatSummary, MailAddress, Presence, Team } from '@shared/types'
+import { avatarUrl, mailAvatarUrl, teamPictureUrl } from '../lib/media'
 import { useScopedAccountId, useStore } from '../store'
 
 export function presenceStatus(p?: Presence): PresenceBadgeStatus | undefined {
@@ -75,6 +75,13 @@ export function PersonAvatar({
       badge={status && showPresence ? { status, outOfOffice: !!presence?.outOfOffice && status !== 'out-of-office' } : undefined}
     />
   )
+}
+
+// Absender oder Empfänger einer Mail: Profilbild aus Teams, sonst Initialen wie in Outlook
+export function MailAvatar({ accountId, address, name, size = 32 }: { accountId: string; address?: MailAddress; name?: string; size?: 20 | 24 | 32 | 40 }): JSX.Element {
+  const label = address?.name || address?.address || name || '?'
+  const img = mailAvatarUrl(accountId, address?.address, label, size >= 40 ? 'HR96x96' : 'HR64x64')
+  return <Avatar name={label} size={size} color="colorful" image={img ? { src: img } : undefined} />
 }
 
 export function ChatAvatar({ chat, size = 32 }: { chat: ChatSummary; size?: 24 | 28 | 32 | 36 | 40 | 48 }): JSX.Element {

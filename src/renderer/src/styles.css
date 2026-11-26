@@ -1853,9 +1853,20 @@ button {
 }
 .mail-item {
   position: relative;
-  padding: 9px 14px 10px 18px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 14px 10px 14px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
+}
+.mail-item > .fui-Avatar {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.mail-main {
+  flex: 1;
+  min-width: 0;
 }
 .mail-item:hover {
   background: var(--hover-soft);
@@ -1968,6 +1979,18 @@ button {
   font-size: 18px;
   letter-spacing: -0.01em;
 }
+.mail-sender {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.mail-sender > .fui-Avatar {
+  flex-shrink: 0;
+}
+.mail-people {
+  flex: 1;
+  min-width: 0;
+}
 .mail-from {
   display: flex;
   gap: 12px;
@@ -1993,6 +2016,17 @@ button {
   color: var(--fg-3);
   margin-top: 3px;
   overflow-wrap: anywhere;
+}
+.mail-recipients {
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 5px;
+}
+.mail-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg-2);
 }
 .mail-attachments {
   display: flex;

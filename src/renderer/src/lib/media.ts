@@ -4,6 +4,14 @@ export function avatarUrl(accountId: string, mri: string, name = '', size = 'HR9
   return `tmimg://avatar/${accountId}/${encodeURIComponent(mri)}?name=${encodeURIComponent(name)}&size=${size}`
 }
 
+// Profilbild zu einer Mailadresse. Der Hauptprozess sucht die Person in Teams, kennt Teams sie nicht,
+// antwortet er mit 404 und das Avatar zeigt die Initialen.
+export function mailAvatarUrl(accountId: string, address: string | undefined, name = '', size = 'HR64x64'): string | undefined {
+  const a = address?.trim().toLowerCase()
+  if (!accountId || !a || !a.includes('@')) return undefined
+  return `tmimg://mailavatar/${accountId}/${encodeURIComponent(a)}?name=${encodeURIComponent(name)}&size=${size}`
+}
+
 export function teamPictureUrl(accountId: string, groupId: string | undefined, etag: string | undefined, name: string): string | undefined {
   if (!groupId) return undefined
   return `tmimg://team/${accountId}/${encodeURIComponent(groupId)}?name=${encodeURIComponent(name)}&etag=${encodeURIComponent(etag ?? '')}`
