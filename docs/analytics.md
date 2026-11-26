@@ -69,6 +69,12 @@ Aktionen aus der Oberfläche tragen zusätzlich `duration_ms`, die Dauer des Auf
 | `image_action` | Bild kopiert oder gespeichert | `action` |
 | `activity_marked_read`, `chat_opened_from_call` | | |
 
+### Kalender
+
+| Ereignis | Wann | Eigenschaften |
+| --- | --- | --- |
+| `calendar_event_created` | Termin angelegt | `all_day`, `teams_meeting`, `attendees` (Anzahl), `has_location`, `has_body` |
+
 ### Anrufe und Besprechungen
 
 | Ereignis | Wann | Eigenschaften |
