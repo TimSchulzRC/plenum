@@ -201,7 +201,7 @@ const sigCss = (dark: boolean) =>
 // dark: Farben der Mail für dunklen Hintergrund umrechnen (siehe mail-dark.ts)
 // Signaturen sucht mail-signature.ts, das Ausblenden braucht kein Skript (<details>).
 export function mailDocument(
-  m: Pick<MailMessage, 'body' | 'bodyType' | 'inlineImages'>,
+  m: Pick<MailMessage, 'body' | 'bodyType' | 'inlineImages'> & Partial<Pick<MailMessage, 'from'>>,
   remote: boolean,
   dark = false,
   sig: SignatureOptions = { hide: false }
@@ -273,7 +273,8 @@ export function mailDocument(
   }
 
   const lines = collectLines(root)
-  const found = findSignatures(lines)
+  // Absender für die Regel „Block mit dem Namen des Absenders“: Anzeigename, sonst der Teil vor dem @
+  const found = findSignatures(lines, m.from ? `${m.from.name ?? ''} ${m.from.address.split('@')[0].replace(/[._-]+/g, ' ')}` : undefined)
   const starts = partStarts(lines)
   const unresolved = starts
     .map((start, k) => ({ start, end: starts[k + 1] ?? lines.length }))

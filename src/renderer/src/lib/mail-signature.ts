@@ -75,11 +75,18 @@ const IMPERATIVE =
   /^(?:please|kindly|bitte|could you|can you|would you|kannst du|könntest du|können sie|könnten sie|call|send|hold|let|see|check|ask|tell|use|read|note|ruf|rufe|schick|schicke|melde|gib|sag|bring|komm|denk|beachte|prüf|prüfe|siehe)\b/i
 
 // Rechts- oder Hinweistext aus einer Fußzeile: Copyright, oder ein langer Satz mit einschlägigem Begriff
+// Wendungen, die nur in Fußzeilen stehen, und einzelne Wörter, die auch im Inhalt vorkommen („unser
+// Datenschutz-Team“): Letztere zählen erst zu zweit.
+const FOOTER_PHRASE =
+  /\b(?:amtsgericht|registergericht|handelsregister|hrb|hra|ust-?id|umsatzsteuer-?id|steuer-?nr|sitz der gesellschaft|registered office|company registration|irrtümlich|in error|intended recipient|bestimmungsgemäß|unbefugte|unauthori[sz]ed|ausdrucken|before printing|member firms?|mitgliedsunternehmen|streitbeilegung|schlichtungsstelle|dispute resolution|unsubscribe (?:here|from)|click here to unsubscribe|newsletter abbestellen|vom newsletter abmelden|you(?: are)? receiv(?:e|ed|ing) this|sie erhalten diese (?:e-?mail|nachricht|benachrichtigung))/i
+const FOOTER_WORDS = /\b(?:geschäftsführ\w*|vorstand|aufsichtsrat|datenschutz\w*|data protection|privacy|impressum|vertraulich\w*|confidential|disclaimer|umwelt|environment|vat)\b/gi
 function boilerplate(l: SigLine): boolean {
   const t = l.text.trim()
-  if (PS.test(t) || IMPERATIVE.test(t)) return false
+  if (PS.test(t) || IMPERATIVE.test(t) || /\?$/.test(t)) return false
   if (COPYRIGHT.test(t)) return true
-  return t.length > 60 && (LEGAL.test(t) || DISCLAIMER.test(t))
+  if (t.length <= 60) return false
+  if (FOOTER_PHRASE.test(t)) return true
+  return new Set((t.match(FOOTER_WORDS) ?? []).map((w) => w.toLowerCase())).size >= 2
 }
 
 // Inhalt, der nie in einer Signatur steht: ein P.S., eine Anweisung, eine Frage oder ein ganzer Satz
@@ -203,7 +210,20 @@ export function bodyStart(lines: SigLine[], from: number, to: number): number {
 }
 
 // Beginn der Signatur in einem Teil [from, to), oder undefined
-function inPart(lines: SigLine[], from: number, to: number): SigRange | undefined {
+// Wörter eines Namens zum Vergleich („Fabrik, Kim (Fabrikam)“ → fabrik, kim, fabrikam)
+const nameTokens = (t: string) => new Set((t.toLowerCase().match(/[a-zäöüßéèáó]{2,}/g) ?? []))
+
+// Absender eines zitierten Teils aus seinem Kopf („Von: Kim Fabrik <kim@…>“, „Am … schrieb Kim Fabrik:“)
+function quotedSender(lines: SigLine[], from: number, body: number): string | undefined {
+  for (let i = from; i < Math.max(body, from + 1); i++) {
+    const t = lines[i].text.trim()
+    if (HEADER_FROM.test(t)) return t.replace(/^[^:]*:/, '').replace(/<[^>]*>|\[[^\]]*\]/g, ' ')
+    if (WROTE.test(t)) return t.replace(/<[^>]*>/g, ' ')
+  }
+  return undefined
+}
+
+function inPart(lines: SigLine[], from: number, to: number, sender?: string): SigRange | undefined {
   // Kopfzeilen eines zitierten Teils gehören nicht zum Inhalt, den wir schützen
   const body = bodyStart(lines, from, to)
   if (to - body < 2) return undefined
@@ -258,23 +278,30 @@ function inPart(lines: SigLine[], from: number, to: number): SigRange | undefine
     break
   }
 
-  // 5. Ohne Grußformel: am Ende ein Block, der mit einem Personennamen beginnt und Telefon, Anschrift
-  // oder Registerangabe enthält. Steht davor eine Zeile mit Doppelpunkt, ist es eine Aufzählung.
+  // 5. Ohne Grußformel: am Ende ein Block, der mit dem Namen des Absenders beginnt und Telefon,
+  // Anschrift oder Registerangabe enthält. Ein anderer Name ist ein Kontakt, den die Mail mitteilt.
+  // Steht davor eine Zeile mit Doppelpunkt, ist es eine Aufzählung.
+  const from_ = sender ?? quotedSender(lines, from, body)
+  if (!from_) return undefined
+  const senderTokens = nameTokens(from_)
   let start = to
   while (start - 1 > floor && blockLine(lines[start - 1])) start--
   while (start < to && !properName(lines[start])) start++
   const block = lines.slice(start, to)
   const evidence = block.some((l) => !prose(l) && stray(l.text) <= 1 && (PHONE.test(l.text) || ADDRESS.test(l.text) || LEGAL.test(l.text)))
-  if (start > floor && start < to && validBlock(block) && evidence && !/:\s*$/.test(lines[start - 1].text)) return { start, end: to, reason: 'contact' }
+  const isSender = start < to && [...nameTokens(lines[start].text)].some((w) => senderTokens.has(w))
+  if (start > floor && start < to && isSender && validBlock(block) && evidence && !/:\s*$/.test(lines[start - 1].text)) return { start, end: to, reason: 'contact' }
   return undefined
 }
 
-export function findSignatures(lines: SigLine[]): SigRange[] {
+// sender: Anzeigename des Absenders der Mail, gilt für den obersten Teil. Zitierte Teile nennen ihren
+// Absender im Kopf.
+export function findSignatures(lines: SigLine[], sender?: string): SigRange[] {
   const starts = partStarts(lines)
   const out: SigRange[] = []
   starts.forEach((from, k) => {
     const to = starts[k + 1] ?? lines.length
-    const hit = inPart(lines, from, to)
+    const hit = inPart(lines, from, to, k === 0 ? sender : undefined)
     if (hit) out.push(hit)
   })
   return out

@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { findSignatures, modelRanges, modelRequest, partStarts, type SigLine } from '../src/renderer/src/lib/mail-signature.ts'
 
 const L = (...texts: (string | SigLine)[]): SigLine[] => texts.map((t) => (typeof t === 'string' ? { text: t } : t))
-const hidden = (lines: SigLine[]) => findSignatures(lines).map((r) => lines.slice(r.start, r.end).map((l) => l.text))
+const hidden = (lines: SigLine[], sender?: string) => findSignatures(lines, sender).map((r) => lines.slice(r.start, r.end).map((l) => l.text))
 
 test('Deutsche Outlook-Signatur: Gruß und Name bleiben, Kontaktblock fällt weg', () => {
   const lines = L(
@@ -84,8 +84,11 @@ test('Zitierter Kopf nur als Text („Von:“ … „Betreff:“, „Am … schr
 
 test('Ohne Grußformel: Kontaktblock am Ende mit mindestens zwei Kontaktzeilen', () => {
   const lines = L('Die Unterlagen liegen im Ordner.', 'Robin Nord', 'Northwind Traders GmbH', 'Tel: +49 30 1234567', 'robin@northwind.example')
-  assert.deepEqual(hidden(lines), [['Robin Nord', 'Northwind Traders GmbH', 'Tel: +49 30 1234567', 'robin@northwind.example']])
-  assert.equal(findSignatures(lines)[0].reason, 'contact')
+  // Nur mit dem Namen des Absenders: Ein fremder Name ist ein Kontakt, den die Mail mitteilt
+  assert.deepEqual(hidden(lines, 'Nord, Robin (Northwind)'), [['Robin Nord', 'Northwind Traders GmbH', 'Tel: +49 30 1234567', 'robin@northwind.example']])
+  assert.equal(findSignatures(lines, 'Robin Nord')[0].reason, 'contact')
+  assert.deepEqual(hidden(lines, 'Alex Beispiel'), [])
+  assert.deepEqual(hidden(lines), [])
 })
 
 test('Nichts verstecken: kurze Mail, nur Gruß und Name, Inhalt mit Telefonnummer', () => {
@@ -251,7 +254,7 @@ test('Zweite Messung: „Besten Gruß“, Dank vor dem Gruß, Fußzeile des Serv
   assert.deepEqual(hidden(L('Hallo,', 'Vertrag läuft 2026 bis Ende März', 'Verlängerung 2027 möglich')), [])
   // Nach einer Zeile mit Doppelpunkt ist die Anschrift eine Mitteilung, keine Signatur
   assert.deepEqual(hidden(L('Hallo,', 'neue Anschrift ab Montag:', 'Robin Nord', 'Musterstraße 1', '12345 Musterstadt', 'Tel. +49 30 1234567')), [])
-  assert.deepEqual(hidden(L('Hallo,', 'bis morgen.', 'Robin Nord', 'Musterstraße 1', '12345 Musterstadt', 'Tel. +49 30 1234567')).length, 1)
+  assert.deepEqual(hidden(L('Hallo,', 'bis morgen.', 'Robin Nord', 'Musterstraße 1', '12345 Musterstadt', 'Tel. +49 30 1234567'), 'Robin Nord').length, 1)
 })
 
 test('Review Runde 3: Überschriften, P.S. mit Datenschutz, kurze Anweisungen, Jahreszahl mit Ort', () => {
@@ -310,4 +313,25 @@ test('Review Runde 4: Modell blendet keine Linkliste und keine Anweisung aus, ei
   // Ein Slogan zwischen Name mit Rolle und Logo geht durch
   const slogan = open(0, 'Hallo,', 'Text', 'Jo Beispiel | Teamleitung Plattform', 'Fabrikam – wir verbinden Systeme.', { text: '', image: true })
   assert.equal(modelRanges([3], { of: [0], parts: [{ first: 1, lines: [] }] }, [slogan]).length, 1)
+})
+
+test('Review Runde 5: Satz mit „privacy“ ist kein Fußzeilentext, fremder Kontakt keine Signatur', () => {
+  // S20: nach markierter Signatur und nach „-- “
+  const sentence = 'One more thing: our privacy team still needs to approve the draft before Friday.'
+  const question = 'Does the privacy team need to approve the updated draft before Friday?'
+  assert.deepEqual(hidden(L('Draft attached.', { text: 'Alex Doe', marker: 1 }, { text: 'Tel. +49 170 1234567', marker: 1 }, sentence)), [['Alex Doe', 'Tel. +49 170 1234567']])
+  assert.deepEqual(hidden(L('Draft attached.', { text: 'Alex Doe', marker: 1 }, { text: 'Tel. +49 170 1234567', marker: 1 }, question)), [['Alex Doe', 'Tel. +49 170 1234567']])
+  assert.deepEqual(hidden(L('Draft attached.', { text: '--', sep: true }, 'Alex Doe', sentence)), [['--', 'Alex Doe']])
+  // Echte Fußzeilen bleiben Hinweistext
+  const footer = L('Hallo,', 'anbei.', { text: 'Alex', marker: 1 }, { text: 'Tel. +49 123 456789', marker: 1 }, 'This e-mail may contain confidential information. If you are not the intended recipient, please notify the sender.', 'Vorstand: Kim Fabrik (Vors.), Jo Beispiel · Aufsichtsrat: Max Muster · weitere Angaben im Impressum unserer Webseite')
+  assert.equal(findSignatures(footer)[0].end, footer.length)
+  // S21: Kontakt, den die Mail mitteilt
+  const contact = L('I found the on-call contact for tonight.', 'Alex Doe', 'Tel. +49 170 1234567')
+  assert.deepEqual(hidden(contact, 'Kim Fabrik'), [])
+  assert.deepEqual(hidden(contact), [])
+  // Zitierter Teil: Absender aus dem Kopf
+  const quoted = L('Danke!', 'Von: Robin Nord <robin@northwind.example>', 'Gesendet: Montag', 'Betreff: Kontakt', 'Die Unterlagen liegen im Ordner.', 'Robin Nord', 'Tel: +49 30 1234567')
+  assert.deepEqual(hidden(quoted, 'Alex Beispiel'), [['Robin Nord', 'Tel: +49 30 1234567']])
+  const quotedOther = L('Danke!', 'Von: Kim Fabrik <kim@fabrikam.de>', 'Gesendet: Montag', 'Betreff: Kontakt', 'Hier der Ansprechpartner für heute Nacht.', 'Robin Nord', 'Tel: +49 30 1234567')
+  assert.deepEqual(hidden(quotedOther, 'Alex Beispiel'), [])
 })
