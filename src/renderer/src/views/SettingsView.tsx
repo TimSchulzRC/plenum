@@ -20,6 +20,14 @@ export function SettingsView(): JSX.Element {
   // Ergebnis der letzten Testmitteilung bzw. Fehler, den macOS beim Anzeigen gemeldet hat
   const [notifyState, setNotifyState] = useState<{ testing?: boolean; ok?: boolean; error?: string }>({})
   const [analyticsInfo, setAnalyticsInfo] = useState<{ available: boolean; installId?: string } | null>(null)
+  // Apple Intelligence für Signaturen: null, solange die App noch nachsieht
+  const [sigModel, setSigModel] = useState<boolean | null>(null)
+  useEffect(() => {
+    void api
+      .signatureModelAvailable()
+      .then(setSigModel)
+      .catch(() => setSigModel(false))
+  }, [])
 
   const set = (patch: Partial<AppSettings>) => void api.setSettings(patch)
 
@@ -107,6 +115,23 @@ export function SettingsView(): JSX.Element {
         <div className="row">
           <div className="grow">Nachrichtenvorschau in der Chatliste</div>
           <Switch checked={!!settings.chatPreviews} onChange={(_e, d) => set({ chatPreviews: d.checked })} />
+        </div>
+      </section>
+
+      <section>
+        <h2>E-Mail</h2>
+        <div className="row">
+          <div className="grow">Signaturen auch mit Apple Intelligence erkennen</div>
+          <Switch
+            checked={sigModel === true && settings.mailSignatureModel !== false}
+            disabled={sigModel !== true}
+            onChange={(_e, d) => set({ mailSignatureModel: d.checked })}
+          />
+        </div>
+        <div className="hint">
+          {sigModel === false
+            ? 'Auf diesem Mac nicht verfügbar (macOS 26 oder neuer mit eingeschaltetem Apple Intelligence). Signaturen erkennt die App dann nur mit festen Regeln.'
+            : 'Findet Signaturen, die die festen Regeln nicht erkennen. Das Modell läuft auf dem Mac, die Mail verlässt das Gerät nicht. Ausblenden lassen sich Signaturen im Lesebereich.'}
         </div>
       </section>
 

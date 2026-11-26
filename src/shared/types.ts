@@ -286,6 +286,12 @@ export interface MailDraft {
 
 export type MailReplyKind = 'reply' | 'replyAll' | 'forward'
 
+// Teil einer Mail für das Sprachmodell: Zeilen ab Nummer first (1-basiert)
+export interface MailSignaturePart {
+  first: number
+  lines: string[]
+}
+
 export type ActivityType = 'mention' | 'reply' | 'reaction' | 'call' | 'meeting' | 'membership' | 'like' | 'other'
 
 export interface ActivityItem {
@@ -457,6 +463,8 @@ export interface AppSettings {
   preferredSpeaker?: string
   // Videos im Anruf: ganzes Bild zeigen (contain) oder die Kachel füllen (cover)
   callVideoFit?: 'contain' | 'cover'
+  // Signaturen in Mails zusätzlich mit Apple Intelligence (auf dem Gerät) suchen. Fehlt: an.
+  mailSignatureModel?: boolean
 }
 
 export interface NavigateRequest {
