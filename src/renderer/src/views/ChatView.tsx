@@ -4,6 +4,7 @@ import {
   ChevronRight16Regular,
   Compose20Regular,
   Filter20Regular,
+  NavigationUnread20Regular,
   AlertOff16Regular,
   Dismiss16Regular,
   LockClosed12Regular,
@@ -85,13 +86,21 @@ function ChatList(): JSX.Element {
             </MenuList>
           </MenuPopover>
         </Menu>
+        {multi && (
+          <Tooltip content={filter === 'unread' ? 'Alle Chats zeigen' : 'Ungelesen aus allen Konten'} relationship="label">
+            <button className={`icon-btn ${filter === 'unread' ? 'active' : ''}`} aria-pressed={filter === 'unread'} onClick={() => setFilter(filter === 'unread' ? 'all' : 'unread')}>
+              <NavigationUnread20Regular />
+            </button>
+          </Tooltip>
+        )}
         <Tooltip content="Neuer Chat (⌘N)" relationship="label">
           <button className="icon-btn" onClick={() => useStore.getState().select({ newChat: true, chatId: undefined, channelId: undefined }, 'chat')}>
             <Compose20Regular />
           </button>
         </Tooltip>
       </div>
-      {(filterOpen || filter !== 'all') && (
+      {/* Die Ungelesen-Ansicht über alle Konten hat ihren eigenen Schalter und braucht kein Namensfeld, außer es sucht schon */}
+      {(filterOpen || text !== '' || (filter !== 'all' && !(multi && filter === 'unread'))) && (
         <div style={{ padding: '0 16px 8px', display: 'flex', gap: 6, alignItems: 'center' }}>
           <Input
             size="small"
@@ -127,7 +136,11 @@ function ChatList(): JSX.Element {
           if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) setLimit((l) => l + 150)
         }}
       >
-        {multi ? <AccountBlocks accounts={ordered} activeId={activeId} q={q} filter={filter} limit={limit} /> : activeId && <AccountChats accountId={activeId} q={q} filter={filter} limit={limit} mode="full" />}
+        {multi && filter === 'unread' ? (
+          <UnreadOverview accounts={ordered} q={q} />
+        ) : multi ? (
+          <AccountBlocks accounts={ordered} activeId={activeId} q={q} filter={filter} limit={limit} />
+        ) : activeId && <AccountChats accountId={activeId} q={q} filter={filter} limit={limit} mode="full" />}
       </div>
     </div>
   )
@@ -191,6 +204,35 @@ function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: Acc
   )
 }
 
+// Filter „Ungelesen“ bei mehreren Konten: eine Liste über alle Konten, je Konto ein Kopf mit seinen
+// ungelesenen Chats und Kanälen, neueste zuerst. Konten ohne Ungelesenes fehlen. Auf- und Zuklappen gilt hier nicht.
+function UnreadOverview({ accounts, q }: { accounts: AccountInfo[]; q: string }): JSX.Element {
+  // Ein Konto, das startet oder sich verbindet und noch keinen Snapshot hat, lädt noch. „Alles gelesen“ wäre dann voreilig.
+  const loading = useStore((s) => accounts.some((a) => (a.status === 'starting' || a.status === 'connecting' || a.status === 'ready') && !s.snapshots[a.id]))
+  return (
+    <>
+      {accounts.map((a) => (
+        <AccountScope.Provider key={a.id} value={a.id}>
+          <AccountChats accountId={a.id} q={q} filter="unread" limit={0} mode="unread" head={(unread) => <AccountLabel account={a} unread={unread} />} />
+        </AccountScope.Provider>
+      ))}
+      <div className="unread-empty">{loading ? 'Chats werden geladen …' : q ? 'Keine ungelesenen Chats zu dieser Suche.' : 'Alles gelesen.'}</div>
+    </>
+  )
+}
+
+function AccountLabel({ account, unread }: { account: AccountInfo; unread: number }): JSX.Element {
+  const { name, sub } = accountTitle(account)
+  return (
+    <div className="acct-label" data-unread={unread > 0 || undefined} title={[name, sub].filter(Boolean).join(' · ')}>
+      {account.parentId ? <Avatar shape="square" size={16} name={name} color="colorful" /> : <PersonAvatar mri={account.mri} name={account.label} size={16} accountId={account.id} showPresence={false} />}
+      <span className="acct-name">{name}</span>
+      <span className="acct-sub">{sub}</span>
+      {unread > 0 && <span className="acct-count">{unread > 99 ? '99+' : unread}</span>}
+    </div>
+  )
+}
+
 function AccountHead({ account, unread: count, open, style, onToggle }: { account: AccountInfo; unread: number; open: boolean; style: CSSProperties; onToggle: () => void }): JSX.Element {
   const { name, sub } = accountTitle(account)
   return (
@@ -220,7 +262,8 @@ function AccountChats({
   q: string
   filter: Filter
   limit: number
-  mode: 'full' | 'collapsed'
+  // full: alle Abschnitte, collapsed: nur der Kopf, unread: nur Ungelesenes und der offene Chat
+  mode: 'full' | 'collapsed' | 'unread'
   // Bei mehreren Konten: Kopf des Blocks, bekommt die Zahl der ungelesenen Einträge
   head?: (unread: number) => JSX.Element
   bodyRef?: (el: HTMLDivElement | null) => void
@@ -458,9 +501,15 @@ function AccountChats({
   // Zahl im Kopf: ungelesene Einträge des Kontos unter dem gewählten Filter
   const unreadCount = head && snapshot ? collect((r) => isUnreadRow(r) && matches(r), filterShowsChannels).length : 0
 
+  // Ungelesen-Ansicht: der offene Chat bleibt stehen, auch wenn er beim Öffnen gelesen wird
+  const unreadRows = mode === 'unread' && snapshot ? collect((r) => isSelected(r) || (isUnreadRow(r) && matches(r)), true) : []
+  if (mode === 'unread' && unreadRows.length === 0) return null
+
   let body: JSX.Element | null
   if (mode === 'collapsed') {
     body = null
+  } else if (mode === 'unread') {
+    body = <>{unreadRows.map((r) => renderRow(r, { key: 'unread' }))}</>
   } else if (!snapshot) {
     body = <div style={{ padding: multi ? '6px 12px 10px' : 20, color: 'var(--fg-3)' }}>Chats werden geladen …</div>
   } else {
