@@ -249,7 +249,9 @@ test('Zweite Messung: „Besten Gruß“, Dank vor dem Gruß, Fußzeile des Serv
   assert.equal(findSignatures(ps)[0].end, 4)
   // „2026 bis“ ist keine Anschrift, „12345 Musterstadt“ und „Musterstraße 1“ schon
   assert.deepEqual(hidden(L('Hallo,', 'Vertrag läuft 2026 bis Ende März', 'Verlängerung 2027 möglich')), [])
-  assert.deepEqual(hidden(L('Neue Anschrift ab Montag:', 'Robin Nord', 'Musterstraße 1', '12345 Musterstadt', 'Tel. +49 30 1234567')).length, 1)
+  // Nach einer Zeile mit Doppelpunkt ist die Anschrift eine Mitteilung, keine Signatur
+  assert.deepEqual(hidden(L('Hallo,', 'neue Anschrift ab Montag:', 'Robin Nord', 'Musterstraße 1', '12345 Musterstadt', 'Tel. +49 30 1234567')), [])
+  assert.deepEqual(hidden(L('Hallo,', 'bis morgen.', 'Robin Nord', 'Musterstraße 1', '12345 Musterstadt', 'Tel. +49 30 1234567')).length, 1)
 })
 
 test('Review Runde 3: Überschriften, P.S. mit Datenschutz, kurze Anweisungen, Jahreszahl mit Ort', () => {
@@ -283,4 +285,29 @@ test('Dritte Messung: Standardsätze aus Fußzeilen gehören zur Signatur', () =
   }
   // Ein Satz mit „abmelden“ im Inhalt bleibt Inhalt
   assert.deepEqual(hidden(L('Hallo,', 'ich muss mich für morgen leider abmelden, weil der Arzttermin verschoben wurde.', 'Alex')), [])
+})
+
+test('Review Runde 4: jede ausgeblendete Zeile braucht einen Beleg', () => {
+  // S13: Jahr und Ort sind keine Postleitzahl
+  assert.deepEqual(hidden(L('Hi,', 'Status:', '2026 Berlin Summit', 'Tracking: https://example.com/track')), [])
+  // S14: P.S. nach „-- “ und Name bleibt
+  assert.deepEqual(hidden(L('The draft is attached.', { text: '--', sep: true }, 'Alex Doe', 'P.S. Do not send the draft.')), [['--', 'Alex Doe']])
+  // S15: kurze Anweisung vor einer Mailadresse
+  assert.deepEqual(hidden(L('The draft is attached.', 'Thanks,', 'Alex Doe', 'Call me tomorrow', 'alex@example.com')), [])
+  assert.deepEqual(hidden(L('The draft is attached.', 'Thanks,', 'Alex Doe', 'Call me tomorrow', 'Tel. +49 170 1234567')), [])
+  // S16: Anweisung mit „unsubscribe“ unter der markierten Signatur
+  const marked = L('I attached the draft.', { text: 'Alex Doe', marker: 1 }, 'Please unsubscribe the test account before migration.')
+  assert.deepEqual(hidden(marked), [['Alex Doe']])
+  // S18: Liste aus Firmen und Links
+  assert.deepEqual(hidden(L('I found two vendors for the migration.', 'Northwind GmbH', 'https://northwind.example.com', 'Contoso GmbH', 'https://contoso.example.com')), [])
+})
+
+test('Review Runde 4: Modell blendet keine Linkliste und keine Anweisung aus, einen Slogan schon', () => {
+  const links = open(0, 'I found two resources.', 'Use these for the rollout.', 'https://docs.example.com/start', 'https://docs.example.com/rollback')
+  assert.deepEqual(modelRanges([3], { of: [0], parts: [{ first: 1, lines: [] }] }, [links]), [])
+  const call = open(0, 'Hi,', 'see attachment', 'Alex Doe', 'Call me tomorrow', 'Tel. +49 170 1234567')
+  assert.deepEqual(modelRanges([3], { of: [0], parts: [{ first: 1, lines: [] }] }, [call]), [])
+  // Ein Slogan zwischen Name mit Rolle und Logo geht durch
+  const slogan = open(0, 'Hallo,', 'Text', 'Jo Beispiel | Teamleitung Plattform', 'Fabrikam – wir verbinden Systeme.', { text: '', image: true })
+  assert.equal(modelRanges([3], { of: [0], parts: [{ first: 1, lines: [] }] }, [slogan]).length, 1)
 })
