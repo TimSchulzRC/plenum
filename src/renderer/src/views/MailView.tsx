@@ -28,7 +28,7 @@ import {
   WeatherSunny20Regular
 } from '@fluentui/react-icons'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { AccountInfo, MailFolder, MailFolderKind, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
+import type { AccountInfo, MailAddress, MailFolder, MailFolderKind, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
 import { api } from '../api'
 import { fmt, listTime } from '../lib/format'
 import { accountTitle } from '@shared/accounts'
@@ -39,6 +39,7 @@ import { setMailUnread } from '../lib/mail-unread'
 import { useStore } from '../store'
 import { useDarkMode } from '../theme'
 import { MailCompose, type ComposeState } from '../components/MailCompose'
+import { MailAvatar } from '../components/Avatars'
 
 type Sel = { kind: 'all' } | { kind: 'folder'; accountId: string; folderId: string; name: string; folderKind?: MailFolderKind }
 type Source = { accountId: string; folderId: string; items: MailSummary[]; next?: string; error?: string }
@@ -325,17 +326,20 @@ export function MailView(): JSX.Element {
             return (
               <div key={key(m)} className={`mail-item ${m.isRead ? '' : 'unread'} ${selected ? 'selected' : ''}`} onClick={() => openMail(m)}>
                 {multi && sel.kind === 'all' && <span className="acct-bar" style={{ background: color(m.accountId) }} />}
-                <div className="row1">
-                  <span className="name">{m.isDraft ? <span className="draft">[Entwurf] </span> : null}{who}</span>
-                  <span className="time">{listTime(m.received)}</span>
+                <MailAvatar accountId={m.accountId} address={showTo ? m.to[0] : m.from} name={who} />
+                <div className="mail-main">
+                  <div className="row1">
+                    <span className="name">{m.isDraft ? <span className="draft">[Entwurf] </span> : null}{who}</span>
+                    <span className="time">{listTime(m.received)}</span>
+                  </div>
+                  <div className="row2">
+                    <span className="subject">{m.subject}</span>
+                    {m.importance === 'high' && <Important16Filled className="imp" />}
+                    {m.flagged && <Flag16Filled className="flag" />}
+                    {m.hasAttachments && <Attach16Regular />}
+                  </div>
+                  <div className="preview">{m.preview || ' '}</div>
                 </div>
-                <div className="row2">
-                  <span className="subject">{m.subject}</span>
-                  {m.importance === 'high' && <Important16Filled className="imp" />}
-                  {m.flagged && <Flag16Filled className="flag" />}
-                  {m.hasAttachments && <Attach16Regular />}
-                </div>
-                <div className="preview">{m.preview || ' '}</div>
               </div>
             )
           })}
@@ -395,6 +399,20 @@ function Count({ n }: { n: number }): JSX.Element | null {
 }
 
 const name = (a?: AccountInfo) => (a ? accountTitle(a).name : 'Konto')
+
+function Recipients({ label, list, accountId }: { label: string; list: MailAddress[]; accountId: string }): JSX.Element {
+  return (
+    <div className="mail-to mail-recipients">
+      <span>{label}</span>
+      {list.map((a, i) => (
+        <span key={`${a.address}|${i}`} className="mail-person" title={a.address}>
+          <MailAvatar accountId={accountId} address={a} size={20} />
+          {addressLabel(a)}
+        </span>
+      ))}
+    </div>
+  )
+}
 
 function MailReader({
   target,
@@ -493,17 +511,22 @@ function MailReader({
       </div>
       <div className="mail-head">
         <h2>{m.subject}</h2>
-        <div className="mail-from">
-          <span className="who">{m.from ? `${m.from.name ?? ''} <${m.from.address}>`.trim() : '(Unbekannt)'}</span>
-          <span className="when">{fmt(m.received, 'EEE dd.MM.yyyy HH:mm')}</span>
-        </div>
-        {m.to.length > 0 && <div className="mail-to">An: {m.to.map(addressLabel).join('; ')}</div>}
-        {m.cc.length > 0 && <div className="mail-to">Cc: {m.cc.map(addressLabel).join('; ')}</div>}
-        {multi && account && (
-          <div className="mail-to" title={account.upn}>
-            <span className="acct-dot" style={{ background: color(account.id) } as CSSProperties} /> {accountTitle(account).name}
+        <div className="mail-sender">
+          <MailAvatar accountId={m.accountId} address={m.from} name="(Unbekannt)" size={40} />
+          <div className="mail-people">
+            <div className="mail-from">
+              <span className="who">{m.from ? `${m.from.name ?? ''} <${m.from.address}>`.trim() : '(Unbekannt)'}</span>
+              <span className="when">{fmt(m.received, 'EEE dd.MM.yyyy HH:mm')}</span>
+            </div>
+            {m.to.length > 0 && <Recipients label="An:" list={m.to} accountId={m.accountId} />}
+            {m.cc.length > 0 && <Recipients label="Cc:" list={m.cc} accountId={m.accountId} />}
+            {multi && account && (
+              <div className="mail-to" title={account.upn}>
+                <span className="acct-dot" style={{ background: color(account.id) } as CSSProperties} /> {accountTitle(account).name}
+              </div>
+            )}
           </div>
-        )}
+        </div>
         {m.attachments.length > 0 && (
           <div className="mail-attachments">
             {m.attachments.map((a) => (

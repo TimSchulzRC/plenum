@@ -186,6 +186,15 @@ export class TeamsApi {
     )
   }
 
+  // Dasselbe für Mailadressen, so findet die E-Mail-Ansicht die MRI zu Absendern
+  fetchShortProfilesByMail(addresses: string[]): Promise<any> {
+    return this.json(
+      'mt',
+      `${this.base('mt')}/beta/users/fetchShortProfile?isMailAddress=true&canBeSmtpAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true`,
+      { method: 'POST', body: addresses }
+    )
+  }
+
   fetchFederated(mris: string[]): Promise<any> {
     return this.json('mt', `${this.base('mt')}/beta/users/fetchFederated`, { method: 'POST', body: mris })
   }

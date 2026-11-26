@@ -7,6 +7,7 @@ import { Engine, enginePreloadPath } from './engine/engine'
 import { TeamsApi, ApiError, clientMessageId } from './engine/api'
 import { amsImageIds, replaceInlineImages } from './engine/ams'
 import { contentId, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN } from './engine/mail'
+import { MailDirectory, mailMatches } from './engine/mail-people'
 import {
   conversationKind,
   htmlToText,
@@ -1275,6 +1276,21 @@ export class AccountService extends EventEmitter<AccountEvents> {
   }
 
   // ---------- E-Mail ----------
+
+  // Profilbilder zu Absendern und Empfängern: Adresse → MRI, dann wie in Chats (media-protocol.ts)
+  private mailPeople = new MailDirectory((list) => this.lookupMailAddresses(list))
+
+  // Erst unter den Personen aus Chats suchen, das klappt auch, wenn Teams gerade nicht antwortet
+  mriForMailAddress(address: string): Promise<string | undefined> {
+    const a = address.trim().toLowerCase()
+    const known = mailMatches([a], [this.me, ...this.people.values()]).get(a)
+    return known ? Promise.resolve(known) : this.mailPeople.resolve(a)
+  }
+
+  private async lookupMailAddresses(list: string[]): Promise<Map<string, string>> {
+    const res = await this.api.fetchShortProfilesByMail(list)
+    return mailMatches(list, res?.value ?? [])
+  }
 
   // Welche Ordner-ID zu welchem Standardordner gehört, ändert sich nicht: einmal je Sitzung fragen
   // Die Abfragen laufen nacheinander: Exchange drosselt schon bei wenigen gleichzeitigen Anfragen je
