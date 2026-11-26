@@ -101,3 +101,14 @@ test('Helfer nicht ausführbar (EACCES): null, kein Hängen, kein Neustart bei j
   assert.equal(await m.find(parts), null)
   rmSync(dir, { recursive: true, force: true })
 })
+
+test('Nach einer Zeitüberschreitung geht die wartende Anfrage an einen neuen Helfer', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sig-'))
+  const h = helper(dir, 'hang')
+  const m = new SignatureModel(h.bin, opts)
+  const results = await Promise.all([m.find(parts), m.find(parts)])
+  assert.deepEqual(results, [null, null])
+  assert.equal(h.starts(), 2)
+  m.stop()
+  rmSync(dir, { recursive: true, force: true })
+})

@@ -18,7 +18,7 @@ export interface ModelPart {
   lines: string[]
 }
 
-type Pending = { resolve: (starts: (number | null)[] | null) => void; timer: NodeJS.Timeout }
+type Pending = { resolve: (starts: (number | null)[] | null) => void; timer: NodeJS.Timeout; proc: ChildProcessWithoutNullStreams }
 
 // Hilfsprozess native/mail-signatures (Apple Foundation Models). Startet beim ersten Bedarf und
 // bleibt dann geladen: Die erste Antwort dauert sonst rund drei Sekunden, die nächsten unter einer.
@@ -33,6 +33,7 @@ export class SignatureModel {
   private crashes = 0
   // Kein Apple Intelligence auf diesem Mac: für die ganze Sitzung bei den Regeln bleiben
   private unavailable = false
+  private retired = new WeakSet<ChildProcessWithoutNullStreams>()
 
   private readonly bin: string
   private readonly opts: SignatureModelOptions
@@ -51,6 +52,11 @@ export class SignatureModel {
     if (this.proc !== proc) return
     this.log.warn(`[signatures] Helfer beendet: ${why}`)
     this.crashes++
+    // Sofort austragen: Eine schon wartende Anfrage startet einen neuen Helfer, statt in den
+    // sterbenden zu schreiben
+    this.proc = undefined
+    this.hello = undefined
+    this.retired.add(proc)
     proc.kill()
   }
 
@@ -69,8 +75,8 @@ export class SignatureModel {
       }
       this.proc = proc
       const timer = setTimeout(() => {
-        resolve(false)
         this.retire(proc, 'keine Startmeldung')
+        resolve(false)
       }, this.opts.helloTimeout ?? 15_000)
       // Schreiben in einen gerade beendeten Helfer (EPIPE) darf den Hauptprozess nicht beenden
       proc.stdin.on('error', (e) => this.retire(proc, e.message))
@@ -106,14 +112,18 @@ export class SignatureModel {
         done = true
         clearTimeout(timer)
         resolve(false)
-        if (failed) this.crashes++
-        if (this.proc === proc) this.proc = undefined
-        this.hello = undefined
-        for (const p of this.pending.values()) {
+        // Schon in retire() gezählt und ausgetragen? Dann gehört this.proc einem neuen Helfer.
+        if (failed && !this.retired.has(proc)) this.crashes++
+        if (this.proc === proc) {
+          this.proc = undefined
+          this.hello = undefined
+        }
+        for (const [id, p] of this.pending) {
+          if (p.proc !== proc) continue
           clearTimeout(p.timer)
+          this.pending.delete(id)
           p.resolve(null)
         }
-        this.pending.clear()
       }
       proc.on('error', (e: NodeJS.ErrnoException) => {
         this.log.warn('[signatures] Helfer', e.message)
@@ -137,10 +147,10 @@ export class SignatureModel {
         // Je Teil unter einer Sekunde, dazu Reserve für das erste Laden
         const timer = setTimeout(() => {
           this.pending.delete(id)
-          resolve(null)
           this.retire(proc, 'Zeitüberschreitung')
+          resolve(null)
         }, (this.opts.base ?? 8_000) + parts.length * (this.opts.perPart ?? 4_000))
-        this.pending.set(id, { resolve, timer })
+        this.pending.set(id, { resolve, timer, proc })
         proc.stdin.write(JSON.stringify({ id, parts }) + '\n')
       })
     }

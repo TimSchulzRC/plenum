@@ -36,69 +36,112 @@ const HEADER_REST = /^(?:gesendet|sent|datum|date|an|to|betreff|subject|cc)\s*:/
 const ORIGINAL = /^-{2,}\s*(?:ursprüngliche nachricht|original message|weitergeleitete nachricht|forwarded message)\s*-{2,}$/i
 const WROTE = /^(?:am|on)\s.{4,160}\s(?:schrieb|wrote)\b.{0,160}:$/i
 
+const PHONE_RE = /(?:\+|00)\d[\d\s/().-]{6,}\d|\(?0\d{2,5}\)?[\s/-]?\d[\d\s/-]{4,}\d/g
 const PHONE = /(?:^|\s|:)(?:\+|00)\d[\d\s/().-]{6,}\d|(?:tel|telefon|phone|fon|mobil|mobile|handy|fax|direkt|zentrale|t|m|f)\.?\s*:?\s*[+(]?\d[\d\s/().-]{5,}\d/i
-const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/
-const URL_RE = /\b(?:https?:\/\/|www\.)\S+|\b[\w-]+\.(?:de|com|net|org|eu|io|at|ch|info|biz)\b/i
-// Postleitzahl und Ort (groß geschrieben: „2026 bis“ ist ein Datum, keine Anschrift) oder Straße mit Nummer
-// Ganze Ortsangabe bis zum Zeilenende oder Trenner („12345 Musterstadt“, „60311 Frankfurt am Main“),
-// nicht „2026 Berlin shipment“
-const ADDRESS_PLZ = /(?:^|[\s,|·])\d{4,5}\s+[A-ZÄÖÜ][\wäöüß.-]+(?:\s+(?:[A-ZÄÖÜ(][\wäöüß.()-]*|am|an|im|in|a\.|bei|ob|vor|der))*\s*(?:$|[|·,;–])/
+const EMAIL_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g
+const URL_G = /\b(?:https?:\/\/|www\.)\S+|\b[\w-]+(?:\.[\w-]+)*\.(?:de|com|net|org|eu|io|at|ch|info|biz|dev|example)\b(?:\/\S*)?/gi
+const has = (re: RegExp, t: string) => {
+  re.lastIndex = 0
+  return re.test(t)
+}
+// Postleitzahl mit Ort als ganze Ortsangabe („12345 Musterstadt“, „60311 Frankfurt am Main“, „A-1010 Wien“).
+// Vierstellig nur mit Länderkürzel: „2026 Berlin Summit“ ist ein Jahr.
+const ADDRESS_PLZ = /(?:^|[\s,|·])(?:\d{5}|(?:A|AT|CH|D|DE|NL|B|L)-\s?\d{4,5})\s+[A-ZÄÖÜ][\wäöüß.-]+(?:\s+(?:[A-ZÄÖÜ(][\wäöüß.()-]*|am|an|im|in|a\.|bei|ob|vor|der))*\s*(?:$|[|·,;–])/
 const ADDRESS_STREET = /(?:straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer)\s*\d+[a-z]?\b/i
 const ADDRESS = { test: (t: string) => ADDRESS_PLZ.test(t) || ADDRESS_STREET.test(t) }
 // Rechtsform nach einem Namen, in üblicher Schreibweise: „Contoso GmbH“, nicht „AG“ für Arbeitsgruppe
 const COMPANY = /[A-ZÄÖÜ0-9][\w&.-]*\s+(?:GmbH|gGmbH|mbH|AG|KG|OHG|KGaA|SE|UG|e\.\s?K\.|e\.\s?V\.|Ltd\.?|Limited|Inc\.?|LLC|Corp\.?|PLC|S\.A\.|B\.V\.)(?=$|[\s,.;:|·&)–-])/
 const LEGAL =
   /\b(?:geschäftsführ|vorstand|aufsichtsrat|amtsgericht|registergericht|handelsregister|hrb|hra|ust-?id|umsatzsteuer|steuer-?nr|sitz der gesellschaft|vat|registered office|company registration|datenschutz|data protection|privacy|impressum)/i
-// Hinweise und Standardsätze aus Fußzeilen: Vertraulichkeit, Umwelt, Copyright, Netzwerk von
+// Hinweise und Standardsätze aus Fußzeilen: Vertraulichkeit, Umwelt, Netzwerk von
 // Prüfungsgesellschaften, Streitbeilegung, Newsletter und Benachrichtigungen
 const DISCLAIMER =
-  /©|\b(?:vertraulich|confidential|disclaimer|irrtümlich|in error|intended recipient|bestimmungsgemäß|unbefugte|unauthori[sz]ed|ausdrucken|before printing|the environment|der umwelt|copyright|all rights reserved|alle rechte vorbehalten|member firms?|mitgliedsunternehmen|streitbeilegung|schlichtungsstelle|dispute resolution|unsubscribe|newsletter abbestellen|vom newsletter abmelden|you(?: are)? receiv(?:e|ed|ing) this|sie erhalten diese (?:e-?mail|nachricht|benachrichtigung))/i
+  /\b(?:vertraulich|confidential|disclaimer|irrtümlich|in error|intended recipient|bestimmungsgemäß|unbefugte|unauthori[sz]ed|ausdrucken|before printing|the environment|der umwelt|member firms?|mitgliedsunternehmen|streitbeilegung|schlichtungsstelle|dispute resolution|unsubscribe (?:here|from)|click here to unsubscribe|newsletter abbestellen|vom newsletter abmelden|you(?: are)? receiv(?:e|ed|ing) this|sie erhalten diese (?:e-?mail|nachricht|benachrichtigung))/i
+const COPYRIGHT = /©|\bcopyright\b|all rights reserved|alle rechte vorbehalten/i
 const JOB = /\b(?:geschäftsführer|consultant|berater|manager|leiter|leitung|head of|director|engineer|entwickler|developer|assistant|assistenz|vertrieb|sales|support|projekt|project|team|abteilung|department|ceo|cto|cfo|coo|partner|inhaber|owner|referent|sachbearbeit|specialist|spezialist|architekt)/i
+// Echte Rolle, die allein eine Signatur belegt („Senior Consultant“, „Leitung Integration“), nicht
+// allgemeine Wörter wie „Projekt“ oder „Team“
+const ROLE = /\b(?:geschäftsführer(?:in)?|consultant|berater(?:in)?|manager(?:in)?|\w*leiter(?:in)?|\w*leitung|head of|director|direktor(?:in)?|engineer|ingenieur(?:in)?|entwickler(?:in)?|developer|assistant|assistenz|ceo|cto|cfo|coo|inhaber(?:in)?|owner|referent(?:in)?|sachbearbeiter(?:in)?|specialist|spezialist(?:in)?|architekt(?:in)?|vorstand|prokurist(?:in)?|teamlead|team lead)\b/i
 
-// Harte Kontaktangabe: Telefon, Mail, Web, Anschrift, Register- oder Rechtshinweis
-function strongContact(l: SigLine): boolean {
-  const t = l.text
-  return PHONE.test(t) || EMAIL.test(t) || URL_RE.test(t) || ADDRESS.test(t) || LEGAL.test(t) || DISCLAIMER.test(t)
-}
+const isSep = (l: SigLine) => !!l.sep || /^--[  ]$/.test(l.text)
 
-function contactLike(l: SigLine): boolean {
-  return strongContact(l) || (COMPANY.test(l.text) && l.text.length < 120)
-}
+// ---------- Zeilenklassen ----------
+// Grundsatz: Ausgeblendet wird nur, was einen eigenen Beleg hat. „Kurz“ allein reicht nicht, und
+// im Zweifel bleibt eine Zeile sichtbar.
 
-const isSep = (l: SigLine) => !!l.sep || /^--[ \u00a0]$/.test(l.text)
-
-// Inhalt, der nie in einer Signatur steht: ein P.S. oder ein ganzer Satz (ab sechs Wörtern mit
-// Satzzeichen am Ende), auch wenn er eine Mailadresse oder Telefonnummer enthält. Rechtshinweise und
-// Disclaimer sind zwar Sätze, gehören aber zur Signatur.
 const PS = /^p\.?\s?(?:p\.?\s?)?s\.?(?:[\s:]|$)/i
+// Anweisung oder Bitte am Zeilenanfang: immer Inhalt
+const IMPERATIVE =
+  /^(?:please|kindly|bitte|could you|can you|would you|kannst du|könntest du|können sie|könnten sie|call|send|hold|let|see|check|ask|tell|use|read|note|ruf|rufe|schick|schicke|melde|gib|sag|bring|komm|denk|beachte|prüf|prüfe|siehe)\b/i
+
+// Rechts- oder Hinweistext aus einer Fußzeile: Copyright, oder ein langer Satz mit einschlägigem Begriff
+function boilerplate(l: SigLine): boolean {
+  const t = l.text.trim()
+  if (PS.test(t) || IMPERATIVE.test(t)) return false
+  if (COPYRIGHT.test(t)) return true
+  return t.length > 60 && (LEGAL.test(t) || DISCLAIMER.test(t))
+}
+
+// Inhalt, der nie in einer Signatur steht: ein P.S., eine Anweisung, eine Frage oder ein ganzer Satz
+// (ab sechs Wörtern mit Satzzeichen am Ende), auch mit Mailadresse oder Telefonnummer darin
 function prose(l: SigLine): boolean {
   const t = l.text.trim()
-  if (PS.test(t)) return true
-  if (LEGAL.test(t) || DISCLAIMER.test(t)) return false
-  return t.split(/\s+/).length >= 6 && /[.!?:]$/.test(t)
+  if (PS.test(t) || IMPERATIVE.test(t) || /\?$/.test(t)) return true
+  if (boilerplate(l)) return false
+  return t.split(/\s+/).length >= 6 && /[.!:]$/.test(t)
 }
 
-// Langer Rechts- oder Vertraulichkeitshinweis
-// Ein P.S. ist nie Rechtstext, auch wenn „Datenschutz“ darin steht
-const legalText = (l: SigLine) => !PS.test(l.text.trim()) && l.text.length > 60 && (DISCLAIMER.test(l.text) || LEGAL.test(l.text))
+// Klein geschriebene Wörter, die weder Kontaktangabe noch Beschriftung noch Bindewort sind. In
+// Signaturzeilen kommen sie kaum vor („Tel. +49 …“, „Contoso GmbH | Musterstraße 1“), in Sätzen
+// immer („Call me tomorrow“).
+const LABELS = new Set(
+  'tel telefon phone fon mobil mobile handy fax direkt zentrale durchwahl e-mail email mail web www internet homepage website t m f e i v a ppa pp und and oder or von of für for der die das den dem des am im in an at auf bei the de la le van zu zur zum mit'.split(' ')
+)
+function stray(text: string): number {
+  const rest = text.replace(URL_G, ' ').replace(EMAIL_RE, ' ').replace(PHONE_RE, ' ')
+  let n = 0
+  for (const w of rest.split(/[\s|·•,;:()/&+–-]+/)) {
+    const word = w.replace(/\.$/, '')
+    if (/^[a-zäöüß]/.test(word) && !LABELS.has(word.toLowerCase())) n++
+  }
+  return n
+}
 
 // Position als eigene Zeile („Senior Consultant“, „Head of Operations | Northwind“), kein Satz
 const jobLine = (l: SigLine) => JOB.test(l.text) && l.text.length <= 100 && !/[.!?]\s*$/.test(l.text)
-// Echte Rolle, die allein eine Signatur belegt („Senior Consultant“, „Leitung Integration“), nicht
-// allgemeine Wörter wie „Projekt“ oder „Team“
-const ROLE = /\b(?:geschäftsführer(?:in)?|consultant|berater(?:in)?|manager(?:in)?|leiter(?:in)?|leitung|head of|director|direktor(?:in)?|engineer|ingenieur(?:in)?|entwickler(?:in)?|developer|assistant|assistenz|ceo|cto|cfo|coo|inhaber(?:in)?|owner|referent(?:in)?|sachbearbeiter(?:in)?|specialist|spezialist(?:in)?|architekt(?:in)?|vorstand|prokurist(?:in)?|teamlead|team lead|teamleiter(?:in)?)\b/i
-const roleLine = (l: SigLine) => jobLine(l) && ROLE.test(l.text)
+const roleLine = (l: SigLine) => jobLine(l) && ROLE.test(l.text) && stray(l.text) <= 2
 
-// Zeile, die in einer Signatur stehen darf: Kontakt, Bild, oder kurz (Name, Titel, Firma)
-function signatureLike(l: SigLine): boolean {
+// Angabe, die nur in Signaturen steht: Telefon, Anschrift, Firma, Register, Rolle oder ein Bild
+function specific(l: SigLine): boolean {
   if (prose(l)) return false
-  if (l.image && l.text.length < 120) return true
-  if (contactLike(l)) return true
-  const t = l.text.trim()
-  // Kurz: Name, Titel, Firma, auch ein Slogan mit Punkt („Fabrikam – wir verbinden Systeme.“), keine Frage
-  if (t.length <= 60 && !/\?\s*$/.test(t) && (t.split(/\s+/).length <= 5 || !/[.!]\s*$/.test(t))) return true
-  return jobLine(l)
+  const t = l.text
+  if (l.image && !t.trim()) return true
+  if (roleLine(l)) return true
+  if (LEGAL.test(t) && t.length <= 160 && stray(t) <= 2) return true
+  if (stray(t) > 1) return false
+  return PHONE.test(t) || ADDRESS.test(t) || (COMPANY.test(t) && t.length < 120)
 }
+
+// Mailadresse oder Link als eigene Zeile, höchstens mit Beschriftung. Kommt auch in Inhalt vor und
+// belegt deshalb allein keine Signatur.
+const link = (l: SigLine) => !prose(l) && (has(EMAIL_RE, l.text) || has(URL_G, l.text)) && stray(l.text) <= 1
+
+// Name, Abteilung oder Firma ohne Rechtsform: wenige groß geschriebene Wörter ohne Satzzeichen am Ende
+function filler(l: SigLine): boolean {
+  const t = l.text.trim()
+  return !!t && t.length <= 60 && t.split(/\s+/).length <= 6 && /[A-Za-zÄÖÜäöüß]/.test(t) && !/[.!?:]$/.test(t) && stray(t) === 0 && !prose(l)
+}
+
+// Personenname: zwei bis vier groß geschriebene Wörter, optional mit Titel oder „i. V.“
+const PROPER_NAME = /^(?:(?:i\.\s?[AV]\.|ppa\.|pp\.)\s+)?(?:(?:Dr\.|Prof\.|Dipl\.-\w+\.?|Mag\.|Ing\.)\s+)*[A-ZÄÖÜ][a-zäöüßéèáó'’-]+(?:\s+(?:[A-ZÄÖÜ][a-zäöüßéèáó'’.-]*|von|van|de|der|zu)){1,3}$/
+const properName = (l: SigLine) => PROPER_NAME.test(l.text.trim()) && !COMPANY.test(l.text) && !JOB.test(l.text)
+
+// Zeile, die in einem Signaturblock stehen darf
+const blockLine = (l: SigLine) => specific(l) || link(l) || boilerplate(l) || filler(l) || (!!l.image && l.text.length < 120 && stray(l.text) <= 1) || sentFrom(l.text)
+
+// Ein Block ist nur dann Signatur, wenn jede Zeile hineinpasst und mindestens eine Angabe nur in
+// Signaturen vorkommt. Listen aus Links oder Mailadressen sind Inhalt.
+const validBlock = (lines: SigLine[]) => lines.length > 0 && lines.every(blockLine) && lines.some(specific)
 
 // „Gesendet von Outlook für iOS“, „Von meinem iPhone gesendet“, „Sent from my iPhone“: nur diese
 // festen Varianten, nichts dahinter
@@ -173,7 +216,7 @@ function inPart(lines: SigLine[], from: number, to: number): SigRange | undefine
     let end = first
     while (end < to && lines[end].marker === lines[first].marker) end++
     // Gmail setzt den Trenner „-- “ (oder „--“) direkt vor die markierte Signatur
-    let start = first - 1 > body && /^--[\s\u00a0]?$/.test(lines[first - 1].text) ? first - 1 : first
+    let start = first - 1 > body && /^--[\s ]?$/.test(lines[first - 1].text) ? first - 1 : first
     // Manche Clients packen auch Fließtext oder ein P.S. in das markierte Element: das bleibt sichtbar.
     // Am Ende des Elements endet die Signatur davor, mittendrin beginnt sie danach.
     while (end > start && prose(lines[end - 1])) end--
@@ -182,48 +225,47 @@ function inPart(lines: SigLine[], from: number, to: number): SigRange | undefine
       break
     }
     // Fußzeile, die der Mailserver unter die Signatur setzt (Register, Anschrift, Vertraulichkeit):
-    // Besteht der Rest des Teils nur daraus, gehört er dazu
+    // Besteht der Rest des Teils nur aus solchen Zeilen, gehört er dazu
     const rest = lines.slice(end, to)
-    const footerLine = (l: SigLine) => !prose(l) && (contactLike(l) || legalText(l) || LEGAL.test(l.text) || (!!l.image && !l.text))
-    if (start < end && rest.length && rest.every(footerLine) && rest.some((l) => LEGAL.test(l.text) || DISCLAIMER.test(l.text) || ADDRESS.test(l.text) || PHONE.test(l.text))) end = to
+    const footerLine = (l: SigLine) => specific(l) || link(l) || boilerplate(l)
+    if (start < end && rest.length && rest.every(footerLine) && rest.some((l) => boilerplate(l) || (specific(l) && !roleLine(l)))) end = to
     if (start < end) return { start, end, reason: 'marker' }
   }
 
-  // 2. Signaturtrenner „-- “ nach RFC 3676, mit Leerzeichen: Ein „--“ als Linie im Text zählt nicht
-  for (let i = body + 1; i < to; i++) if (isSep(lines[i])) return { start: i, end: to, reason: 'dashes' }
+  // 2. Signaturtrenner „-- “ nach RFC 3676, mit Leerzeichen: Ein „--“ als Linie im Text zählt nicht.
+  // Die Signatur reicht bis zum Ende oder bis zur ersten Inhaltszeile (P.S., Satz, Anweisung).
+  for (let i = body + 1; i < to; i++) {
+    if (!isSep(lines[i])) continue
+    let end = i + 1
+    while (end < to && !prose(lines[end])) end++
+    return { start: i, end, reason: 'dashes' }
+  }
 
   // 3. „Gesendet von Outlook für iOS“ in den letzten beiden Zeilen, nur diese Zeile
   for (let i = Math.max(body + 1, to - 2); i < to; i++) if (sentFrom(lines[i].text)) return { start: i, end: i + 1, reason: 'mobile' }
 
-  // 4. Grußformel, dann eine Namenszeile, dann ein Block, der wie eine Signatur aussieht. Über der
-  // Grußformel wird nie etwas versteckt: Was dort steht, ist Inhalt.
+  // 4. Grußformel, dann eine Namenszeile, dann ein Signaturblock. Über der Grußformel wird nie
+  // etwas versteckt: Was dort steht, ist Inhalt.
   let floor = body
   for (let i = to - 1; i > body; i--) {
     const c = closingLine(lines[i].text)
     if (!c.closing) continue
     let start = i + 1
     // Eine Namenszeile bleibt sichtbar, Firma oder Abteilung darunter gehören zur Signatur
-    if (!c.name && start < to && nameLike(lines[start].text.trim()) && !JOB.test(lines[start].text) && !contactLike(lines[start]) && !lines[start].image) start++
-    const rest = lines.slice(start, to)
-    if (rest.length && rest.every(signatureLike) && (rest.some((l) => contactLike(l) || l.image) || (rest.length <= 3 && rest.some(roleLine))))
-      return { start, end: to, reason: 'closing' }
+    if (!c.name && start < to && nameLike(lines[start].text.trim()) && !JOB.test(lines[start].text) && !specific(lines[start]) && !link(lines[start]) && !lines[start].image) start++
+    if (validBlock(lines.slice(start, to))) return { start, end: to, reason: 'closing' }
     floor = start - 1
     break
   }
 
-  // 5. Am Ende ein zusammenhängender Block aus Signaturzeilen mit mindestens zwei Kontaktangaben,
-  // nur unterhalb einer Grußformel samt Name
+  // 5. Ohne Grußformel: am Ende ein Block, der mit einem Personennamen beginnt und Telefon, Anschrift
+  // oder Registerangabe enthält. Steht davor eine Zeile mit Doppelpunkt, ist es eine Aufzählung.
   let start = to
-  while (start - 1 > floor && signatureLike(lines[start - 1])) start--
-  // Name und Titel über den Kontaktzeilen gehören dazu, eine kurze letzte Inhaltszeile nicht:
-  // ohne Kontaktzeile ganz oben beginnt die Signatur erst bei einer Namens- oder Bildzeile
-  while (start < to && !contactLike(lines[start]) && !lines[start].image && !nameLike(lines[start].text.trim())) start++
+  while (start - 1 > floor && blockLine(lines[start - 1])) start--
+  while (start < to && !properName(lines[start])) start++
   const block = lines.slice(start, to)
-  const contacts = block.filter((l) => contactLike(l) || l.image).length
-  // Mindestens eine Angabe, die nur in Signaturen steht (Telefon, Anschrift, Firma, Rechtshinweis):
-  // Eine Liste aus Links oder Mailadressen ist Inhalt
-  const evidence = block.some((l) => PHONE.test(l.text) || ADDRESS.test(l.text) || LEGAL.test(l.text) || DISCLAIMER.test(l.text) || COMPANY.test(l.text))
-  if (start > floor && contacts >= 2 && block.some(strongContact) && evidence) return { start, end: to, reason: 'contact' }
+  const evidence = block.some((l) => !prose(l) && stray(l.text) <= 1 && (PHONE.test(l.text) || ADDRESS.test(l.text) || LEGAL.test(l.text)))
+  if (start > floor && start < to && validBlock(block) && evidence && !/:\s*$/.test(lines[start - 1].text)) return { start, end: to, reason: 'contact' }
   return undefined
 }
 
@@ -271,13 +313,15 @@ export function modelRequest(parts: OpenPart[]): { parts: MailSignaturePart[]; o
   return { parts: out, of }
 }
 
-// Darf das ausgeblendet werden? Das Modell kann sich irren: Nur kurze Zeilen (oder Rechtstexte), keine
-// Fragen, und mindestens eine Kontaktangabe, ein Bild oder eine Position.
+// Darf das ausgeblendet werden? Das Modell kann sich irren. Der Block muss wie bei den Regeln aus
+// Signaturzeilen bestehen. Weil das Modell die Zeile selbst als Signatur eingestuft hat, darf er eine
+// einzige kurze Zeile ohne Beleg enthalten (ein Slogan), wenn mindestens zwei Zeilen einen Beleg haben.
 export function plausibleSignature(lines: SigLine[]): boolean {
   if (!lines.length || lines.length > MODEL_LINES) return false
-  // Jede Zeile muss in eine Signatur passen: kein Satz, keine Anweisung, kein P.S., keine Frage
-  if (!lines.every((l) => signatureLike(l) || legalText(l))) return false
-  return lines.some((l) => contactLike(l) || l.image || roleLine(l))
+  const free = lines.filter((l) => !blockLine(l))
+  if (free.length > 1 || free.some((l) => prose(l) || l.text.length > 60)) return false
+  if (!lines.some(specific)) return false
+  return free.length === 0 || lines.filter((l) => specific(l) || properName(l)).length >= 2
 }
 
 // Antwort des Modells (erste Signaturzeile je Teil, ab 1 gezählt) in Bereiche umrechnen. Die erste
@@ -291,11 +335,11 @@ export function modelRanges(starts: (number | null)[], req: { of: number[]; part
     if (!p || !n || n < 2 || n > p.lines.length) return
     if (req.parts && n <= req.parts[i].first) return
     const hidden = p.lines.slice(n - 1)
-    if (hidden.filter((l) => !legalText(l) && !LEGAL.test(l.text)).length > 15 || !plausibleSignature(hidden)) return
-    // Die Signatur beginnt mit Name, Kontakt, Bild oder Position, nicht mit einem Slogan oder Satz
+    if (hidden.filter((l) => !boilerplate(l)).length > 15 || !plausibleSignature(hidden)) return
+    // Die Signatur beginnt mit einem Personennamen oder einer Angabe, die nur in Signaturen steht
     const top = hidden[0]
-    const properName = /^(?:(?:i\.\s?[AV]\.|ppa\.|pp\.)\s+)?[A-ZÄÖÜ][\wäöüß'’-]+(?:\s+[A-ZÄÖÜ][\wäöüß'’.-]*){1,3}(?:\s*[|·,–-]\s*.*)?$/
-    if (!((nameLike(top.text.trim()) && properName.test(top.text.trim())) || contactLike(top) || top.image || roleLine(top))) return
+    const name = top.text.split(/\s*[|·]\s*/)[0]
+    if (!(specific(top) || properName(top) || properName({ text: name }))) return
     out.push({ start: p.body + n - 1, end: p.end, reason: 'model' })
   })
   return out
