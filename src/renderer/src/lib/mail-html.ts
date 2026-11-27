@@ -1,7 +1,7 @@
 import DOMPurify from 'dompurify'
-import type { MailMessage } from '@shared/types'
-import { darkColor, darkCss } from './mail-dark'
-import { bodyStart, findHeaders, findSignatures, partStarts, type OpenPart, type SigLine, type SigRange } from './mail-signature'
+import type { MailFile, MailMessage } from '@shared/types'
+import { darkColor, darkCss, lightColor, lightCss } from './mail-dark'
+import { bodyStart, findHeaders, findSignatures, isMe, parseMailDate, partStarts, shortDate, threadParts, type OpenPart, type Person, type SigLine, type SigRange, type ThreadPart } from './mail-signature'
 
 export interface MailDoc {
   html: string
@@ -12,6 +12,23 @@ export interface MailDoc {
   headers: number
   // Teile des Verlaufs ohne Regel-Treffer, für das Sprachmodell
   unresolved: OpenPart[]
+  // Nachrichten im Verlauf
+  messages: number
+}
+
+// Verlauf als Chat: jede Nachricht eine Sprechblase, eigene rechts, andere links. Signatur und Kopf
+// stehen nicht in der Blase, sondern im Pop-up über Name und Uhrzeit.
+export interface ChatOptions {
+  // eigene Konten: Name und Adresse
+  me: Person[]
+  // oberste Nachricht: Uhrzeit zur Anzeige und ihr Kopf fürs Pop-up, aus den Angaben der Mail
+  topTime: string
+  topHeader: string[]
+  // Zeitpunkt aus einem zitierten Kopf wie topTime beschriften
+  formatTime: (ms: number) => string
+  // In dieser Sitzung gesendete Antworten, älteste zuerst. Sie stehen noch nicht in der Mail und
+  // kommen als eigene Blasen unter den Verlauf.
+  sent?: { name: string; text: string; time: string; header: string[]; files: number; signature?: string }[]
 }
 
 export interface SignatureOptions {
@@ -21,6 +38,8 @@ export interface SignatureOptions {
   hideHeaders?: boolean
   // Vom Sprachmodell gefundene Signaturen (Zeilen wie in unresolved)
   extra?: SigRange[]
+  // Als Chat zeigen statt als Mail. hide und hideHeaders gelten dann nicht.
+  chat?: ChatOptions
 }
 
 // Block-Elemente trennen Zeilen, <br> auch
@@ -205,6 +224,153 @@ function wrapFolds(root: Element, lines: DomLine[], folds: Fold[]): void {
   }
 }
 
+// Erster Knoten einer Zeile für eine Schnittstelle: Beginnt die Zeile mit einem Link oder einer
+// Formatierung, liegt die Schnittstelle davor (siehe wrapFolds)
+function cutBefore(root: Element, line: DomLine): Node {
+  let first: Node = line.first
+  while (first.parentNode && first.parentNode !== root && INLINE.has(first.parentNode.nodeName) && startsWith(first.parentNode, first)) first = first.parentNode
+  return first
+}
+
+const BLANK_CHARS = /[\s\u00a0\u200b-\u200d\ufeff]/g
+const KEEP = 'img,table,video,picture'
+// Leerer Absatz, <br>, Trennlinie: am Anfang und Ende einer Blase überflüssig
+function blank(n: Node): boolean {
+  if (n.nodeType === Node.COMMENT_NODE) return true
+  if (n.nodeType === Node.TEXT_NODE) return !n.textContent?.replace(BLANK_CHARS, '')
+  if (n.nodeType !== Node.ELEMENT_NODE) return false
+  const el = n as Element
+  if (el.matches(KEEP) || el.querySelector(KEEP)) return false
+  return !el.textContent?.replace(BLANK_CHARS, '')
+}
+const DIGS = new Set(['DIV', 'P', 'SPAN', 'FONT', 'BLOCKQUOTE', 'SECTION', 'ARTICLE', 'CENTER'])
+function trimBlank(node: Node): void {
+  while (node.lastChild && blank(node.lastChild)) node.removeChild(node.lastChild)
+  while (node.firstChild && blank(node.firstChild)) node.removeChild(node.firstChild)
+  // Leere Absätze stecken oft eine Ebene tiefer („<div><p>Text</p><p>&nbsp;</p></div>“)
+  const last = node.lastChild
+  if (last && DIGS.has(last.nodeName)) trimBlank(last)
+  const first = node.firstChild
+  if (first && first !== last && DIGS.has(first.nodeName)) trimBlank(first)
+}
+
+const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+// Zeilen eines Kopfes („Von: …“) mit fettem Feldnamen
+const headLines = (texts: string[]) =>
+  texts.map((t) => {
+    const m = t.match(/^([^:]{1,24}):\s*(.*)$/)
+    return `<div class="hl">${m ? `<b>${esc(m[1])}:</b> ${esc(m[2])}` : esc(t)}</div>`
+  })
+
+// Name oder Uhrzeit mit Pop-up. Das Pop-up hängt per CSS-Ankerpositionierung an seinem Auslöser und
+// öffnet nach unten oder oben, je nachdem, wo im iframe mehr Platz ist. Jeder Auslöser braucht dafür
+// einen eigenen Ankernamen.
+let popSeq = 0
+function popTrigger(cls: string, label: string, card: string): string {
+  if (!card) return `<div class="${cls}">${label}</div>`
+  const id = `--p${++popSeq}`
+  return `<div class="${cls} has-pop" tabindex="0" style="anchor-name:${id}">${label}<div class="pop" style="position-anchor:${id}"><div class="card">${card}</div></div></div>`
+}
+
+// Mail in Nachrichten zerschneiden und als Chat aufbauen. Jede Grenze bekommt eine Markierung, dann
+// wird zwischen je zwei Markierungen herausgelöst. Kopf und Signatur landen in Pop-ups.
+function chatBody(root: Element, lines: DomLine[], parts: ThreadPart[], chat: ChatOptions): string {
+  // Ankernamen je Dokument ab 1: Dieselbe Mail ergibt dasselbe HTML, sonst lüde das iframe bei jeder
+  // Neuberechnung neu und spränge an den Anfang
+  popSeq = 0
+  const doc = root.ownerDocument
+  // Der Signaturtrenner „--“ über dem Namen bleibt in der Blase sonst allein stehen
+  for (const p of parts) {
+    if (!p.signature) continue
+    for (let i = Math.max(p.body + 1, p.signature.start - 2); i < p.signature.start; i++) {
+      const first = lines[i].first
+      if (/^--$/.test(lines[i].text) && first.nodeType === Node.TEXT_NODE && first.textContent?.trim() === '--') first.textContent = ''
+    }
+  }
+  const bounds = new Set<number>()
+  for (const p of parts) {
+    bounds.add(p.start).add(p.body).add(p.end)
+    if (p.signature) bounds.add(p.signature.start).add(p.signature.end)
+  }
+  const sorted = [...bounds].filter((i) => i > 0 && i < lines.length).sort((a, b) => a - b)
+  const cuts = new Map(sorted.map((i) => [i, cutBefore(root, lines[i])]))
+  const marks = new Map<number, Element>()
+  for (const [i, node] of cuts) {
+    const mark = doc.createElement('span')
+    node.parentNode!.insertBefore(mark, node)
+    marks.set(i, mark)
+  }
+  // Inhalt der Zeilen [a, b) als eigenes Stück
+  const cut = (a: number, b: number): DocumentFragment => {
+    // Ohne Zeilen (leere Mail) gehört alles in die eine Blase
+    if (lines.length && a >= b) return doc.createDocumentFragment()
+    const range = doc.createRange()
+    if (a <= 0) range.setStart(root, 0)
+    else range.setStartAfter(marks.get(a)!)
+    if (b >= lines.length) range.setEnd(root, root.childNodes.length)
+    else range.setEndBefore(marks.get(b)!)
+    const frag = range.extractContents()
+    wrapTableParts(frag)
+    return frag
+  }
+  const html = (frag: DocumentFragment) => {
+    const div = doc.createElement('div')
+    div.append(frag)
+    trimBlank(div)
+    return div.innerHTML
+  }
+
+  const out: string[] = []
+  parts.forEach((p, k) => {
+    // Alles vor der ersten Zeile gehört zur obersten Nachricht
+    const from = k === 0 ? 0 : p.start
+    const to = k === parts.length - 1 ? lines.length : p.end
+    const sig = p.signature
+    let body = ''
+    let signature = ''
+    const head = lines.slice(p.start, p.body).map((l) => l.text)
+    if (p.body > from) cut(from, p.body)
+    if (sig) {
+      body = html(cut(p.body, sig.start))
+      signature = html(cut(sig.start, sig.end))
+      // Ein P.S. unter einer markierten Signatur bleibt in der Blase
+      const after = html(cut(sig.end, to))
+      if (after) body += after
+    } else body = html(cut(p.body, to))
+
+    const mine = isMe(p.sender, chat.me)
+    const name = p.sender?.name || p.sender?.address || (k === 0 ? '' : 'Zitat')
+    const ms = p.date ? parseMailDate(p.date) : undefined
+    const time = k === 0 && p.body === p.start ? chat.topTime : ms !== undefined ? chat.formatTime(ms) : p.date ? shortDate(p.date) : ''
+    const header = k === 0 && p.body === p.start ? chat.topHeader : head
+    const who = [p.sender?.name && p.sender.address ? `<div class="addr">${esc(p.sender.address)}</div>` : '', signature ? `<div class="sig">${signature}</div>` : ''].join('')
+    const meta = [
+      name ? popTrigger('who', esc(name), who) : '',
+      time || header.length ? popTrigger('when', esc(time || 'Details'), headLines(header).join('')) : ''
+    ].join('')
+    out.push(`<div class="msg ${mine ? 'mine' : 'other'}">${meta ? `<div class="meta">${meta}</div>` : ''}<div class="bubble">${body || '<span class="empty">(ohne Text)</span>'}</div></div>`)
+  })
+  // Gesendete Antworten: Klartext, Zeilenumbrüche bleiben
+  const sent = (chat.sent ?? []).map((x) => {
+    const text = esc(x.text.trim()).replace(/\r?\n/g, '<br>')
+    const files = x.files ? `<div class="files">${x.files === 1 ? '1 Anhang' : `${x.files} Anhänge`}</div>` : ''
+    return `<div class="msg mine sent"><div class="meta">${popTrigger('who', esc(x.name), x.signature ? `<div class="sig">${x.signature}</div>` : '')}${popTrigger('when', `${esc(x.time)} · gesendet`, headLines(x.header).join(''))}</div><div class="bubble">${text || '<span class="empty">(ohne Text)</span>'}${files}</div></div>`
+  })
+  // Älteste oben, neueste unten
+  return `<div class="thread">${[...out.reverse(), ...sent].join('')}</div>`
+}
+
+// Chat-Ansicht: Hintergrund, Blasen, Name und Uhrzeit mit Pop-up beim Überfahren (ohne Skript)
+const chatCss = (dark: boolean) => {
+  const c = dark
+    ? { bg: '#1f1f1f', other: '#292929', mine: '#2b2b40', fg: '#dbdbdb', name: '#d6d6d6', meta: '#999999', card: '#2e2e2e', line: '#3d3d3d', shadow: 'rgba(0,0,0,.5)' }
+    : { bg: '#f5f5f5', other: '#ffffff', mine: '#e8ebfa', fg: '#242424', name: '#424242', meta: '#707070', card: '#ffffff', line: '#e0e0e0', shadow: 'rgba(0,0,0,.16)' }
+  // html ohne overflow gäbe das overflow von body ans Fenster weiter. Dann wüchse der Verlauf nach
+  // oben aus dem Bild (umgekehrte Spalte), und dorthin scrollt kein Fenster.
+  return `html{height:100%;overflow:hidden;background:${c.bg}}body.chat{height:100%;margin:0;display:flex;flex-direction:column-reverse;overflow-y:auto;overflow-x:hidden}.thread{margin-bottom:auto;padding:18px 24px 22px;display:flex;flex-direction:column;gap:18px}.msg{display:flex;flex-direction:column;align-items:flex-start;max-width:min(86%,780px);min-width:0}.msg.mine{align-self:flex-end;align-items:flex-end}.meta{position:relative;display:flex;gap:8px;align-items:baseline;margin:0 4px 4px;font-size:11.5px;color:${c.meta};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.who{font-weight:600;font-size:12.5px;color:${c.name}}.has-pop{cursor:default;outline:none}.has-pop:hover,.has-pop:focus{text-decoration:underline dotted;text-underline-offset:3px}.pop{display:none;position:fixed;z-index:10;position-area:block-end span-inline-end;position-try:most-height flip-block,flip-inline,flip-block flip-inline;max-height:100%;max-width:100%;padding:6px 0;box-sizing:border-box;flex-direction:column;font-weight:400;cursor:auto}.mine .pop{position-area:block-end span-inline-start}.has-pop:hover>.pop,.has-pop:focus-within>.pop{display:flex}.card{box-sizing:border-box;max-width:440px;max-height:380px;min-height:0;flex:0 1 auto;overflow:auto;overflow-wrap:anywhere;padding:10px 12px;border-radius:10px;background:${c.card};color:${c.fg};border:1px solid ${c.line};box-shadow:0 8px 24px ${c.shadow};font-size:12.5px;line-height:1.45;text-decoration:none}.card .addr{color:${c.meta};margin-bottom:6px}.card .addr:last-child{margin-bottom:0}.card .sig{border-top:1px solid ${c.line};padding-top:8px}.card .addr+.sig{margin-top:2px}.card .sig:first-child{border-top:0;padding-top:0}.card .hl{margin:1px 0}.bubble{min-width:0;max-width:100%;overflow-x:auto;padding:8px 13px 9px;border-radius:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:14px;line-height:20px;background:${c.other};color:${c.fg}}.mine .bubble{background:${c.mine}}.card{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.bubble :not(pre,code,pre *,code *,tt,kbd,samp),.card :not(pre,code,pre *,code *,tt,kbd,samp){font-family:inherit!important}.bubble>:first-child,.bubble>:first-child>:first-child{margin-top:0}.bubble>:last-child,.bubble>:last-child>:last-child{margin-bottom:0}.bubble .files{margin-top:6px;font-size:12px;color:${c.meta}}.bubble .empty{color:${c.meta};font-style:italic}.bubble blockquote[type=cite],.bubble .gmail_quote,.bubble blockquote.gmail_quote{margin:0!important;padding:0!important;border:0!important}`
+}
+
 // „Signatur anzeigen“ und die Kurzform der Kopfzeilen im Dokument, hell oder dunkel
 const foldCss = (dark: boolean) => {
   const fg = dark ? '#adadad' : '#707070'
@@ -212,19 +378,10 @@ const foldCss = (dark: boolean) => {
   return `details.te-sig{margin:4px 0 10px}details.te-sig>summary{display:inline-block;list-style:none;cursor:pointer;font-size:12px;color:${fg};padding:1px 9px;border:1px solid ${line};border-radius:10px;user-select:none}details.te-sig>summary::-webkit-details-marker,details.te-head>summary::-webkit-details-marker{display:none}details.te-sig>summary::after{content:" anzeigen"}details.te-sig[open]>summary::after{content:" ausblenden"}details.te-sig[open]>summary{margin-bottom:6px}details.te-head{margin:12px 0 6px}details.te-head>summary{list-style:none;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:12px;font-weight:600;color:${fg};user-select:none}details.te-head>summary::before{content:"▸ "}details.te-head[open]>summary::before{content:"▾ "}details.te-head[open]>summary{margin-bottom:4px}`
 }
 
-// Dokument für das iframe im Lesebereich. Drei Schichten Schutz:
-// 1. DOMPurify entfernt Skripte, Formulare, eingebettete Frames und Event-Attribute.
-// 2. Das iframe läuft mit sandbox ohne allow-scripts und ohne allow-same-origin.
-// 3. Eine eigene Content-Security-Policy lässt externe Bilder, Schriften und CSS-URLs nur zu, wenn
-//    remote true ist. Sonst lädt die Mail nichts nach (Tracking-Pixel), auch nicht über CSS.
-// dark: Farben der Mail für dunklen Hintergrund umrechnen (siehe mail-dark.ts)
-// Signaturen und Kopfzeilen sucht mail-signature.ts, das Einklappen braucht kein Skript (<details>).
-export function mailDocument(
-  m: Pick<MailMessage, 'body' | 'bodyType' | 'inlineImages'> & Partial<Pick<MailMessage, 'from'>>,
-  remote: boolean,
-  dark = false,
-  sig: SignatureOptions = { hide: false }
-): MailDoc {
+// Bereinigtes DOM der Mail: Bilder aufgelöst oder blockiert, Links in neuem Fenster, Farben fürs dunkle
+// Theme umgerechnet. head: <style>-Blöcke der Mail.
+type MailInput = Pick<MailMessage, 'body' | 'bodyType' | 'inlineImages'> & Partial<Pick<MailMessage, 'from' | 'accountId' | 'id'>>
+function mailRoot(m: MailInput, remote: boolean, dark: boolean): { root: HTMLElement; head: string; blocked: number } {
   let head = ''
   let root: HTMLElement
   let blocked = 0
@@ -249,10 +406,18 @@ export function mailDocument(
     }) as HTMLElement
     for (const img of html.querySelectorAll('img')) {
       const src = img.getAttribute('src') ?? ''
+      // App-eigene Adressen setzt nur die App, nicht der Absender
+      if (/^\s*tmimg:/i.test(src)) {
+        img.removeAttribute('src')
+        continue
+      }
       const cid = /^cid:/i.test(src) ? src.slice(4).replace(/^<|>$/g, '') : undefined
       if (cid) {
+        // Schon geladen (eigene Signatur) als data:, sonst lädt das Dokument das Bild selbst nach,
+        // sobald es da ist: Das Dokument ändert sich dabei nicht, Scrollen und Pop-ups bleiben
         const data = m.inlineImages[cid]
         if (data) img.setAttribute('src', data)
+        else if (m.accountId && m.id) img.setAttribute('src', `tmimg://mailcid/${encodeURIComponent(m.accountId)}/${encodeURIComponent(cid)}?m=${encodeURIComponent(m.id)}`)
         else img.removeAttribute('src')
       } else if (/^https?:/i.test(src) && !remote) {
         // Statt kaputtem Bildsymbol nur der Alternativtext, Zählpixel ohne Text fallen weg
@@ -290,10 +455,29 @@ export function mailDocument(
     html.querySelectorAll('style').forEach((s) => s.remove())
     root = html.querySelector('body') ?? html
   }
+  return { root, head, blocked }
+}
+
+// Absender für die Regel „Block mit dem Namen des Absenders“: Anzeigename, sonst der Teil vor dem @
+const senderText = (m: MailInput) => (m.from ? `${m.from.name ?? ''} ${m.from.address.split('@')[0].replace(/[._-]+/g, ' ')}` : undefined)
+
+// Dokument für das iframe im Lesebereich. Drei Schichten Schutz:
+// 1. DOMPurify entfernt Skripte, Formulare, eingebettete Frames und Event-Attribute.
+// 2. Das iframe läuft mit sandbox ohne allow-scripts und ohne allow-same-origin.
+// 3. Eine eigene Content-Security-Policy lässt externe Bilder, Schriften und CSS-URLs nur zu, wenn
+//    remote true ist. Sonst lädt die Mail nichts nach (Tracking-Pixel), auch nicht über CSS.
+// dark: Farben der Mail für dunklen Hintergrund umrechnen (siehe mail-dark.ts)
+// Signaturen und Kopfzeilen sucht mail-signature.ts, das Einklappen braucht kein Skript (<details>).
+export function mailDocument(
+  m: MailInput,
+  remote: boolean,
+  dark = false,
+  sig: SignatureOptions = { hide: false }
+): MailDoc {
+  const { root, head, blocked } = mailRoot(m, remote, dark)
 
   const lines = collectLines(root)
-  // Absender für die Regel „Block mit dem Namen des Absenders“: Anzeigename, sonst der Teil vor dem @
-  const found = findSignatures(lines, m.from ? `${m.from.name ?? ''} ${m.from.address.split('@')[0].replace(/[._-]+/g, ' ')}` : undefined)
+  const found = findSignatures(lines, senderText(m))
   const starts = partStarts(lines)
   const unresolved = starts
     .map((start, k) => ({ start, end: starts[k + 1] ?? lines.length }))
@@ -305,15 +489,146 @@ export function mailDocument(
   const extra = (sig.extra ?? []).filter((x) => x.start > 0 && x.end <= lines.length && !found.some((r) => r.start < x.end && x.start < r.end))
   const all = [...found, ...extra]
   const headers = findHeaders(lines)
-  const folds: Fold[] = [
-    ...(sig.hide ? all.map((r): Fold => ({ start: r.start, end: r.end, label: 'Signatur', cls: 'te-sig' })) : []),
-    ...(sig.hideHeaders ? headers.map((r): Fold => ({ ...r, cls: 'te-head' })) : [])
-  ]
-  if (folds.length) wrapFolds(root, lines, folds)
-
-  const body = root.innerHTML
-  const img = remote ? 'data: https: http:' : 'data:'
+  const top: Person | undefined = m.from ? { name: m.from.name, address: m.from.address } : undefined
+  const parts = threadParts(lines, all, top)
+  let body: string
+  if (sig.chat) {
+    // Eigene Signatur gesendeter Antworten: im dunklen Theme umgerechnet wie die Mail selbst
+    const sent = dark ? sig.chat.sent?.map((x) => (x.signature ? { ...x, signature: darkSignature(x.signature) } : x)) : sig.chat.sent
+    body = chatBody(root, lines, parts, { ...sig.chat, sent })
+  } else {
+    const folds: Fold[] = [
+      ...(sig.hide ? all.map((r): Fold => ({ start: r.start, end: r.end, label: 'Signatur', cls: 'te-sig' })) : []),
+      ...(sig.hideHeaders ? headers.map((r): Fold => ({ ...r, cls: 'te-head' })) : [])
+    ]
+    if (folds.length) wrapFolds(root, lines, folds)
+    body = root.innerHTML
+  }
+  // tmimg://mailcid: eingebettete Bilder der Mail aus dem Hauptprozess, kein Netz. Nur dieser Host:
+  // tmimg://proxy lädt externe Bilder und darf am Blocker nicht vorbei.
+  const img = remote ? 'data: tmimg://mailcid https: http:' : 'data: tmimg://mailcid'
   const csp = `default-src 'none'; img-src ${img}; style-src 'unsafe-inline'${remote ? ' https:' : ''}; font-src data:${remote ? ' https:' : ''}`
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html{${dark ? 'background:#292929;color:#dbdbdb;color-scheme:dark' : 'background:#fff;color:#242424'}}${dark ? 'a{color:#8ab4f8}' : ''}body{margin:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:14px;line-height:1.45;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin:0 0 0 8px;padding-left:12px;border-left:2px solid ${dark ? '#4a4a4a' : '#d1d1d1'}}${foldCss(dark)}</style>${head}</head><body>${body}</body></html>`
-  return { html, blocked, signatures: all.length, headers: headers.length, unresolved }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html{${dark ? 'background:#292929;color:#dbdbdb;color-scheme:dark' : 'background:#fff;color:#242424'}}${dark ? 'a{color:#8ab4f8}' : ''}body{margin:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:14px;line-height:1.45;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin:0 0 0 8px;padding-left:12px;border-left:2px solid ${dark ? '#4a4a4a' : '#d1d1d1'}}${sig.chat ? chatCss(dark) : foldCss(dark)}</style>${head}</head><body${sig.chat ? ' class="chat"' : ''}>${body}</body></html>`
+  return { html, blocked, signatures: all.length, headers: headers.length, unresolved, messages: parts.length + (sig.chat?.sent?.length ?? 0) }
+}
+
+// Signatur aus Outlook für den Entwurf und zum Senden: ohne Skripte, Formulare, Stylesheets und
+// Kennungen, Bilder nur eingebettet (data:) oder über https. So zeigt der Entwurf genau die Bilder, die mit
+// der Mail rausgehen. Ohne HTML der Text mit Zeilenumbrüchen.
+export function cleanSignature(sig: { html: string; text: string }): string {
+  const source = sig.html.trim() ? sig.html : esc(sig.text.trim()).replace(/\r?\n/g, '<br>')
+  // Eigenes Dokument: Bilder lädt hier noch nichts
+  const div = document.implementation.createHTMLDocument('').createElement('div')
+  div.innerHTML = DOMPurify.sanitize(source, {
+    FORBID_TAGS: ['style', 'link', 'meta', 'base', 'title', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed'],
+    FORBID_ATTR: ['id', 'contenteditable']
+  })
+  const allowed = (url: string) => /^(?:data:image\/|https:)/i.test(url.trim())
+  for (const img of div.querySelectorAll('img')) if (!allowed(img.getAttribute('src') ?? '')) img.remove()
+  // Ebenso Bilder aus CSS. Den Stil liest der CSS-Parser des Browsers (Escapes, Zeilenumbrüche, Kurzformen),
+  // dann schreibt die App ihn aus dem geparsten Ergebnis neu: Was der Parser nicht versteht, fällt weg.
+  // Eine Eigenschaft mit nicht erlaubter Quelle oder mit image-set() und Co. fällt ganz weg, eigene
+  // Variablen auch. Was am Ende zurückgeschrieben würde, muss dieselbe Prüfung bestehen: Mit var() in
+  // einer Kurzform melden die Einzelwerte leer, der Text behält die Kurzform. Sonst fällt der ganze Stil weg.
+  const cssOk = (value: string) => {
+    if (/(?:var|env|attr|image-set|cross-fade|element|paint)\(/i.test(value)) return false
+    const urls = [...value.matchAll(/url\(\s*"((?:[^"\\]|\\.)*)"\s*\)/gi)].map((m) => m[1].replace(/\\(.)/g, '$1'))
+    return urls.length === (value.match(/url\(/gi) ?? []).length && urls.every(allowed)
+  }
+  for (const el of div.querySelectorAll<HTMLElement>('[style]')) {
+    const css = el.style
+    for (const prop of [...css]) if (prop.startsWith('--') || !cssOk(css.getPropertyValue(prop))) css.removeProperty(prop)
+    const text = css.cssText
+    if (css.length && cssOk(text)) el.setAttribute('style', text)
+    else el.removeAttribute('style')
+  }
+  for (const el of div.querySelectorAll('[background]')) if (!allowed(el.getAttribute('background') ?? '')) el.removeAttribute('background')
+  // Markierungen des dunklen Entwurfs (darkSignature) gehen nie mit raus
+  for (const el of div.querySelectorAll('*')) for (const a of [...el.attributes]) if (a.name.startsWith('data-te-')) el.removeAttribute(a.name)
+  trimBlank(div)
+  return div.innerHTML.trim()
+}
+
+// Signatur im dunklen Theme: Farben wie im Lesebereich umgerechnet (siehe mail-dark.ts), Bilder bleiben.
+// Die Originale stehen in data-te-*, lightSignature() macht daraus wieder die Fassung, die rausgeht.
+const COLOR_ATTRS = ['color', 'bgcolor']
+export function darkSignature(html: string): string {
+  const div = document.implementation.createHTMLDocument('').createElement('div')
+  div.innerHTML = html
+  for (const el of div.querySelectorAll('*')) {
+    const style = el.getAttribute('style')
+    if (style && darkCss(style) !== style) {
+      el.setAttribute('data-te-style', style)
+      el.setAttribute('style', darkCss(style))
+    }
+    for (const a of COLOR_ATTRS) {
+      const v = el.getAttribute(a)
+      const d = v ? darkColor(v) : undefined
+      if (v && d && d !== v) {
+        el.setAttribute(`data-te-${a}`, v)
+        el.setAttribute(a, d)
+      }
+    }
+  }
+  return div.innerHTML
+}
+
+// Aus dem dunklen Entwurf die helle Fassung: Originale zurück. Farben ohne Original hat der Browser beim
+// Bearbeiten aus den dunklen Werten gesetzt (Zeilen zusammengeführt o. Ä.), die rechnet die App zurück.
+export function lightSignature(html: string): string {
+  const div = document.implementation.createHTMLDocument('').createElement('div')
+  div.innerHTML = html
+  for (const el of div.querySelectorAll('*')) {
+    for (const a of ['style', ...COLOR_ATTRS]) {
+      const orig = el.getAttribute(`data-te-${a}`)
+      if (orig !== null) {
+        el.setAttribute(a, orig)
+        el.removeAttribute(`data-te-${a}`)
+        continue
+      }
+      const v = el.getAttribute(a)
+      if (!v) continue
+      const light = a === 'style' ? lightCss(v) : (lightColor(v) ?? v)
+      if (light !== v) el.setAttribute(a, light)
+    }
+  }
+  return div.innerHTML
+}
+
+// Eingefügtes in die Signatur: bereinigt wie die Signatur selbst (Links, Bilder, einfache Auszeichnung),
+// aber ohne Farben, Stile und Klassen. So übernimmt es die Formatierung der Zeile.
+export function pastedSignatureHtml(html: string): string {
+  const div = document.implementation.createHTMLDocument('').createElement('div')
+  div.innerHTML = cleanSignature({ html, text: '' })
+  for (const el of div.querySelectorAll('*')) for (const a of ['style', 'class', 'color', 'bgcolor', 'background']) el.removeAttribute(a)
+  // Zeilen als <br>: Blöcke (div, p …) mitten in einem Absatz verschachtelte der Browser falsch, beim
+  // nächsten Einlesen rutschte der Rest der Zeile aus ihrem Absatz. Innerste zuerst.
+  for (const el of [...div.querySelectorAll('*')].reverse()) {
+    if (!BLOCK.has(el.tagName)) continue
+    el.replaceWith(...el.childNodes, el.ownerDocument.createElement('br'))
+  }
+  // Umbrüche und Leerraum am Ende weg
+  const trailing = (n: ChildNode | null) => !!n && (n.nodeName === 'BR' || (n.nodeType === Node.TEXT_NODE && !n.textContent?.trim()))
+  while (trailing(div.lastChild)) div.lastChild!.remove()
+  return div.innerHTML
+}
+
+// Signatur zum Senden: Bilder als data: werden eingebettete Anhänge (cid:), wie Outlook es macht.
+// Viele Mail-Programme zeigen data:-Bilder nicht an.
+export function signatureForSend(html: string): { html: string; files: MailFile[] } {
+  const doc = document.implementation.createHTMLDocument('')
+  doc.body.innerHTML = html
+  const files: MailFile[] = []
+  const stamp = Date.now().toString(36)
+  for (const img of doc.body.querySelectorAll('img')) {
+    const m = (img.getAttribute('src') ?? '').match(/^data:([\w.+-]+\/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)$/)
+    if (!m) continue
+    const n = files.length + 1
+    const contentId = `signatur-${n}-${stamp}@te`
+    // image/svg+xml → svg, image/jpeg → jpeg
+    const ext = m[1].split('/')[1].split('+')[0].replace(/\W/g, '') || 'png'
+    files.push({ name: `signatur-${n}.${ext}`, contentType: m[1], data: m[2].replace(/\s/g, ''), contentId })
+    img.setAttribute('src', `cid:${contentId}`)
+  }
+  return { html: doc.body.innerHTML, files }
 }

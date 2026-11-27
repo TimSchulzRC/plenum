@@ -79,7 +79,12 @@ const MAPPERS: { [K in ApiName]?: Mapper<K> } = {
   markActivityRead: () => ({ event: 'activity_marked_read' }),
   sendMail: ([, draft, reply]) => ({
     event: 'mail_sent',
-    props: { kind: reply?.kind ?? 'new', recipients: draft.to.length + draft.cc.length, attachments: draft.attachments.length }
+    props: {
+      kind: reply?.kind ?? 'new',
+      recipients: draft.to.length + draft.cc.length,
+      attachments: draft.attachments.filter((f) => !f.contentId).length,
+      signature: !!draft.signature
+    }
   }),
   deleteMail: () => ({ event: 'mail_deleted' }),
   setMailRead: ([, , isRead]) => ({ event: 'mail_marked', props: { read: isRead } }),

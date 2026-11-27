@@ -348,10 +348,13 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     removeFromFolder: (id, folderId, itemId) => get(id).folderActions([{ action: 'RemoveItem', folderId, itemId }]),
     getCalendar: (id, s, e) => get(id).getCalendar(s, e),
     createEvent: (id, ev) => get(id).createEvent(ev),
-    getMailFolders: (id) => get(id).getMailFolders(),
+    getMailFolders: (id, background) => get(id).getMailFolders(background),
     getMailUnread: (id) => get(id).getMailUnread(),
-    listMail: (id, folderId, next) => get(id).listMail(folderId, next),
-    getMail: (id, mid) => get(id).getMail(mid),
+    listMail: (id, folderId, next, background) => get(id).listMail(folderId, next, background),
+    promoteMailList: (id, folderId) => get(id).promoteMailList(folderId),
+    getMail: (id, mid, background) => get(id).getMail(mid, background),
+    getMailImageIndex: (id, mid) => get(id).getMailImageIndex(mid),
+    prefetchMailImages: (id, mid) => get(id).prefetchMailImages(mid),
     openMailAttachment: async (id, mid, aid, mode) => deliverAttachment(sender(), await get(id).getMailAttachment(mid, aid), mode),
     saveMailAttachments: async (id, mid, aids, target) => {
       const folder = target === 'choose' ? await chooseFolder(sender()) : downloadsDir()
@@ -373,6 +376,14 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
       return { folder, inDownloads: folder === downloadsDir(), paths, skipped }
     },
     showSavedFile: (path) => showSavedFile(path),
+    // Signaturen aus Outlook laden und als zuletzt geladene Fassung des Kontos speichern
+    loadMailSignatures: async (id) => {
+      const sigs = await get(id).getMailSignatures()
+      settings = { ...settings, mailSignatures: { ...settings.mailSignatures, [id]: sigs } }
+      store.saveSettings(settings)
+      broadcast('settings', settings)
+      return sigs
+    },
     setMailRead: (id, mid, isRead) => get(id).setMailRead(mid, isRead),
     deleteMail: (id, mid) => get(id).deleteMail(mid),
     sendMail: (id, draft, reply) => get(id).sendMail(draft, reply),

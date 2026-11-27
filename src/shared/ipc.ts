@@ -9,6 +9,7 @@ import type {
   MailAttachmentsSaved,
   MailDraft,
   MailFolder,
+  MailSignatures,
   MailMessage,
   MailPage,
   MailReplyKind,
@@ -77,16 +78,26 @@ export interface ApiMethods {
   getCalendar(accountId: string, start: number, end: number): CalendarEvent[]
   createEvent(accountId: string, event: NewCalendarEvent): void
   // E-Mail über Graph. Gastmandanten haben kein Postfach.
-  getMailFolders(accountId: string): MailFolder[]
+  // background: vorgeladen, Geöffnetes geht vor
+  getMailFolders(accountId: string, background?: boolean): MailFolder[]
   getMailUnread(accountId: string): number | null
-  listMail(accountId: string, folderId: string, next?: string): MailPage
-  getMail(accountId: string, messageId: string): MailMessage
+  listMail(accountId: string, folderId: string, next?: string, background?: boolean): MailPage
+  // Vorgeladene Liste nach vorn holen, weil man den Ordner jetzt öffnet
+  promoteMailList(accountId: string, folderId: string): void
+  // background: nur vorgeladen, geöffnete Mails gehen vor
+  getMail(accountId: string, messageId: string, background?: boolean): MailMessage
+  // Anhang-ID → Content-ID der eingebetteten Bilder, nach dem Laden
+  getMailImageIndex(accountId: string, messageId: string): Record<string, string>
+  // Eingebettete Bilder schon laden, hinter geöffneten Mails
+  prefetchMailImages(accountId: string, messageId: string): void
   // Öffnen, in den Download-Ordner laden oder „Speichern unter …“. Gibt den gespeicherten Pfad zurück.
   openMailAttachment(accountId: string, messageId: string, attachmentId: string, mode: 'open' | 'download' | 'saveAs'): string | null
   // Mehrere Anhänge in den Download-Ordner oder einen gewählten Ordner (null bei Abbruch)
   saveMailAttachments(accountId: string, messageId: string, attachmentIds: string[], target: 'downloads' | 'choose'): MailAttachmentsSaved | null
   // Von der App gespeicherte Datei im Dateimanager zeigen
   showSavedFile(path: string): void
+  // Signaturen aus Outlook laden, speichert sie auch als settings.mailSignatures[accountId]
+  loadMailSignatures(accountId: string): MailSignatures
   setMailRead(accountId: string, messageId: string, isRead: boolean): void
   deleteMail(accountId: string, messageId: string): void
   sendMail(accountId: string, draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): void

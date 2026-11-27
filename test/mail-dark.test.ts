@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { darkColor, darkCss } from '../src/renderer/src/lib/mail-dark.ts'
+import { darkColor, darkCss, lightColor, lightCss } from '../src/renderer/src/lib/mail-dark.ts'
 
 test('Dunkle Mail: Helligkeit umgekehrt, Farbton bleibt', () => {
   assert.equal(darkColor('#fff'), '#292929')
@@ -31,4 +31,18 @@ test('Dunkle Mail: nur Werte umschreiben, keine Selektoren', () => {
   // Farbwörter in Adressen und Zeichenketten bleiben
   assert.equal(darkCss('background:url(https://x.example/white.png) white'), 'background:url(https://x.example/white.png) #292929')
   assert.equal(darkCss('background:url("/images/white.png");font-family:"Red Hat"'), 'background:url("/images/white.png");font-family:"Red Hat"')
+})
+
+test('Eigene Signatur im dunklen Entwurf: lightColor macht darkColor rückgängig', () => {
+  assert.equal(lightColor('#292929'), '#ffffff')
+  assert.equal(lightColor('#dbdbdb'), '#000000')
+  // Farbton und Sättigung bleiben, die Helligkeit kommt bis auf Rundung zurück
+  const near = (a: string, b: string) => {
+    const n = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
+    return n(a).every((v, i) => Math.abs(v - n(b)[i]) <= 3)
+  }
+  for (const c of ['#0563c1', '#c00000', '#7f7f7f', '#1f3864', '#ffc000', '#00b050']) assert.ok(near(lightColor(darkColor(c)!)!, c), c)
+  // Was beim Bearbeiten im Dunklen entsteht (berechnete Farbe), geht hell raus
+  assert.equal(lightCss('color: rgb(219, 219, 219); background-color: rgb(41, 41, 41)'), 'color: #000000; background-color: #ffffff')
+  assert.equal(lightColor('inherit'), undefined)
 })

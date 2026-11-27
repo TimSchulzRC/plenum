@@ -32,26 +32,33 @@ import {
   ArrowSync20Regular,
   ShieldError20Regular,
   WeatherMoon20Regular,
-  WeatherSunny20Regular
+  WeatherSunny20Regular,
+  Chat20Regular,
+  DocumentText20Regular
 } from '@fluentui/react-icons'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { AccountInfo, MailAddress, MailAttachment, MailFolder, MailFolderKind, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
+import type { AccountInfo, MailAddress, MailAttachment, MailFolder, MailFolderKind, MailImages, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
 import { api } from '../api'
-import { fmt, listTime } from '../lib/format'
+import { fmt, listTime, messageTime } from '../lib/format'
 import { accountTitle } from '@shared/accounts'
 import { accountColor, ipcErrorText } from '../lib/calendar'
-import { addressLabel, fileSize, mergeMail } from '../lib/mail'
-import { mailDocument } from '../lib/mail-html'
+import { addressLabel, fileSize, mergeMail, withImages } from '../lib/mail'
+import { cachedMail, loadImageIndex, loadMail, prefetchMail, prefetchTop } from '../lib/mail-load'
+import { cachedFolders, cachedList, foldersAfterWrite, loadFolders as loadFolderList, loadList, noteMailChange, noteUnreadBump, prefetchList, staleFolder } from '../lib/mail-lists'
+import { HOVER_DELAY } from '../lib/prefetch'
+import { mailDocument, type ChatOptions } from '../lib/mail-html'
 import { modelRanges, modelRequest, type SigRange } from '../lib/mail-signature'
 import { setMailUnread } from '../lib/mail-unread'
 import { useStore } from '../store'
 import { useDarkMode } from '../theme'
-import { MailCompose, type ComposeState } from '../components/MailCompose'
+import { MailCompose, type ComposeState, type SentMail } from '../components/MailCompose'
 import { MailAvatar } from '../components/Avatars'
 
 type Sel = { kind: 'all' } | { kind: 'folder'; accountId: string; folderId: string; name: string; folderKind?: MailFolderKind }
-type Source = { accountId: string; folderId: string; items: MailSummary[]; next?: string; error?: string }
-type Open = { accountId: string; id: string }
+// older: über „mehr laden“ geholte ältere Zeilen. Nur die bleiben beim Abgleich der ersten Seite stehen.
+type Source = { accountId: string; folderId: string; items: MailSummary[]; next?: string; error?: string; older?: MailSummary[] }
+// draft: Entwurf, immer frisch laden
+type Open = { accountId: string; id: string; draft?: boolean }
 
 const ICONS: Record<MailFolderKind, JSX.Element> = {
   inbox: <MailInbox20Regular />,
@@ -63,6 +70,8 @@ const ICONS: Record<MailFolderKind, JSX.Element> = {
 }
 
 const key = (m: { accountId: string; id: string }) => `${m.accountId}|${m.id}`
+// Den Posteingang über seinen festen Namen laden, wie „Alle Posteingänge“ und das Vorladen: eine Liste im Speicher
+const folderKey = (f: MailFolder) => (f.kind === 'inbox' ? 'inbox' : f.id)
 
 // E-Mail aller Konten. Links Ordner je Konto (bei mehreren Konten oben „Alle Posteingänge“),
 // in der Mitte die Liste, rechts Lesebereich oder Verfassen.
@@ -76,8 +85,17 @@ export function MailView(): JSX.Element {
   const color = useCallback((id: string) => accountColor(ids, id), [ids])
   const byId = useCallback((id: string) => accounts.find((a) => a.id === id), [accounts])
   const readyKey = accounts.filter((a) => a.status === 'ready').map((a) => a.id).join(',')
+  // Konten im Posteingang: verbundene und solche mit gespeicherter Liste. Verbindet sich ein Konto kurz
+  // neu, bleiben seine Mails stehen, statt dass die ganze Liste neu lädt.
+  const inboxKey = accounts
+    .filter((a) => a.status === 'ready' || cachedList(a.id, 'inbox'))
+    .map((a) => a.id)
+    .join(',')
 
-  const [folders, setFolders] = useState<Record<string, { list?: MailFolder[]; error?: string }>>({})
+  // Gespeicherte Ordner sofort, abgeglichen wird danach
+  const [folders, setFolders] = useState<Record<string, { list?: MailFolder[]; error?: string }>>(() =>
+    Object.fromEntries(ids.flatMap((id) => (cachedFolders(id) ? [[id, { list: cachedFolders(id) }]] : [])))
+  )
   const [collapsed, setCollapsed] = useState<string[]>([])
   const [sel, setSel] = useState<Sel>(() =>
     accounts.length > 1 ? { kind: 'all' } : { kind: 'folder', accountId: accounts[0]?.id ?? '', folderId: 'inbox', name: 'Posteingang', folderKind: 'inbox' }
@@ -88,67 +106,185 @@ export function MailView(): JSX.Element {
   const [compose, setCompose] = useState<ComposeState | null>(null)
   const [reload, setReload] = useState(0)
 
-  // Ordner aller Konten, beim Öffnen und alle zwei Minuten
-  const loadFolders = useCallback(() => {
-    for (const id of readyKey.split(',').filter(Boolean)) {
-      api
-        .getMailFolders(id)
+  // Ordner aller Konten, beim Öffnen (ein frischer gespeicherter Stand reicht) und alle zwei Minuten.
+  // Fehlgeschlagene alle 5 s noch einmal, eine Minute lang (Mail-Token kommt nach dem Start oft später).
+  const folderLoads = useRef<(force: boolean) => void>(() => undefined)
+  useEffect(() => {
+    let alive = true
+    const timers = new Map<string, ReturnType<typeof setTimeout>>()
+    const tries = new Map<string, number>()
+    const loadOne = (id: string, force: boolean) => {
+      loadFolderList(id, force)
         .then((list) => {
+          if (!alive) return
+          clearTimeout(timers.get(id))
+          timers.delete(id)
+          tries.delete(id)
           setFolders((f) => ({ ...f, [id]: { list } }))
           const inbox = list.find((x) => x.kind === 'inbox')
           if (inbox) setMailUnread(id, inbox.unread)
         })
-        .catch((e) => setFolders((f) => ({ ...f, [id]: { ...f[id], error: ipcErrorText(e) } })))
-    }
-  }, [readyKey])
-
-  useEffect(() => {
-    loadFolders()
-    const t = setInterval(loadFolders, 120_000)
-    return () => clearInterval(t)
-  }, [loadFolders])
-
-  const wanted = useMemo<{ accountId: string; folderId: string }[]>(() => {
-    if (sel.kind === 'all') return readyKey.split(',').filter(Boolean).map((accountId) => ({ accountId, folderId: 'inbox' }))
-    return [{ accountId: sel.accountId, folderId: sel.folderId }]
-  }, [sel, readyKey])
-  const wantedKey = wanted.map((w) => `${w.accountId}:${w.folderId}`).join(',')
-
-  // Liste laden. Alle 60 Sekunden die erste Seite neu, schon nachgeladene ältere Mails bleiben.
-  useEffect(() => {
-    let alive = true
-    setSources(null)
-    const load = (refresh: boolean) =>
-      Promise.all(
-        wanted.map((w) =>
-          api
-            .listMail(w.accountId, w.folderId)
-            .then((p): Source => ({ ...w, items: p.items, next: p.next }))
-            .catch((e): Source => ({ ...w, items: [], error: ipcErrorText(e) }))
-        )
-      ).then((fresh) => {
-        if (!alive) return
-        setSources((prev) => {
-          if (!refresh || !prev) return fresh
-          return fresh.map((f) => {
-            const old = prev.find((p) => p.accountId === f.accountId && p.folderId === f.folderId)
-            if (!old || f.error) return old ?? f
-            const oldest = Math.min(...f.items.map((i) => i.received))
-            const rest = old.items.filter((i) => i.received < oldest && !f.items.some((x) => x.id === i.id))
-            return { ...f, items: [...f.items, ...rest], next: rest.length ? old.next : f.next }
-          })
+        .catch((e) => {
+          if (!alive) return
+          setFolders((f) => ({ ...f, [id]: { ...f[id], error: ipcErrorText(e) } }))
+          const n = tries.get(id) ?? 0
+          if (timers.has(id) || n >= 12) return
+          tries.set(id, n + 1)
+          timers.set(
+            id,
+            setTimeout(() => {
+              timers.delete(id)
+              loadOne(id, true)
+            }, 5000)
+          )
         })
-      })
-    void load(false)
-    const t = setInterval(() => void load(true), 60_000)
+    }
+    const all = (force: boolean) => readyKey.split(',').filter(Boolean).forEach((id) => loadOne(id, force))
+    folderLoads.current = all
+    all(false)
+    const t = setInterval(() => all(true), 120_000)
     return () => {
       alive = false
       clearInterval(t)
+      timers.forEach(clearTimeout)
+    }
+  }, [readyKey])
+  const loadFolders = (force = false) => folderLoads.current(force)
+
+  const wanted = useMemo<{ accountId: string; folderId: string }[]>(() => {
+    if (sel.kind === 'all') return inboxKey.split(',').filter(Boolean).map((accountId) => ({ accountId, folderId: 'inbox' }))
+    return [{ accountId: sel.accountId, folderId: sel.folderId }]
+  }, [sel, inboxKey])
+  const wantedKey = wanted.map((w) => `${w.accountId}:${w.folderId}`).join(',')
+
+  // Liste laden. Gespeicherte Listen stehen sofort da, dann der aktuelle Stand (ein frischer gespeicherter
+  // reicht). Jedes Konto erscheint, sobald es da ist, ein langsames hält die anderen nicht auf. Alle 60
+  // Sekunden die erste Seite neu, schon nachgeladene ältere Mails bleiben. Nicht verbundene Konten zeigen
+  // nur ihren gespeicherten Stand. Fehlgeschlagene alle 5 s noch einmal, eine Minute lang: Nach dem Start
+  // fehlt oft noch der Mail-Token der Web-App.
+  const lastReload = useRef(reload)
+  const [pending, setPending] = useState(0)
+  useEffect(() => {
+    let alive = true
+    const ready = new Set(readyKey.split(',').filter(Boolean))
+    const same = (a: { accountId: string; folderId: string }, b: { accountId: string; folderId: string }) => a.accountId === b.accountId && a.folderId === b.folderId
+    const stored = wanted.flatMap((w): Source[] => {
+      const p = cachedList(w.accountId, w.folderId)
+      return p ? [{ ...w, items: p.items, next: p.next }] : []
+    })
+    // Ohne Konto gibt es nichts zu laden: gleich „Kein Konto verbunden“ statt Ladekreis
+    setSources(stored.length || !wanted.length ? stored : null)
+    const put = (f: Source) =>
+      setSources((prev) => {
+        const list = prev ?? []
+        const old = list.find((x) => same(x, f))
+        let merged = f
+        if (old && f.error) merged = old.items.length ? old : f
+        // Die erste Seite ersetzt die alte. Was „mehr laden“ geholt hat, bleibt dahinter stehen, solange es
+        // älter ist als die neue erste Seite. Ohne Folgeseite ist das der ganze Ordner, dann nichts.
+        // Endet die neue erste Seite woanders als die alte (neue Mails haben Zeilen nach hinten geschoben),
+        // klaffte zwischen ihr und den älteren eine Lücke: dann von der neuen ersten Seite aus weiterblättern.
+        else if (old?.older?.length && f.next) {
+          const first = old.items.filter((i) => !old.older?.some((x) => x.id === i.id))
+          if (first.at(-1)?.id === f.items.at(-1)?.id) {
+            const keep = old.older.filter((i) => !f.items.some((x) => x.id === i.id))
+            merged = { ...f, items: [...f.items, ...keep], older: keep, next: old.next }
+          }
+        }
+        return old ? list.map((x) => (x === old ? merged : x)) : [...list, merged]
+      })
+    // Jede Quelle für sich: Eine fehlgeschlagene kommt nach 5 s wieder dran, ohne auf langsame zu warten.
+    // Ein Timer je Quelle, nach Erfolg zählt sie wieder von vorn.
+    const retries = new Map<string, number>()
+    const timers = new Map<string, ReturnType<typeof setTimeout>>()
+    const loadOne = async (w: (typeof wanted)[number], force: boolean, initial: boolean) => {
+      if (!ready.has(w.accountId)) {
+        if (!stored.some((x) => same(x, w))) put({ ...w, items: [], error: 'Nicht verbunden' })
+        return
+      }
+      const k = `${w.accountId}|${w.folderId}`
+      try {
+        const p = await loadList(w.accountId, w.folderId, force)
+        if (!alive) return
+        put({ ...w, items: p.items, next: p.next })
+        retries.delete(k)
+        clearTimeout(timers.get(k))
+        timers.delete(k)
+      } catch (e) {
+        if (!alive) return
+        put({ ...w, items: [], error: ipcErrorText(e) })
+        const n = retries.get(k) ?? 0
+        if (!timers.has(k) && n < 12) {
+          retries.set(k, n + 1)
+          timers.set(
+            k,
+            setTimeout(() => {
+              timers.delete(k)
+              void loadOne(w, true, false)
+            }, 5000)
+          )
+        }
+      } finally {
+        if (alive && initial) setPending((n) => Math.max(0, n - 1))
+      }
+    }
+    const load = (force: boolean, initial = false) => {
+      if (initial) setPending(wanted.filter((w) => ready.has(w.accountId)).length)
+      for (const w of wanted) void loadOne(w, force, initial)
+    }
+    // Neu laden (Knopf) holt immer den aktuellen Stand
+    load(reload !== lastReload.current, true)
+    lastReload.current = reload
+    const t = setInterval(() => load(true), 60_000)
+    return () => {
+      alive = false
+      clearInterval(t)
+      timers.forEach(clearTimeout)
     }
     // wantedKey fasst wanted zusammen, wanted selbst ändert sich bei jedem Render
-  }, [wantedKey, reload])
+  }, [wantedKey, reload, readyKey])
 
   const items = useMemo(() => mergeMail((sources ?? []).map((s) => s.items)), [sources])
+  // Die obersten Mails vorladen (ohne Bilder), dann öffnen sie sofort
+  const topKey = items.slice(0, 3).map(key).join(',')
+  useEffect(() => {
+    if (topKey) void prefetchTop(items.slice(0, 3))
+    // topKey fasst die drei obersten zusammen
+  }, [topKey])
+  // Beim Überfahren einer Mail in der Liste: nach kurzer Pause vorladen, beim Drücken sofort
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const folderTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(
+    () => () => {
+      clearTimeout(hoverTimer.current)
+      clearTimeout(folderTimer.current)
+    },
+    []
+  )
+  // Beim Überfahren eines Ordners seine Liste vorladen, beim Drücken sofort
+  const hoverFolder = (fn: () => unknown) => ({
+    onMouseEnter: () => {
+      clearTimeout(folderTimer.current)
+      folderTimer.current = setTimeout(fn, HOVER_DELAY)
+    },
+    onMouseLeave: () => clearTimeout(folderTimer.current),
+    onMouseDown: () => {
+      clearTimeout(folderTimer.current)
+      fn()
+    }
+  })
+  const hoverProps = (x: MailSummary) => ({
+    onMouseEnter: () => {
+      clearTimeout(hoverTimer.current)
+      hoverTimer.current = setTimeout(() => prefetchMail(x), HOVER_DELAY)
+    },
+    onMouseLeave: () => clearTimeout(hoverTimer.current),
+    onMouseDown: (e: { button: number }) => {
+      if (e.button !== 0) return
+      clearTimeout(hoverTimer.current)
+      prefetchMail(x)
+    }
+  })
   const errors = (sources ?? []).filter((s) => s.error)
   const hasMore = (sources ?? []).some((s) => s.next)
 
@@ -165,7 +301,15 @@ export function MailView(): JSX.Element {
           const same = (s: Source) => s.accountId === accountId && s.folderId === folderId && s.next === cursor
           try {
             const p = await api.listMail(accountId, folderId, cursor)
-            setSources((prev) => prev && prev.map((s) => (same(s) ? { ...s, items: [...s.items, ...p.items.filter((i) => !s.items.some((x) => x.id === i.id))], next: p.next, error: undefined } : s)))
+            setSources(
+              (prev) =>
+                prev &&
+                prev.map((s) => {
+                  if (!same(s)) return s
+                  const add = p.items.filter((i) => !s.items.some((x) => x.id === i.id))
+                  return { ...s, items: [...s.items, ...add], older: [...(s.older ?? []), ...add], next: p.next, error: undefined }
+                })
+            )
           } catch (e) {
             setSources((prev) => prev && prev.map((s) => (same(s) ? { ...s, error: ipcErrorText(e) } : s)))
           }
@@ -174,35 +318,65 @@ export function MailView(): JSX.Element {
     setLoadingMore(false)
   }
 
-  const patchItem = (m: Open, patch: Partial<MailSummary>) =>
-    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: s.items.map((i) => (i.id === m.id ? { ...i, ...patch } : i)) })))
+  // Auch im Speicher und gegen Antworten, die noch unterwegs sind (noteMailChange)
+  const patchItem = (m: Open, patch: Partial<MailSummary>, pending = false) => {
+    const settle = noteMailChange(m.accountId, m.id, { patch }, pending)
+    const fn = (items: MailSummary[]) => items.map((i) => (i.id === m.id ? { ...i, ...patch } : i))
+    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items), older: s.older && fn(s.older) })))
+    return settle
+  }
 
-  const removeItem = (m: Open) =>
-    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: s.items.filter((i) => i.id !== m.id) })))
+  const removeItem = (m: Open) => {
+    noteMailChange(m.accountId, m.id, { deleted: true })
+    const fn = (items: MailSummary[]) => items.filter((i) => i.id !== m.id)
+    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items), older: s.older && fn(s.older) })))
+  }
+
+  // Nach Senden oder Löschen: Gesendete bzw. Gelöschte neu laden, gleich, wenn der Ordner jetzt offen ist
+  // (auch wenn man während des Sendens dorthin gewechselt hat)
+  const selRef = useRef(sel)
+  selRef.current = sel
+  const refreshFolder = (accountId: string, kind: MailFolderKind) => {
+    const id = staleFolder(accountId, kind)
+    const cur = selRef.current
+    if (cur.kind === 'folder' && cur.accountId === accountId && cur.folderId === id) setReload((n) => n + 1)
+    setTimeout(() => loadFolders(true), 1500)
+  }
 
   // Ungelesen-Zahl im Ordner und an der Seitenleiste sofort anpassen, der nächste Abruf bestätigt sie
-  const bumpUnread = (accountId: string, delta: number) => {
+  // pending: Die Änderung auf dem Server läuft noch, die zurückgegebene Funktion meldet ihr Ende
+  const bumpUnread = (accountId: string, delta: number, pending = false) => {
+    const folderId = sel.kind === 'folder' ? sel.folderId : 'inbox'
+    const bump = (cur: MailFolder[]) => cur.map((x) => (x.id === folderId || (folderId === 'inbox' && x.kind === 'inbox') ? { ...x, unread: Math.max(0, x.unread + delta) } : x))
+    const settle = noteUnreadBump(accountId, folderId, delta, pending)
     setFolders((f) => {
       const cur = f[accountId]?.list
       if (!cur) return f
-      const folderId = sel.kind === 'folder' ? sel.folderId : 'inbox'
-      const list = cur.map((x) => (x.id === folderId || (folderId === 'inbox' && x.kind === 'inbox') ? { ...x, unread: Math.max(0, x.unread + delta) } : x))
+      const list = bump(cur)
       const inbox = list.find((x) => x.kind === 'inbox')
       if (inbox) setMailUnread(accountId, inbox.unread)
       return { ...f, [accountId]: { list } }
     })
+    return settle
   }
 
   const openMail = (m: MailSummary) => {
     setCompose(null)
-    setOpen({ accountId: m.accountId, id: m.id })
+    setOpen({ accountId: m.accountId, id: m.id, draft: m.isDraft || undefined })
     if (!m.isRead && !m.isDraft) {
-      patchItem(m, { isRead: true })
-      bumpUnread(m.accountId, -1)
-      void api.setMailRead(m.accountId, m.id, true).catch(() => {
-        patchItem(m, { isRead: false })
-        bumpUnread(m.accountId, 1)
-      })
+      const done = [patchItem(m, { isRead: true }, true), bumpUnread(m.accountId, -1, true)]
+      void api
+        .setMailRead(m.accountId, m.id, true)
+        .catch(() => {
+          patchItem(m, { isRead: false })
+          bumpUnread(m.accountId, 1)
+        })
+        .finally(() => {
+          done.forEach((f) => f())
+          // Jetzt kennt der Server die Änderung: Zahlen der Ordner frisch holen, nicht aus einer Abfrage von vorher
+          foldersAfterWrite(m.accountId)
+          loadFolders(true)
+        })
     }
   }
 
@@ -239,14 +413,18 @@ export function MailView(): JSX.Element {
             </button>
           </Tooltip>
           <Tooltip content="Neu laden" relationship="label">
-            <button className="icon-btn" onClick={() => (loadFolders(), setReload((n) => n + 1))}>
+            <button className="icon-btn" onClick={() => (loadFolders(true), setReload((n) => n + 1))}>
               <ArrowSync20Regular />
             </button>
           </Tooltip>
         </div>
         <div className="list-scroll">
           {multi && (
-            <button className={`folder-row ${sel.kind === 'all' ? 'selected' : ''}`} onClick={() => selectFolder({ kind: 'all' })}>
+            <button
+              className={`folder-row ${sel.kind === 'all' ? 'selected' : ''}`}
+              onClick={() => selectFolder({ kind: 'all' })}
+              {...hoverFolder(() => readyKey.split(',').filter(Boolean).forEach((id) => prefetchList(id, 'inbox')))}
+            >
               <MailInboxAll20Regular />
               <span className="name">Alle Posteingänge</span>
               <Count n={accounts.reduce((n, a) => n + (folders[a.id]?.list?.find((f) => f.kind === 'inbox')?.unread ?? 0), 0)} />
@@ -280,7 +458,8 @@ export function MailView(): JSX.Element {
                         <button
                           key={folder.id}
                           className={`folder-row ${selected ? 'selected' : ''}`}
-                          onClick={() => selectFolder({ kind: 'folder', accountId: a.id, folderId: folder.id, name: folder.name, folderKind: folder.kind })}
+                          onClick={() => selectFolder({ kind: 'folder', accountId: a.id, folderId: folderKey(folder), name: folder.name, folderKind: folder.kind })}
+                          {...hoverFolder(() => a.status === 'ready' && prefetchList(a.id, folderKey(folder)))}
                         >
                           {folder.kind ? ICONS[folder.kind] : <Folder20Regular />}
                           <span className="name">{folder.name}</span>
@@ -318,12 +497,12 @@ export function MailView(): JSX.Element {
             if (hasMore && !loadingMore && el.scrollTop + el.clientHeight > el.scrollHeight - 300) void loadMore()
           }}
         >
-          {!sources && (
+          {(!sources || (!items.length && pending > 0)) && (
             <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
               <Spinner size="small" />
             </div>
           )}
-          {sources && !items.length && !errors.length && (
+          {sources && !items.length && !errors.length && !pending && (
             <div className="folder-note" style={{ padding: 24, textAlign: 'center' }}>
               {wanted.length ? 'Keine Mails' : 'Kein Konto verbunden'}
             </div>
@@ -332,7 +511,7 @@ export function MailView(): JSX.Element {
             const selected = !!open && open.accountId === m.accountId && open.id === m.id
             const who = showTo ? m.to.map(addressLabel).join(', ') || '(Keine Empfänger)' : addressLabel(m.from) || '(Unbekannt)'
             return (
-              <div key={key(m)} className={`mail-item ${m.isRead ? '' : 'unread'} ${selected ? 'selected' : ''}`} onClick={() => openMail(m)}>
+              <div key={key(m)} className={`mail-item ${m.isRead ? '' : 'unread'} ${selected ? 'selected' : ''}`} onClick={() => openMail(m)} {...hoverProps(m)}>
                 {multi && sel.kind === 'all' && <span className="acct-bar" style={{ background: color(m.accountId) }} />}
                 <MailAvatar accountId={m.accountId} address={showTo ? m.to[0] : m.from} name={who} />
                 <div className="mail-main">
@@ -365,9 +544,9 @@ export function MailView(): JSX.Element {
             accounts={accounts}
             color={color}
             onClose={() => setCompose(null)}
-            onSent={() => {
+            onSent={(x) => {
               setCompose(null)
-              setTimeout(loadFolders, 1500)
+              refreshFolder(x.accountId, 'sentitems')
             }}
           />
         ) : open ? (
@@ -377,7 +556,8 @@ export function MailView(): JSX.Element {
             account={byId(open.accountId)}
             multi={multi}
             color={color}
-            onReply={(m, kind) => setCompose({ kind, accountId: m.accountId, source: m })}
+            accounts={accounts}
+            onSent={() => refreshFolder(open.accountId, 'sentitems')}
             onUnread={async (m) => {
               await api.setMailRead(m.accountId, m.id, false)
               patchItem(m, { isRead: false })
@@ -388,6 +568,7 @@ export function MailView(): JSX.Element {
               await api.deleteMail(m.accountId, m.id)
               removeItem(m)
               if (!m.isRead) bumpUnread(m.accountId, -1)
+              refreshFolder(m.accountId, 'deleteditems')
               setOpen(null)
             }}
           />
@@ -408,11 +589,16 @@ function Count({ n }: { n: number }): JSX.Element | null {
 
 // Ergebnis des Sprachmodells je Mail, damit Umschalten und erneutes Öffnen nicht noch einmal fragen
 const modelCache = new Map<string, SigRange[]>()
+// Antworten, die in dieser Sitzung auf eine Mail gesendet wurden. Sie stehen nicht in der Mail selbst,
+// die Chat-Ansicht zeigt sie trotzdem unter dem Verlauf.
+const sentCache = new Map<string, SentMail[]>()
 
 // Signaturen ausblenden: einmal eingestellt, gilt für alle Mails. Standard ist an.
 const HIDE_SIG_KEY = 'mail.hideSignatures'
 // Kopfzeilen zitierter Nachrichten einklappen: eigener Schalter, ebenfalls Standard an
 const HIDE_HEAD_KEY = 'mail.hideHeaders'
+// Verlauf als Chat statt als Mail, Standard an
+const CHAT_KEY = 'mail.chat'
 function loadHidden(key: string): boolean {
   try {
     return localStorage.getItem(key) !== '0'
@@ -579,25 +765,35 @@ function MailAttachments({ m, onError }: { m: MailMessage; onError: (e?: string)
 function MailReader({
   target,
   account,
+  accounts,
   multi,
   color,
-  onReply,
+  onSent,
   onUnread,
   onDelete
 }: {
   target: Open
   account?: AccountInfo
+  accounts: AccountInfo[]
   multi: boolean
   color: (id: string) => string
-  onReply: (m: MailMessage, kind: MailReplyKind) => void
+  onSent: () => void
   onUnread: (m: MailMessage) => Promise<void>
   onDelete: (m: MailMessage) => Promise<void>
 }): JSX.Element {
-  const [m, setM] = useState<MailMessage | null>(null)
+  // Erst der Text, dann die eingebetteten Bilder. Eine schon geladene Mail steht sofort.
+  const [base, setBase] = useState<MailMessage | null>(() => (target.draft ? null : (cachedMail(target.accountId, target.id) ?? null)))
+  // Welche Inline-Anhänge eingebettet sind: nur für die Anhangsliste, das Dokument lädt die Bilder selbst
+  const [images, setImages] = useState<MailImages | undefined>()
+  const m = useMemo(() => (base ? withImages(base, images) : null), [base, images])
   const [error, setError] = useState<string>()
   const [remote, setRemote] = useState(false)
   const [hideSig, setHideSig] = useState(() => loadHidden(HIDE_SIG_KEY))
   const [hideHead, setHideHead] = useState(() => loadHidden(HIDE_HEAD_KEY))
+  const [chat, setChat] = useState(() => loadHidden(CHAT_KEY))
+  // Antwort unten im Lesebereich, der Verlauf bleibt darüber sichtbar
+  const [reply, setReply] = useState<MailReplyKind | null>(null)
+  const [sent, setSent] = useState<SentMail[]>(() => sentCache.get(key(target)) ?? [])
   const [busy, setBusy] = useState(false)
   // Im dunklen Theme dunkel, einzeln auf hell umschaltbar, falls eine Mail umgekehrt schlecht aussieht
   const darkTheme = useDarkMode()
@@ -607,14 +803,21 @@ function MailReader({
 
   useEffect(() => {
     let alive = true
-    api
-      .getMail(target.accountId, target.id)
-      .then((x) => alive && setM(x))
+    loadMail(target.accountId, target.id, { fresh: target.draft })
+      .then((x) => {
+        if (!alive) return
+        setBase(x)
+        // Fehlen Bilder, zeigt die Liste die Inline-Anhänge als Dateien
+        return loadImageIndex(x).then(
+          (i) => alive && setImages(i),
+          () => alive && setImages({ images: {}, cids: {} })
+        )
+      })
       .catch((e) => alive && setError(ipcErrorText(e)))
     return () => {
       alive = false
     }
-  }, [target.accountId, target.id])
+  }, [target.accountId, target.id, target.draft])
 
   // Signaturen, die nur das Sprachmodell fand (Teile ohne Regel-Treffer). Die Zeilennummern gelten
   // nur für dieselbe Aufteilung: Mit externen Bildern kommen Zeilen dazu, deshalb je remote getrennt.
@@ -623,11 +826,49 @@ function MailReader({
   const modelKey = `${target.accountId}|${target.id}|${remote ? 'remote' : 'local'}`
   const [, setModelTick] = useState(0)
   const modelSig = modelOn ? modelCache.get(modelKey) : undefined
-  const doc = useMemo(() => (m ? mailDocument(m, remote, dark, { hide: hideSig, hideHeaders: hideHead, extra: modelSig }) : null), [m, remote, dark, hideSig, hideHead, modelSig])
+  // Eigene Nachrichten erkennt die Chat-Ansicht an Adresse oder Name eines der Konten
+  const chatOptions = useMemo((): ChatOptions | undefined => {
+    if (!base || !chat) return undefined
+    const who = (a?: MailAddress) => (a ? addressLabel(a) + (a.name ? ` <${a.address}>` : '') : '(Unbekannt)')
+    return {
+      me: accounts.map((a) => ({ name: a.displayName, address: a.upn })),
+      topTime: messageTime(base.received),
+      formatTime: messageTime,
+      topHeader: [
+        `Von: ${who(base.from)}`,
+        ...(base.to.length ? [`An: ${base.to.map(who).join('; ')}`] : []),
+        ...(base.cc.length ? [`Cc: ${base.cc.map(who).join('; ')}`] : []),
+        `Gesendet: ${fmt(base.received, 'EEEE, d. MMMM yyyy HH:mm')}`,
+        `Betreff: ${base.subject}`
+      ],
+      sent: sent.map((x) => {
+        const from = accounts.find((a) => a.id === x.accountId)
+        return {
+          name: from?.displayName || from?.upn || 'Du',
+          text: x.text,
+          time: messageTime(x.at),
+          files: x.files,
+          signature: x.signature,
+          header: [
+            `Von: ${from?.upn ?? ''}`,
+            `An: ${x.to.join('; ')}`,
+            ...(x.cc.length ? [`Cc: ${x.cc.join('; ')}`] : []),
+            `Gesendet: ${fmt(x.at, 'EEEE, d. MMMM yyyy HH:mm')}`
+          ]
+        }
+      })
+    }
+  }, [m, chat, accounts, sent])
+  const doc = useMemo(
+    // Mit der Mail ohne Bilder: Sie stehen als tmimg-Adressen im Dokument, die Anhangsliste ändert es nicht
+    () => (base ? mailDocument(base, remote, dark, { hide: hideSig, hideHeaders: hideHead, extra: modelSig, chat: chatOptions }) : null),
+    [base, remote, dark, hideSig, hideHead, modelSig, chatOptions]
+  )
 
   useEffect(() => {
-    if (!m || !hideSig || !modelOn || modelCache.has(modelKey)) return
-    const open = mailDocument(m, remote).unresolved
+    // Mit der Mail ohne Bilder: Die Zeilen sind dieselben, und das Nachladen fragt nicht noch einmal
+    if (!base || !(hideSig || chat) || !modelOn || modelCache.has(modelKey)) return
+    const open = mailDocument(base, remote).unresolved
     const req = modelRequest(open)
     if (!req.parts.length) return
     let alive = true
@@ -642,7 +883,7 @@ function MailReader({
     return () => {
       alive = false
     }
-  }, [m, hideSig, modelOn, modelKey, remote])
+  }, [base, hideSig, chat, modelOn, modelKey, remote])
 
   const toggleSignatures = () => {
     setHideSig(!hideSig)
@@ -652,6 +893,11 @@ function MailReader({
     setHideHead(!hideHead)
     saveHidden(HIDE_HEAD_KEY, !hideHead)
   }
+  const toggleChat = () => {
+    setChat(!chat)
+    saveHidden(CHAT_KEY, !chat)
+  }
+  const startReply = (kind: MailReplyKind) => setReply(kind)
 
   if (error && !m) {
     return (
@@ -683,17 +929,20 @@ function MailReader({
   return (
     <div className="mail-read">
       <div className="mail-actions">
-        <Button size="small" icon={<ArrowReply20Regular />} disabled={busy} onClick={() => onReply(m, 'reply')}>
+        <Button size="small" icon={<ArrowReply20Regular />} disabled={busy || !!reply} onClick={() => startReply('reply')}>
           Antworten
         </Button>
-        <Button size="small" icon={<ArrowReplyAll20Regular />} disabled={busy} onClick={() => onReply(m, 'replyAll')}>
+        <Button size="small" icon={<ArrowReplyAll20Regular />} disabled={busy || !!reply} onClick={() => startReply('replyAll')}>
           Allen antworten
         </Button>
-        <Button size="small" icon={<ArrowForward20Regular />} disabled={busy} onClick={() => onReply(m, 'forward')}>
+        <Button size="small" icon={<ArrowForward20Regular />} disabled={busy || !!reply} onClick={() => startReply('forward')}>
           Weiterleiten
         </Button>
         <div style={{ flex: 1 }} />
-        {doc.headers > 0 && (
+        <Tooltip content={chat ? 'Als Mail anzeigen' : 'Als Chat anzeigen'} relationship="label">
+          <Button size="small" appearance="subtle" icon={chat ? <DocumentText20Regular /> : <Chat20Regular />} onClick={toggleChat} />
+        </Tooltip>
+        {!chat && doc.headers > 0 && (
           <Tooltip
             content={`Kopfzeilen der zitierten Nachrichten (Von, Gesendet, An, Betreff) ${hideHead ? 'ausgeblendet. Klicken zeigt sie.' : 'sichtbar. Klicken blendet sie aus.'}`}
             relationship="label"
@@ -701,7 +950,7 @@ function MailReader({
             <ToggleButton size="small" appearance="subtle" icon={<DocumentHeader20Regular />} checked={hideHead} onClick={toggleHeaders} />
           </Tooltip>
         )}
-        {doc.signatures > 0 && (
+        {!chat && doc.signatures > 0 && (
           <Tooltip
             content={`${doc.signatures === 1 ? '1 Signatur' : `${doc.signatures} Signaturen`} ${hideSig ? 'ausgeblendet. Klicken zeigt sie.' : 'sichtbar. Klicken blendet sie aus.'}`}
             relationship="label"
@@ -725,6 +974,19 @@ function MailReader({
       </div>
       <div className="mail-head">
         <h2>{m.subject}</h2>
+        {chat ? (
+          (multi && account) || doc.messages > 1 ? (
+            <div className="mail-to">
+              {multi && account && (
+                <span title={account.upn}>
+                  <span className="acct-dot" style={{ background: color(account.id) } as CSSProperties} /> {accountTitle(account).name}
+                </span>
+              )}
+              {multi && account && doc.messages > 1 && <span> · </span>}
+              {doc.messages > 1 && <span>{doc.messages} Nachrichten</span>}
+            </div>
+          ) : null
+        ) : (
         <div className="mail-sender">
           <MailAvatar accountId={m.accountId} address={m.from} name="(Unbekannt)" size={40} />
           <div className="mail-people">
@@ -741,6 +1003,7 @@ function MailReader({
             )}
           </div>
         </div>
+        )}
         {m.attachments.length > 0 && <MailAttachments m={m} onError={setError} />}
         {doc.blocked > 0 && !remote && (
           <div className="mail-blocked">
@@ -753,7 +1016,42 @@ function MailReader({
         )}
         {error && <div className="mail-error">{error}</div>}
       </div>
-      <iframe ref={frame} className={`mail-body ${dark ? 'dark' : ''}`} title="Inhalt der Mail" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={doc.html} />
+      <iframe
+        ref={frame}
+        className={`mail-body ${dark ? 'dark' : ''} ${chat ? 'chat' : ''}`}
+        title="Inhalt der Mail"
+        sandbox="allow-popups allow-popups-to-escape-sandbox"
+        srcDoc={doc.html}
+      />
+      {reply ? (
+        <MailCompose
+          key={reply}
+          docked
+          state={{ kind: reply, accountId: m.accountId, source: m }}
+          accounts={accounts}
+          color={color}
+          onClose={() => setReply(null)}
+          onSent={(x) => {
+            setReply(null)
+            const list = [...sent, x]
+            sentCache.set(key(target), list)
+            setSent(list)
+            onSent()
+          }}
+        />
+      ) : (
+        <div className="reply-bar">
+          <button className="reply-start" disabled={busy} onClick={() => startReply('reply')}>
+            <ArrowReply20Regular />
+            <span>{`Antworten an ${m.from ? addressLabel(m.from) : 'Absender'} …`}</span>
+          </button>
+          {m.to.length + m.cc.length > 1 && (
+            <Tooltip content="Allen antworten" relationship="label">
+              <Button appearance="subtle" icon={<ArrowReplyAll20Regular />} disabled={busy} onClick={() => startReply('replyAll')} />
+            </Tooltip>
+          )}
+        </div>
+      )}
     </div>
   )
 }

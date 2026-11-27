@@ -105,3 +105,16 @@ test('Der Cache wirft die ältesten Einträge raus', () => {
   assert.equal(cache.peek('a'), 3)
   assert.equal(cache.peek('c'), 4)
 })
+
+test('update ändert den Wert, nicht das Alter; keys listet die Einträge', () => {
+  let now = 0
+  const c = new PrefetchCache<number[]>({ maxEntries: 5, freshMs: 100, now: () => now })
+  c.set('a|1', [1, 2])
+  c.set('b|1', [3])
+  now = 150
+  c.update('a|1', (v) => v.filter((x) => x !== 1))
+  assert.deepEqual(c.peek('a|1'), [2])
+  assert.equal(c.isFresh('a|1'), false)
+  c.update('fehlt', () => [9])
+  assert.deepEqual(c.keys(), ['a|1', 'b|1'])
+})

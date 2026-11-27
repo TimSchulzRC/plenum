@@ -25,6 +25,8 @@ const LOGIN_HOSTS = [
 
 // Markiert Aufrufe aus request(), der Header selbst geht nicht ins Netz.
 const OWN_REQUEST_HEADER = 'x-te-own-request'
+// Eigene Anfrage ohne Vorlage (bare): ihre Header nicht als Vorlage für spätere Anfragen merken
+const BARE_REQUEST_HEADER = 'x-te-bare-request'
 const TOKEN_HEADERS = new Set(['authorization', 'authentication', 'x-skypetoken'])
 
 const MS_HOSTS = [
@@ -108,8 +110,10 @@ export class Engine extends EventEmitter<EngineEvents> {
           for (const k of Object.keys(details.requestHeaders)) if (TOKEN_HEADERS.has(k.toLowerCase())) delete details.requestHeaders[k]
         }
       }
+      const bare = Object.keys(details.requestHeaders).find((k) => k.toLowerCase() === BARE_REQUEST_HEADER)
+      if (bare) delete details.requestHeaders[bare]
       try {
-        this.tokens.capture(details.url, details.method, details.requestHeaders as Record<string, string>)
+        if (!bare) this.tokens.capture(details.url, details.method, details.requestHeaders as Record<string, string>)
       } catch (e) {
         log.warn('capture failed', e)
       }
@@ -408,8 +412,14 @@ export class Engine extends EventEmitter<EngineEvents> {
   }
 
   // HTTP-Aufruf mit den Auth-Headern der Web-App über den Netzwerk-Stack dieser Partition.
-  async request(family: Family, url: string, init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean } = {}): Promise<Response> {
-    const headers: Record<string, string> = { ...this.tokens.headersFor(family), ...(init.headers ?? {}) }
+  // bare: nur die übergebenen Header, ohne Vorlage der Web-App, ohne Origin und ohne Cookies. Für Dienste,
+  // die den Origin von Teams ablehnen (Outlook-Einstellungen), timeout in ms.
+  async request(
+    family: Family,
+    url: string,
+    init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; bare?: boolean; timeout?: number } = {}
+  ): Promise<Response> {
+    const headers: Record<string, string> = { ...(init.bare ? {} : this.tokens.headersFor(family)), ...(init.headers ?? {}) }
     let body: string | Uint8Array | undefined
     if (init.body instanceof Uint8Array) {
       body = init.body
@@ -419,14 +429,18 @@ export class Engine extends EventEmitter<EngineEvents> {
       if (!headers['content-type']) headers['content-type'] = 'application/json'
     }
     if (!headers['accept']) headers['accept'] = 'application/json'
-    const origin = this.webOrigin()
-    headers['origin'] = origin
-    headers['referer'] = origin + '/'
+    if (!init.bare) {
+      const origin = this.webOrigin()
+      headers['origin'] = origin
+      headers['referer'] = origin + '/'
+    }
     headers[OWN_REQUEST_HEADER] = '1'
+    if (init.bare) headers[BARE_REQUEST_HEADER] = '1'
     // Graph und Outlook antworten mit Access-Control-Allow-Origin: *. Mit Cookies lehnt Chromium das
     // ab (net::ERR_FAILED), und sie brauchen nur den Bearer-Token.
-    const credentials = family === 'graph' || family === 'outlook' ? 'omit' : 'include'
-    return this.ses.fetch(url, { method: init.method ?? 'GET', headers, body, credentials } as RequestInit)
+    const credentials = init.bare || family === 'graph' || family === 'outlook' ? 'omit' : 'include'
+    const signal = init.timeout ? AbortSignal.timeout(init.timeout) : undefined
+    return this.ses.fetch(url, { method: init.method ?? 'GET', headers, body, credentials, signal } as RequestInit)
   }
 
   webOrigin(): string {

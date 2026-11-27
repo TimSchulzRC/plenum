@@ -1,14 +1,28 @@
 import { Button, Dropdown, Field, Input, Option, Textarea } from '@fluentui/react-components'
 import { Attach20Regular, Dismiss12Regular, Send20Regular } from '@fluentui/react-icons'
-import { useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AccountInfo, MailFile, MailMessage, MailReplyKind } from '@shared/types'
 import { api } from '../api'
 import { accountTitle } from '@shared/accounts'
 import { ipcErrorText, parseAttendees } from '../lib/calendar'
 import { addressLabel, fileSize, replyDraft } from '../lib/mail'
 import { fmt } from '../lib/format'
+import { cleanSignature, signatureForSend } from '../lib/mail-html'
+import { defaultSignature, findSignature, useMailSignatures } from '../lib/mail-signatures'
+import { ComposeSignature, type SignatureChoice } from './ComposeSignature'
 
 export type ComposeState = { kind: 'new'; accountId: string } | { kind: MailReplyKind; accountId: string; source: MailMessage }
+// Was gesendet wurde, damit die Chat-Ansicht die Antwort sofort zeigt
+export interface SentMail {
+  accountId: string
+  to: string[]
+  cc: string[]
+  text: string
+  files: number
+  at: number
+  // mitgesendete Signatur (HTML)
+  signature?: string
+}
 
 const TITLES: Record<ComposeState['kind'], string> = { new: 'Neue E-Mail', reply: 'Antworten', replyAll: 'Allen antworten', forward: 'Weiterleiten' }
 // Graph nimmt Anhänge direkt nur unter 3 MB, jede Datei in einer eigenen Anfrage
@@ -28,14 +42,17 @@ export function MailCompose({
   state,
   accounts,
   color,
+  docked,
   onClose,
   onSent
 }: {
   state: ComposeState
   accounts: AccountInfo[]
   color: (id: string) => string
+  // Unten im Lesebereich unter dem Verlauf: ohne Betreff und ohne Vorschau der Mail, die steht darüber
+  docked?: boolean
   onClose: () => void
-  onSent: () => void
+  onSent: (sent: SentMail) => void
 }): JSX.Element {
   const source = state.kind === 'new' ? undefined : state.source
   const [accountId, setAccountId] = useState(state.accountId)
@@ -56,6 +73,40 @@ export function MailCompose({
   const [reading, setReading] = useState(0)
   const [error, setError] = useState<string>()
   const picker = useRef<HTMLInputElement>(null)
+  // Signatur aus Outlook: der Standard für neue Mails oder für Antworten, für diese Mail änderbar
+  const reply = state.kind !== 'new'
+  const { sigs, status: sigStatus, retry: retrySigs } = useMailSignatures(accountId, account?.status === 'ready')
+  const [sig, setSig] = useState<SignatureChoice>()
+  useEffect(() => {
+    if (!sigs) {
+      // Anderes Konto, dessen Signaturen noch nicht da sind: Die des alten Kontos gilt nicht mehr
+      if (sig && sig.accountId !== accountId) setSig(undefined)
+      return
+    }
+    // Erstes Laden, anderes Konto oder noch nichts gewählt: Standard des Kontos, auch wenn er sich
+    // beim Abgleich mit Outlook ändert
+    if (!sig || sig.accountId !== accountId || (!sig.chosen && !sig.edited)) {
+      const d = defaultSignature(sigs, reply)
+      const html = d ? cleanSignature(d) : ''
+      if (!sig || sig.accountId !== accountId || sig.name !== (d?.name ?? null) || sig.html !== html) {
+        setSig({ accountId, name: d?.name ?? null, html, edited: false, chosen: false })
+      }
+      return
+    }
+    // In Outlook gelöscht: weg, auch wenn man sie geändert hat. Die Leiste zeigt sie dann nicht mehr.
+    const s = findSignature(sigs, sig.name)
+    if (!s) {
+      if (sig.name) setSig({ ...sig, name: null, html: '', edited: false })
+      return
+    }
+    // Neue Fassung aus Outlook übernehmen, solange man sie nicht geändert hat
+    if (sig.edited) return
+    const html = cleanSignature(s)
+    if (html !== sig.html) setSig({ ...sig, html })
+    // Nach Zurücksetzen gilt wieder der aktuelle Standard, auch wenn er sich beim Bearbeiten geändert hat
+  }, [sigs, accountId, sig?.chosen, sig?.edited])
+  // Noch nie geladen: kurz warten, sonst ginge die erste Mail ohne Signatur raus
+  const sigPending = !sigs && sigStatus === 'loading' && account?.status === 'ready'
 
   const toList = parseAttendees(to)
   const ccList = parseAttendees(cc)
@@ -68,6 +119,8 @@ export function MailCompose({
         ? `${big.name} ist größer als 3 MB`
         : reading
           ? 'Dateien werden noch gelesen'
+          : sigPending
+            ? 'Signatur wird noch geladen'
           : account && account.status !== 'ready'
           ? `${accountTitle(account).name} ist nicht verbunden`
           : undefined
@@ -95,9 +148,19 @@ export function MailCompose({
     setBusy(true)
     setError(undefined)
     try {
-      const draft = { to: toList.valid, cc: ccList.valid, subject, text, attachments: files.map(({ name, contentType, data }) => ({ name, contentType, data })) }
+      // Nur was unter dem Text zu sehen ist: Signatur dieses Kontos
+      const sigHtml = sig?.name && sig.accountId === accountId ? cleanSignature({ html: sig.html, text: '' }) : ''
+      const sent = sigHtml ? signatureForSend(sigHtml) : undefined
+      const draft = {
+        to: toList.valid,
+        cc: ccList.valid,
+        subject,
+        text,
+        signature: sent?.html,
+        attachments: [...files.map(({ name, contentType, data }) => ({ name, contentType, data })), ...(sent?.files ?? [])]
+      }
       await api.sendMail(accountId, draft, source && state.kind !== 'new' ? { id: source.id, kind: state.kind } : undefined)
-      onSent()
+      onSent({ accountId, to: draft.to, cc: draft.cc, text, files: files.length, at: Date.now(), signature: sigHtml || undefined })
     } catch (e) {
       setError(ipcErrorText(e))
       setBusy(false)
@@ -106,7 +169,7 @@ export function MailCompose({
 
   return (
     <form
-      className="mail-compose"
+      className={`mail-compose${docked ? ' docked' : ''}`}
       onSubmit={(e) => {
         e.preventDefault()
         void send()
@@ -186,9 +249,11 @@ export function MailCompose({
             <Input value={cc} onChange={(_e, d) => setCc(d.value)} />
           </Field>
         )}
-        <Field label="Betreff" orientation="horizontal">
-          <Input value={subject} readOnly={state.kind !== 'new'} onChange={(_e, d) => setSubject(d.value)} placeholder="Betreff hinzufügen" />
-        </Field>
+        {!docked && (
+          <Field label="Betreff" orientation="horizontal">
+            <Input value={subject} readOnly={state.kind !== 'new'} onChange={(_e, d) => setSubject(d.value)} placeholder="Betreff hinzufügen" />
+          </Field>
+        )}
         {files.length > 0 && (
           <div className="mail-attachments">
             {files.map((f, i) => (
@@ -209,12 +274,13 @@ export function MailCompose({
           autoFocus={state.kind === 'reply' || state.kind === 'replyAll'}
           value={text}
           onChange={(_e, d) => setText(d.value)}
-          placeholder={source ? 'Deine Nachricht. Die ursprüngliche Mail hängt die App darunter.' : 'Deine Nachricht'}
+          placeholder={source ? (docked ? 'Deine Antwort. Der bisherige Verlauf kommt automatisch darunter.' : 'Deine Nachricht. Die ursprüngliche Mail hängt die App darunter.') : 'Deine Nachricht'}
           resize="none"
         />
       </div>
+      <ComposeSignature sigs={sigs} status={sigStatus} value={sig} onChange={setSig} onRetry={retrySigs} />
       {error && <div className="mail-error">{error}</div>}
-      {source && (
+      {source && !docked && (
         <div className="compose-quote">
           <div>
             <b>Von:</b> {addressLabel(source.from)} · {fmt(source.received, 'dd.MM.yyyy HH:mm')}

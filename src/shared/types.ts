@@ -257,8 +257,17 @@ export interface MailMessage extends MailSummary {
   bodyType: 'html' | 'text'
   body: string
   attachments: MailAttachment[]
-  // Eingebettete Bilder (cid:…) als data:-URL, Schlüssel ist die Content-ID ohne spitze Klammern
+  // Eingebettete Bilder (cid:…) als data:-URL, Schlüssel ist die Content-ID ohne spitze Klammern.
+  // getMail liefert sie leer, damit die Mail sofort steht, getMailImages lädt sie nach.
   inlineImages: Record<string, string>
+}
+
+// Nachgeladene eingebettete Bilder einer Mail
+export interface MailImages {
+  // Content-ID (ohne spitze Klammern) → data:-URL
+  images: Record<string, string>
+  // Anhang-ID → Content-ID, damit die Oberfläche eingebettete Anhänge aus der Liste nimmt
+  cids: Record<string, string>
 }
 
 export interface MailPage {
@@ -272,6 +281,8 @@ export interface MailFile {
   contentType: string
   // Base64
   data: string
+  // Eingebettetes Bild (Logo der Signatur), im HTML als cid:<contentId>
+  contentId?: string
 }
 
 // Neue Mail, Antwort oder Weiterleitung. text ist der eigene Text (Klartext), bei Antworten hängt
@@ -282,6 +293,8 @@ export interface MailDraft {
   subject: string
   text: string
   attachments: MailFile[]
+  // Eigene Signatur als HTML, kommt unter den Text. Bilder darin als cid: mit Anhang in attachments.
+  signature?: string
 }
 
 export type MailReplyKind = 'reply' | 'replyAll' | 'forward'
@@ -465,6 +478,23 @@ export interface AppSettings {
   callVideoFit?: 'contain' | 'cover'
   // Signaturen in Mails zusätzlich mit Apple Intelligence (auf dem Gerät) suchen. Fehlt: an.
   mailSignatureModel?: boolean
+  // Signaturen je Konto aus Outlook, die zuletzt geladene Fassung. Fehlt ein Konto: noch nie geladen.
+  mailSignatures?: Record<string, MailSignatures>
+}
+
+// Eine Signatur, wie sie in Outlook hinterlegt ist. html mit eingebetteten Bildern (data:), text ohne Formatierung.
+export interface OutlookSignature {
+  name: string
+  html: string
+  text: string
+}
+
+export interface MailSignatures {
+  list: OutlookSignature[]
+  // Standard für neue Mails und für Antworten und Weiterleitungen (Name aus list). Fehlt: keine Signatur.
+  newDefault?: string
+  replyDefault?: string
+  at: number
 }
 
 export interface NavigateRequest {

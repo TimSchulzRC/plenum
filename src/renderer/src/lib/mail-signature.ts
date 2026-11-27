@@ -470,6 +470,170 @@ export function findHeaders(lines: SigLine[]): HeaderRange[] {
   return out
 }
 
+// ---------- Verlauf als Chat ----------
+// Verlauf einer Mail als Folge von Nachrichten, für die Chat-Ansicht. Jede Nachricht kennt ihren Absender und ihr Datum aus dem zitierten Kopf, die
+// oberste aus den Angaben der Mail selbst.
+
+export interface Person {
+  name?: string
+  address?: string
+}
+
+export interface ThreadPart {
+  // erste Zeile samt Kopf, erste Inhaltszeile und Ende (exklusiv)
+  start: number
+  body: number
+  end: number
+  sender?: Person
+  // Datum, wie es im Kopf steht
+  date?: string
+  signature?: { start: number; end: number }
+}
+
+
+// „Kim Fabrik <kim@fabrikam.de>“, „Fabrik, Kim [mailto:kim@fabrikam.de]“, „kim@fabrikam.de“
+export function parsePerson(raw: string): Person | undefined {
+  const address = raw.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/)?.[0]
+  const name = raw
+    .replace(/<[^>]*>|\[[^\]]*\]/g, ' ')
+    .replace(/\s*(?:im auftrag von|on behalf of)\b.*$/i, '')
+    .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, ' ')
+    .replace(/["'“”„]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[\s;,]+$/, '')
+    .trim()
+  if (!name && !address) return undefined
+  return { name: name || undefined, address }
+}
+
+// „Am 24.11.2026 um 11:03 schrieb Kim Fabrik <kim@…>:“ und „On Tue, Nov 24, 2026 at 11:03 AM Kim
+// Fabrik <kim@…> wrote:“. Im Englischen steht der Name hinter Uhrzeit oder Jahr.
+export function parseWrote(text: string): { sender?: Person; date?: string } {
+  const t = text.trim()
+  const de = t.match(/^am\s+(.+?)\s+schrieb\s+(.+):$/i)
+  if (de) return { date: de[1], sender: parsePerson(de[2]) }
+  const en = t.match(/^on\s+(.+?)\s+wrote\b.*:$/i)
+  if (!en) return {}
+  const split = en[1].match(/^(.*(?:\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]\.?m\.?)?|\b(?:19|20)\d{2}))[,\s]+(\S.*)$/i)
+  if (split) return { date: split[1].replace(/[,\s]+$/, ''), sender: parsePerson(split[2]) }
+  return { sender: parsePerson(en[1]) }
+}
+
+// Wochentag am Anfang weglassen: „Dienstag, 24. November 2026 11:03“ → „24. November 2026 11:03“
+export function shortDate(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^(?:mo|di|mi|do|fr|sa|so|mon|tue|wed|thu|fri|sat|sun)[a-zäöü]*\.?,?\s+(?=\S)/i, '')
+    .replace(/\s+/g, ' ')
+}
+
+const MONTHS: [RegExp, number][] = [
+  [/^jan/, 0],
+  [/^feb/, 1],
+  [/^(?:mär|maer|mar)/, 2],
+  [/^apr/, 3],
+  [/^(?:mai|may)/, 4],
+  [/^jun/, 5],
+  [/^jul/, 6],
+  [/^aug/, 7],
+  [/^sep/, 8],
+  [/^(?:okt|oct)/, 9],
+  [/^nov/, 10],
+  [/^(?:dez|dec)/, 11]
+]
+
+// Datum aus einem zitierten Kopf als Zeitpunkt in Ortszeit, damit die Chat-Ansicht alle Nachrichten
+// gleich beschriftet. „Dienstag, 24. November 2026 11:03“, „24.11.2026 11:03“, „Mi., 25. Nov. 2026
+// um 14:02 Uhr“, „Wednesday, November 25, 2026 9:30 AM“, „Mon Nov 23 2026 09:00“. Sonst undefined.
+export function parseMailDate(raw: string): number | undefined {
+  const t = raw.toLowerCase()
+  const time = t.match(/\b(\d{1,2}):(\d{2})(?::\d{2})?(?:\s*(a\.?\s?m\.?|p\.?\s?m\.?)(?![a-z]))?/)
+  let year: number
+  let month: number | undefined
+  let day: number
+  const num = t.match(/\b(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})\b/)
+  // Mit Schrägstrich schreibt Outlook in den USA Monat/Tag, in Großbritannien Tag/Monat. Nur wenn
+  // eine Zahl über 12 liegt, ist klar, welche der Tag ist. Sonst bleibt der Text des Kopfes stehen.
+  const slash = num ? null : t.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})\b/)
+  if (num) {
+    day = +num[1]
+    month = +num[2] - 1
+    year = +num[3] < 100 ? 2000 + +num[3] : +num[3]
+  } else if (slash) {
+    const [a, b] = [+slash[1], +slash[2]]
+    if (a <= 12 && b <= 12 && a !== b) return undefined
+    ;[day, month] = a > 12 ? [a, b - 1] : [b, a - 1]
+    year = +slash[3] < 100 ? 2000 + +slash[3] : +slash[3]
+  } else {
+    const y = t.match(/\b((?:19|20)\d{2})\b/)
+    if (!y) return undefined
+    year = +y[1]
+    for (const w of t.match(/\p{L}+/gu) ?? []) {
+      month = MONTHS.find(([re]) => re.test(w))?.[1]
+      if (month !== undefined) break
+    }
+    const d = t.replace(y[0], ' ').replace(time?.[0] ?? '\u0000', ' ').match(/\b(\d{1,2})\b/)
+    if (month === undefined || !d) return undefined
+    day = +d[1]
+  }
+  let hour = 0
+  let minute = 0
+  if (time) {
+    hour = +time[1]
+    minute = +time[2]
+    const pm = time[3]?.startsWith('p')
+    if (time[3]) hour = (hour % 12) + (pm ? 12 : 0)
+  }
+  if (month < 0 || month > 11 || day < 1 || day > 31 || hour > 23 || minute > 59) return undefined
+  const date = new Date(year, month, day, hour, minute)
+  // 31. Februar und Co.: Date rechnet um, das ist kein gültiges Datum
+  if (date.getDate() !== day) return undefined
+  return date.getTime()
+}
+
+const tokens = (t?: string) => new Set((t ?? '').toLowerCase().match(/\p{L}{2,}/gu) ?? [])
+
+// Stammt die Nachricht von einem der eigenen Konten? Steht eine Adresse da, entscheidet nur sie: Ein
+// Namensvetter mit anderer Adresse ist jemand anderes. Outlook nennt im Kopf oft nur den Namen
+// („Von: Beispiel, Alex“), dann zählen Vor- und Nachname in beliebiger Reihenfolge.
+export function isMe(sender: Person | undefined, me: Person[]): boolean {
+  if (!sender) return false
+  const address = sender.address?.toLowerCase()
+  if (address) return me.some((p) => p.address?.toLowerCase() === address)
+  const a = tokens(sender.name)
+  if (a.size < 2) return false
+  return me.some((p) => {
+    const b = tokens(p.name)
+    if (b.size < 2) return false
+    const [small, big] = a.size <= b.size ? [a, b] : [b, a]
+    return [...small].every((w) => big.has(w))
+  })
+}
+
+// signatures: Bereiche aus findSignatures() und vom Sprachmodell. top: Absender der Mail, gilt für
+// die oberste Nachricht, wenn sie keinen eigenen Kopf hat (eine Weiterleitung hat einen).
+export function threadParts(lines: SigLine[], signatures: { start: number; end: number }[], top?: Person): ThreadPart[] {
+  const starts = partStarts(lines)
+  return starts.map((start, k) => {
+    const end = starts[k + 1] ?? lines.length
+    const body = bodyStart(lines, start, end)
+    const part: ThreadPart = { start, body, end }
+    if (body === start) {
+      if (k === 0) part.sender = top
+    } else {
+      for (let i = start; i < body; i++) {
+        const t = lines[i].text.trim()
+        if (WROTE.test(t)) Object.assign(part, parseWrote(t))
+        else if (HEADER_FROM.test(t) && fieldKey(t) === 'from') part.sender = parsePerson(t.replace(/^[^:]*:/, ''))
+        else if (fieldKey(t) === 'date') part.date = t.replace(HEADER_DATE, '').trim()
+      }
+    }
+    const sig = signatures.find((r) => r.start >= body && r.start < end)
+    if (sig) part.signature = { start: sig.start, end: Math.min(sig.end, end) }
+    return part
+  })
+}
+
 // ---------- Sprachmodell (Apple Intelligence) für Teile ohne Regel-Treffer ----------
 
 export interface OpenPart {

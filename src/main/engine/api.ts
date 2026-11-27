@@ -24,6 +24,8 @@ import {
   pascalize,
   recipientsPatch,
   replyDraftBody,
+  tokenValid,
+  validFirst,
   wellKnownUrl,
   type MailApi,
   type MailQuery
@@ -52,7 +54,11 @@ export class TeamsApi {
     return b
   }
 
-  async json<T = any>(family: Family, url: string, init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean } = {}): Promise<T> {
+  async json<T = any>(
+    family: Family,
+    url: string,
+    init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; bare?: boolean; timeout?: number } = {}
+  ): Promise<T> {
     let res = await this.engine.request(family, url, init)
     if (res.status === 401) {
       // Token evtl. gerade abgelaufen – kurz warten, die Web-App erneuert ihn.
@@ -306,9 +312,14 @@ export class TeamsApi {
   }
 
   // ---------- E-Mail: Graph, sonst Outlook (siehe mail.ts) ----------
+  // Dienste mit Token, solche mit gültigem Token zuerst. Die Web-App erneuert den Graph-Token oft lange
+  // nicht: Mit abgelaufenem Token kostete jede Anfrage erst 401, 1,5 s Warten und einen zweiten Versuch.
   private mailApis(order: MailApi[]): MailApi[] {
     const t = this.engine.tokens
-    return order.filter((a) => (a === 'graph' ? t.has('graph') || !!t.findBearer('graph.microsoft.com') : !!t.bearerFor(OUTLOOK_AUDIENCES)))
+    const has = (a: MailApi) => (a === 'graph' ? t.has('graph') || !!t.findBearer('graph.microsoft.com') : !!t.bearerFor(OUTLOOK_AUDIENCES))
+    const valid = (a: MailApi) =>
+      tokenValid(a === 'graph' ? (t.expiry('graph') ?? t.bearerExpiry(t.findBearer('graph.microsoft.com'))) : t.bearerExpiry(t.bearerFor(OUTLOOK_AUDIENCES)))
+    return validFirst(order.filter(has), valid)
   }
 
   hasMailToken(): boolean {
@@ -321,6 +332,27 @@ export class TeamsApi {
     if (api === 'graph') return this.json('graph', url, init)
     const body = init.body === undefined ? undefined : pascalize(init.body)
     const send = (token: string) => this.json('outlook', url, { ...init, body, headers: { authorization: `Bearer ${token}` } }).then(camelize)
+    const token = this.engine.tokens.bearerFor(OUTLOOK_AUDIENCES)
+    if (!token) throw new ApiError(0, NO_MAIL_TOKEN)
+    try {
+      return await send(token)
+    } catch (e) {
+      const fresh = this.engine.tokens.bearerFor(OUTLOOK_AUDIENCES)
+      if (!(e instanceof ApiError && e.status === 401) || !fresh || fresh === token) throw e
+      return send(fresh)
+    }
+  }
+
+  // Outlook-Einstellungen (OWS) mit dem Mail-Token, nur lesen. Ohne Origin von Teams (bare): Den lässt OWS
+  // nicht zu, Chromium bricht dann mit net::ERR_FAILED ab. large: Signaturtexte liegen bei den großen
+  // Einstellungen, ohne den Header antwortet OWS mit 404.
+  async outlookSettings(url: string, large = false): Promise<unknown> {
+    const send = (token: string) =>
+      this.json('outlook', url, {
+        bare: true,
+        timeout: 15_000,
+        headers: { authorization: `Bearer ${token}`, 'x-outlook-client': 'owa', ...(large ? { 'x-islargesetting': 'true' } : {}) }
+      })
     const token = this.engine.tokens.bearerFor(OUTLOOK_AUDIENCES)
     if (!token) throw new ApiError(0, NO_MAIL_TOKEN)
     try {

@@ -6,7 +6,9 @@ import { join } from 'node:path'
 import { Engine, enginePreloadPath } from './engine/engine'
 import { TeamsApi, ApiError, clientMessageId } from './engine/api'
 import { amsImageIds, replaceInlineImages } from './engine/ams'
+import { inlineToLoad, Limiter, MailImageStore, type ImageEntry } from './engine/mail-images'
 import { contentId, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN, type MailQuery } from './engine/mail'
+import { mailSignatures, parseSignatureBodies, parseSignatureList, signatureBodiesUrl, signatureListUrl } from './engine/outlook-signatures'
 import { MailDirectory, mailMatches } from './engine/mail-people'
 import {
   conversationKind,
@@ -30,6 +32,7 @@ import type {
   MailDraft,
   MailFolder,
   MailFolderKind,
+  MailSignatures,
   MailMessage,
   MailPage,
   MailSummary,
@@ -1298,33 +1301,51 @@ export class AccountService extends EventEmitter<AccountEvents> {
   // Postfach (429, im Live-Test bei sieben). Was dabei scheitert, fragt der nächste Abruf erneut,
   // was es nicht gibt (404, z. B. kein Archiv), nicht mehr. Die Zuordnung ändert sich nicht.
   private mailKinds = new Map<string, MailFolderKind>()
+  // Alle Lesezugriffe auf das Postfach teilen sich vier Plätze, Geöffnetes vor Vorgeladenem
+  private mailLimit = new Limiter(4)
+  private mailImages = new MailImageStore({
+    list: (id, high) => this.mailLimit.run(() => listAttachments(this.api, id), high, id).then((att) => inlineToLoad(att.map(mapAttachment))),
+    promote: (id) => this.mailLimit.promote(id),
+    fetch: async (id, attachmentId, high) => {
+      const full = await this.mailLimit.run(() => this.api.mailAttachment(id, attachmentId), high, id)
+      const cid = contentId(full?.contentId)
+      if (!cid || typeof full?.contentBytes !== 'string') return undefined
+      return { cid, type: String(full.contentType || 'application/octet-stream'), data: Buffer.from(full.contentBytes, 'base64') }
+    }
+  })
   private mailKindsDone = new Set<MailFolderKind>()
   // Gleichzeitige Abrufe (Neu laden während des Zwei-Minuten-Abrufs) teilen sich einen
   private mailFoldersRun?: Promise<MailFolder[]>
 
+  // Gleichzeitig, über das Limit des Postfachs: nacheinander kostete das beim ersten Laden ein Vielfaches
+  // Hinter geöffneten Mails und Listen: Die Liste ist wichtiger als die Symbole der Ordner.
   private async resolveMailKinds(): Promise<void> {
-    for (const k of WELL_KNOWN) {
-      if (this.mailKindsDone.has(k)) continue
-      try {
-        const f = await this.api.mailWellKnown(k)
-        this.mailKinds.set(String(f.id), k)
-        this.mailKindsDone.add(k)
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 404) this.mailKindsDone.add(k)
-      }
-    }
+    await Promise.all(
+      WELL_KNOWN.filter((k) => !this.mailKindsDone.has(k)).map(async (k) => {
+        try {
+          const f = await this.mailLimit.run(() => this.api.mailWellKnown(k), false)
+          this.mailKinds.set(String(f.id), k)
+          this.mailKindsDone.add(k)
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 404) this.mailKindsDone.add(k)
+        }
+      })
+    )
   }
 
-  getMailFolders(): Promise<MailFolder[]> {
-    this.mailFoldersRun ??= (async () => {
-      const list = await this.api.mailFolders()
-      await this.resolveMailKinds()
+  // background: vorgeladen, Geöffnetes geht vor
+  getMailFolders(background = false): Promise<MailFolder[]> {
+    if (this.mailFoldersRun) return this.mailFoldersRun
+    const run = (async () => {
+      const [list] = await Promise.all([this.mailLimit.run(() => this.api.mailFolders(), !background), this.resolveMailKinds()])
       const items: any[] = list?.value ?? []
       return sortFolders(items.map((f) => mapFolder(f, this.mailKinds.get(String(f.id)))))
     })().finally(() => {
-      this.mailFoldersRun = undefined
+      // Nur die eigene: Nach einem Schreiben kann schon eine neue laufen
+      if (this.mailFoldersRun === run) this.mailFoldersRun = undefined
     })
-    return this.mailFoldersRun
+    this.mailFoldersRun = run
+    return run
   }
 
   // null, solange die Web-App noch keinen Token für Mail angefordert hat (kein Fehler, nur noch nichts da)
@@ -1334,8 +1355,9 @@ export class AccountService extends EventEmitter<AccountEvents> {
     return Number(f?.unreadItemCount) || 0
   }
 
-  async listMail(folderId: string, next?: string): Promise<MailPage> {
-    const res = await this.api.mailMessages(folderId, next)
+  // background: vorgeladen (Überfahren, nach dem Start). promoteMailList holt sie nach vorn, sobald man den Ordner öffnet.
+  async listMail(folderId: string, next?: string, background = false): Promise<MailPage> {
+    const res = await this.mailLimit.run(async () => this.api.mailMessages(folderId, next), !background, `list:${folderId}`)
     const items: any[] = res?.value ?? []
     return { items: items.map((m) => mapSummary(m, this.id)), next: res?.['@odata.nextLink'] || undefined }
   }
@@ -1347,31 +1369,43 @@ export class AccountService extends EventEmitter<AccountEvents> {
     return { items: items.map((m) => mapSummary(m, this.id)), next: res?.['@odata.nextLink'] || undefined }
   }
 
-  // inlineImages: false lädt keine eingebetteten Bilder (der MCP-Server braucht nur den Text)
-  async getMail(id: string, opts: { inlineImages?: boolean } = {}): Promise<MailMessage> {
-    const [m, att] = await Promise.all([this.api.mailMessage(id), listAttachments(this.api, id)])
+  // Nachricht und Anhangsliste parallel, ohne die eingebetteten Bilder, damit der Text sofort steht.
+  // Die Bilder holt der Leser über tmimg://mailcid (mailImage), Inline-Anhänge stehen mit isInline in
+  // der Liste. background: nur vorgeladen, die geöffnete Mail geht vor.
+  async getMail(id: string, background = false): Promise<MailMessage> {
+    const high = !background
+    const [m, att] = await Promise.all([this.mailLimit.run(() => this.api.mailMessage(id), high), this.mailLimit.run(() => listAttachments(this.api, id), high)])
     const attachments = att.map(mapAttachment)
-    if (opts.inlineImages === false) return mapMessage(m, this.id, attachments, {})
-    const body = String(m?.body?.content ?? '')
-    // Eingebettete Bilder (cid:…) als data:-URL, zusammen höchstens 8 MB. Was das HTML nicht
-    // einbettet, bleibt in der Anhangsliste.
-    const inlineImages: Record<string, string> = {}
-    const embedded = new Set<string>()
-    let budget = 8 * 1024 * 1024
-    for (const a of attachments.filter((x) => x.isInline).slice(0, 20)) {
-      if (a.size > budget) continue
-      try {
-        const full = await this.api.mailAttachment(id, a.id)
-        const cid = contentId(full?.contentId)
-        if (!cid || typeof full?.contentBytes !== 'string' || !body.includes(`cid:${cid}`)) continue
-        inlineImages[cid] = `data:${full.contentType || 'application/octet-stream'};base64,${full.contentBytes}`
-        embedded.add(a.id)
-        budget -= a.size
-      } catch (e) {
-        log.warn('[mail] Eingebettetes Bild nicht geladen', (e as Error).message)
-      }
-    }
-    return mapMessage(m, this.id, attachments.filter((a) => !embedded.has(a.id)), inlineImages)
+    this.mailImages.remember(id, inlineToLoad(attachments))
+    return mapMessage(m, this.id, attachments, {})
+  }
+
+  promoteMailList(folderId: string): void {
+    this.mailLimit.promote(`list:${folderId}`)
+  }
+
+  // Eingebettetes Bild nach Content-ID für tmimg://mailcid, sobald es geladen ist
+  mailImage(id: string, cid: string): Promise<ImageEntry | undefined> {
+    return this.mailImages.image(id, cid)
+  }
+
+  // Bilder einer Mail schon laden (beim Überfahren in der Liste), hinter geöffneten Mails
+  prefetchMailImages(id: string): void {
+    void this.mailImages.load(id, false).catch(() => undefined)
+  }
+
+  // Welcher Inline-Anhang welches Bild ist, damit die Liste eingebettete Anhänge weglässt
+  getMailImageIndex(id: string): Promise<Record<string, string>> {
+    return this.mailImages.index(id)
+  }
+
+  // Signaturen aus Outlook: Liste mit den Standards, dann alle Texte in einer Anfrage, wie Outlook im Web
+  async getMailSignatures(): Promise<MailSignatures> {
+    const list = parseSignatureList(await this.mailLimit.run(() => this.api.outlookSettings(signatureListUrl()), true))
+    const bodies = list.names.length
+      ? parseSignatureBodies(await this.mailLimit.run(() => this.api.outlookSettings(signatureBodiesUrl(list.names), true), true), list.names)
+      : []
+    return mailSignatures(list, bodies)
   }
 
   async getMailAttachment(id: string, attachmentId: string): Promise<{ name: string; contentType?: string; data: Uint8Array }> {
@@ -1382,10 +1416,13 @@ export class AccountService extends EventEmitter<AccountEvents> {
 
   async setMailRead(id: string, isRead: boolean): Promise<void> {
     await this.api.setMailRead(id, isRead)
+    // Eine Ordnerabfrage, die schon läuft, begann davor: Die nächste startet neu
+    this.mailFoldersRun = undefined
   }
 
   async deleteMail(id: string): Promise<void> {
     await this.api.moveMail(id, 'deleteditems')
+    this.mailFoldersRun = undefined
   }
 
   async sendMail(draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): Promise<void> {

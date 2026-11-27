@@ -15,6 +15,8 @@ import {
   pascalize,
   recipientsPatch,
   replyDraftBody,
+  tokenValid,
+  validFirst,
   sortFolders,
   textToHtml,
   unwrapSafeLink,
@@ -22,7 +24,7 @@ import {
 } from '../src/main/engine/mail.ts'
 
 const isGraphPage = (u?: string) => mailPageApi(u) === 'graph'
-import { fileSize, mergeMail, replyDraft } from '../src/renderer/src/lib/mail.ts'
+import { fileSize, mergeMail, replyDraft, withImages } from '../src/renderer/src/lib/mail.ts'
 
 test('Folgeseiten nur von Graph, sonst bekäme eine fremde Adresse den Token', () => {
   const next = 'https://graph.microsoft.com/v1.0/me/mailFolders/AAMk/messages?$top=40&$skip=40'
@@ -251,4 +253,52 @@ Zeile 2</pre></div></body></html>`
   // Gmail und neues Outlook: Leerzeile als <div><br></div>, <br> am Blockende zählt nicht doppelt
   assert.equal(mailHtmlToText('<div>Hallo<br></div><div><br></div><div>Text</div><div>Ende</div>'), 'Hallo\n\nText\nEnde')
   assert.equal(unwrapSafeLink('https://example.com/a'), 'https://example.com/a')
+})
+
+test('Eigene Signatur unter dem Text, Logo als eingebetteter Anhang', () => {
+  const d = { to: ['kim@fabrikam.de'], cc: [], subject: 'Angebot', text: 'Hi', attachments: [], signature: '<p>Alex Beispiel</p><img src="cid:logo@sig">' }
+  const n = newDraftBody(d) as { body: { content: string } }
+  assert.match(n.body.content, /Hi<\/div><div><br><\/div><div class="te-signature"><p>Alex Beispiel<\/p><img src="cid:logo@sig"><\/div>$/)
+  const r = replyDraftBody(d, 'reply') as { comment: string }
+  assert.match(r.comment, /Hi<\/div>.*te-signature.*Alex Beispiel/)
+  // Ohne Signatur bleibt es beim Text
+  assert.doesNotMatch((replyDraftBody({ ...d, signature: undefined }, 'reply') as { comment: string }).comment, /te-signature/)
+  const inline = attachmentBody({ name: 'logo.png', contentType: 'image/png', data: 'AAA', contentId: 'logo@sig' })
+  assert.equal(inline.isInline, true)
+  assert.equal(inline.contentId, 'logo@sig')
+  assert.equal(pascalize(inline).ContentId, 'logo@sig')
+  assert.equal(attachmentBody({ name: 'plan.pdf', contentType: 'application/pdf', data: 'AAA' }).isInline, undefined)
+})
+
+test('Mail mit nachgeladenen Bildern: eingebettete Anhänge fallen aus der Liste', () => {
+  const m = {
+    id: 'm1', accountId: 'a', subject: 's', to: [], cc: [], replyTo: [], preview: '', received: 0, isRead: true, isDraft: false, hasAttachments: true,
+    importance: 'normal' as const, flagged: false, bodyType: 'html' as const, body: '<img src="cid:logo@x"><p>Hi</p>', inlineImages: {},
+    attachments: [
+      { id: 'logo', name: 'logo.png', size: 10, isInline: true },
+      { id: 'unused', name: 'bild.png', size: 10, isInline: true },
+      { id: 'failed', name: 'x.png', size: 10, isInline: true },
+      { id: 'pdf', name: 'plan.pdf', size: 10, isInline: false }
+    ]
+  }
+  // Vorher: nur echte Anhänge, keine Bilder
+  const before = withImages(m)
+  assert.deepEqual(before.attachments.map((a) => a.id), ['pdf'])
+  assert.deepEqual(before.inlineImages, {})
+  // Danach: das genutzte Logo ist eingebettet, ein nicht genutztes oder nicht geladenes Bild bleibt als Datei
+  const after = withImages(m, { images: { 'logo@x': 'data:image/png;base64,AAA', 'unused@x': 'data:image/png;base64,BBB' }, cids: { logo: 'logo@x', unused: 'unused@x' } })
+  assert.deepEqual(after.attachments.map((a) => a.id), ['unused', 'failed', 'pdf'])
+  assert.equal(after.inlineImages['logo@x'], 'data:image/png;base64,AAA')
+})
+
+test('Mail-Dienste: gültiger Token zuerst, abgelaufener zuletzt', () => {
+  const now = 1_000_000
+  assert.equal(tokenValid(undefined, now), true)
+  assert.equal(tokenValid(now + 120_000, now), true)
+  assert.equal(tokenValid(now + 30_000, now), false)
+  assert.equal(tokenValid(now - 1, now), false)
+  const exp: Record<string, number> = { graph: now - 5000, outlook: now + 3_600_000 }
+  assert.deepEqual(validFirst(['graph', 'outlook'], (a) => tokenValid(exp[a], now)), ['outlook', 'graph'])
+  exp.graph = now + 3_600_000
+  assert.deepEqual(validFirst(['graph', 'outlook'], (a) => tokenValid(exp[a], now)), ['graph', 'outlook'])
 })

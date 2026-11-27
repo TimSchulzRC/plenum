@@ -6,6 +6,10 @@ import { api } from '../api'
 import { USAGE_DATA_DOC } from '../analytics'
 import { PersonAvatar } from '../components/Avatars'
 import { McpSettings } from '../components/McpSettings'
+import { cleanSignature } from '../lib/mail-html'
+import { defaultSignature, useMailSignatures } from '../lib/mail-signatures'
+import { SignaturePreview } from '../components/SignaturePreview'
+import { accountTitle } from '@shared/accounts'
 import { statusText } from '../components/TitleBar'
 import { confirmInstall, resolveUpdateAction, updateLastChecked, updateStatusText } from '../update'
 import { useStore } from '../store'
@@ -120,6 +124,14 @@ export function SettingsView(): JSX.Element {
 
       <section>
         <h2>E-Mail</h2>
+        {accounts
+          .filter((a) => !a.parentId)
+          .map((a) => (
+            <SignatureRow key={a.id} account={a} multi={accounts.filter((x) => !x.parentId).length > 1} />
+          ))}
+        <div className="hint">
+          Die Signaturen kommen aus Outlook, mit Formatierung und Logo. Neue Mails und Antworten bekommen den Standard, den du dort eingestellt hast. Beim Schreiben wählst du eine andere, änderst sie für diese Mail oder lässt sie weg. Die Signaturen selbst bearbeitest du in Outlook unter Einstellungen › Konten › Signaturen.
+        </div>
         <div className="row">
           <div className="grow">Signaturen auch mit Apple Intelligence erkennen</div>
           <Switch
@@ -468,6 +480,34 @@ function Tenants({ account }: { account: AccountInfo }): JSX.Element | null {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// Eigene Signatur eines Kontos: Vorschau, neu einlesen, abschalten
+function SignatureRow({ account, multi }: { account: AccountInfo; multi: boolean }): JSX.Element {
+  const { sigs, status, retry } = useMailSignatures(account.id, account.status === 'ready')
+  const loading = status === 'loading' && account.status === 'ready'
+  const def = defaultSignature(sigs, false)
+  const reply = sigs?.replyDefault
+  const q = (n?: string) => (n ? `„${n}“` : 'keine')
+  const text = !sigs
+    ? loading
+      ? 'Wird aus Outlook geladen …'
+      : 'Aus Outlook nicht erreichbar.'
+    : !sigs.list.length
+      ? 'In Outlook ist keine Signatur hinterlegt.'
+      : `${sigs.list.length === 1 ? '1 Signatur' : `${sigs.list.length} Signaturen`} in Outlook. Neue Mails: ${q(sigs.newDefault)}, Antworten: ${q(reply)}.`
+  return (
+    <div className="row own-signature">
+      <div className="grow">
+        <div>{multi ? `Signatur · ${accountTitle(account).name}` : 'Signatur'}</div>
+        <div className="hint">{text}</div>
+        {def && <SignaturePreview html={cleanSignature(def)} />}
+      </div>
+      <Button size="small" disabled={loading || account.status !== 'ready'} onClick={retry}>
+        Neu laden
+      </Button>
     </div>
   )
 }

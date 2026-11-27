@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { create } from 'zustand'
 import { api } from '../api'
 import { useStore } from '../store'
+import { warmMail } from './mail-lists'
 
 // Ungelesene Mails im Posteingang je Konto, für die Zahl an „E-Mail“ in der Seitenleiste.
 export const useMailUnread = create<{ counts: Record<string, number> }>(() => ({ counts: {} }))
@@ -19,7 +20,13 @@ export function useMailUnreadPolling(): void {
       for (const id of ids) void api.getMailUnread(id).then((n) => n !== null && setMailUnread(id, n)).catch(() => {})
     }
     poll()
+    // Ordner und Posteingänge schon laden, dann zeigt der Mail-Tab beim ersten Öffnen gleich etwas. Noch
+    // zweimal später: Den Mail-Token fordert die Web-App nach dem Start oft erst nach einer Minute an.
+    const warm = [3000, 30_000, 75_000].map((ms) => setTimeout(() => warmMail(ids), ms))
     const t = setInterval(poll, 120_000)
-    return () => clearInterval(t)
+    return () => {
+      clearInterval(t)
+      warm.forEach(clearTimeout)
+    }
   }, [key])
 }
