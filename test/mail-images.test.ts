@@ -272,3 +272,33 @@ test('Bildspeicher: gemerkte Liste bleibt, auch wenn vor dem Öffnen ein anderer
   assert.equal(lists, 0)
   await Promise.all(busy)
 })
+
+test('Bildspeicher: unter Speicherdruck holt ein wartender Leser fehlgeschlagene Bilder trotzdem nach', async () => {
+  let failed = false
+  const store = new MailImageStore({
+    list: async () => [],
+    fetch: async (m, id) => {
+      if (m === 'target') {
+        await wait(10)
+        if (!failed) {
+          failed = true
+          throw new Error('429')
+        }
+        return entry(`${id}@x`)
+      }
+      await wait(60)
+      return entry(`${id}@x`)
+    }
+  })
+  store.remember('target', [{ id: 'a', size: 1 }])
+  const first = store.load('target', false)
+  const others = Array.from({ length: 220 }, (_, i) => {
+    store.remember(`o${i}`, [{ id: 'x', size: 1 }])
+    return store.load(`o${i}`, false)
+  })
+  // Leser hängt sich an den laufenden Vorgang, der für a fehlschlägt
+  const img = store.image('target', 'a@x')
+  await first
+  assert.equal((await img)?.cid, 'a@x')
+  await Promise.all(others)
+})

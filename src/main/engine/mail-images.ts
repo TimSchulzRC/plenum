@@ -178,8 +178,10 @@ export class MailImageStore {
     })().finally(() => {
       this.running.delete(messageId)
       this.urgent.delete(messageId)
-      this.trimRefs()
       this.notify(messageId)
+      // Erst aufräumen, wenn wartende Leser geprüft haben, ob noch etwas fehlt, und ihren nächsten
+      // Durchgang gestartet haben (der läuft dann und ist geschützt)
+      setTimeout(() => this.trimRefs(), 0)
     })
     this.running.set(messageId, p)
     return p
