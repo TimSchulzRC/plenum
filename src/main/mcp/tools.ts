@@ -48,7 +48,8 @@ export interface McpAccount {
   // noch keinen Token dafür angefordert hat.
   hasMail(): boolean
   mailFolders(): Promise<MailFolder[]>
-  mailQuery(q: MailQuery): Promise<MailSummary[]>
+  // next ist die Folgeseite aus der vorigen Antwort. Sie bleibt im Prozess, der Agent sieht sie nie.
+  mailQuery(q: MailQuery, next?: string): Promise<{ items: MailSummary[]; next?: string }>
   mail(id: string): Promise<McpMail>
   mailAttachment(messageId: string, attachmentId: string): Promise<{ name: string; contentType?: string; data: Uint8Array }>
 }
@@ -385,12 +386,12 @@ function extFor(type: string): string {
 
 // Datei lokal ablegen und so zurückgeben, wie der Agent sie am besten liest: Text direkt, Bilder als
 // Bild, alles andere als Pfad.
-async function fileResult(deps: ToolDeps, rawName: string, contentType: string, data: Uint8Array, extra: Record<string, unknown> = {}): Promise<ToolResult> {
+async function fileResult(deps: ToolDeps, rawName: string, contentType: string, data: Uint8Array): Promise<ToolResult> {
   const type = contentType.split(';')[0].trim().toLowerCase() || 'application/octet-stream'
   let name = rawName.replace(/[/\\:]/g, '_')
   if (!/\.[a-z0-9]{1,6}$/i.test(name)) name += extFor(type)
   const path = await deps.saveFile(name, data)
-  const info = { ...extra, name, type, size: data.byteLength, saved_to: path }
+  const info = { name, type, size: data.byteLength, saved_to: path }
   if (type.startsWith('image/') && type !== 'image/svg+xml' && data.byteLength <= MAX_INLINE_IMAGE) {
     return {
       content: [
@@ -479,43 +480,65 @@ interface MailRun {
   limit: number
 }
 
-// Fragt die Konten nacheinander je Postfach (Exchange drosselt bei vielen gleichzeitigen Anfragen)
-// und führt die Treffer zusammen, neueste zuerst.
+// Seiten, die eine Suche je Konto höchstens liest. Sie filtert ungelesen und den genauen Zeitraum
+// erst hier, eine Seite kann dabei ganz wegfallen.
+const MAX_MAIL_PAGES = 5
+
+// Fragt die Konten (je Postfach die Anfragen nacheinander, Exchange drosselt bei vielen gleichzeitigen)
+// und führt die Treffer zusammen, neueste zuerst. Jedes Konto liefert limit + 1 Mails, so ist die
+// jüngste nicht gezeigte bekannt. Beim Auflisten filtert und sortiert Exchange genau nach Eingang,
+// next_until beginnt dann mit der Sekunde dieser Mail (Mails derselben Sekunde kommen ein zweites
+// Mal, keine fehlt). Die Suche sortiert Exchange nach Sendezeit, dort gibt es kein next_until.
 async function runMailQuery(deps: ToolDeps, accountArg: unknown, o: MailRun): Promise<Record<string, unknown>> {
   const { ready, warnings } = mailAccounts(deps, accountArg)
   const errors: string[] = []
-  let full = false
+  const want = o.limit + 1
+  const passes = (m: MailSummary) => (!o.since || m.received >= o.since) && (!o.until || m.received < o.until) && (!o.unreadOnly || m.isRead === false)
   const lists = await pool(ready, 2, async (a) => {
     try {
       const folders = await a.mailFolders().catch(() => [] as MailFolder[])
       const folder = resolveFolder(o.folderArg, folders)
       if (typeof folder === 'string') {
         errors.push(`${label(a)}: ${folder}`)
-        return []
+        return { items: [] }
       }
-      const q: MailQuery = { folder: folder.id, search: o.query, since: o.since, until: o.until, unreadOnly: o.unreadOnly, top: o.limit }
-      // Lehnt Exchange den Zeitraum in der KQL-Suche ab (400), ohne ihn suchen und unten zuschneiden
-      const items = await a.mailQuery(q).catch((e: unknown) => {
+      let q: MailQuery = { folder: folder.id, search: o.query, since: o.since, until: o.until, unreadOnly: o.unreadOnly, top: want }
+      // Lehnt Exchange den Zeitraum in der KQL-Suche ab (400), ohne ihn suchen und hier zuschneiden
+      let page = await a.mailQuery(q).catch((e: unknown) => {
         if (!o.query || !(o.since || o.until) || (e as { status?: number }).status !== 400) throw e
-        return a.mailQuery({ ...q, since: undefined, until: undefined })
+        q = { ...q, since: undefined, until: undefined }
+        return a.mailQuery(q)
       })
-      if (items.length >= o.limit) full = true
       const names = new Map(folders.map((f) => [f.id, f.name]))
-      return items
-        .filter((m) => (!o.since || m.received >= o.since) && (!o.until || m.received < o.until) && (!o.unreadOnly || !m.isRead))
-        .map((m) => ({ m, a, folder: folder.name ?? (m.folderId ? names.get(m.folderId) : undefined) }))
+      const kept: { m: MailSummary; a: McpAccount; folder?: string }[] = []
+      for (let n = 1; ; n++) {
+        for (const m of page.items) if (passes(m)) kept.push({ m, a, folder: folder.name ?? (m.folderId ? names.get(m.folderId) : undefined) })
+        if (kept.length >= want || !page.next || n >= MAX_MAIL_PAGES) break
+        try {
+          page = await a.mailQuery(q, page.next)
+        } catch (e) {
+          // Was schon da ist, bleibt; der Rest gilt als nicht gelesen
+          errors.push(`${label(a)}: ${(e as Error).message}`)
+          return { items: kept, unread: true }
+        }
+      }
+      return { items: kept, unread: kept.length < want && !!page.next }
     } catch (e) {
       errors.push(`${label(a)}: ${(e as Error).message}`)
-      return []
+      return { items: [] }
     }
   })
-  const all = lists.flat().sort((x, y) => y.m.received - x.m.received)
+  const all = lists.flatMap((l) => l.items).sort((x, y) => y.m.received - x.m.received)
   const shown = all.slice(0, o.limit)
-  const more = full || all.length > o.limit
+  const more = all.length > o.limit || lists.some((l) => l.unread)
+  // Liegt die Grenze nicht vor until, käme dieselbe Abfrage noch einmal (mehr als limit Mails in einer Sekunde)
+  const cut = all[o.limit]?.m.received
+  const next = !o.query && cut !== undefined && (o.until === undefined || cut + 1000 < o.until) ? cut + 1000 : undefined
+  if (more && next === undefined) warnings.push(o.query ? 'Es gibt weitere Treffer. Suche enger fassen, z. B. mit weiteren Wörtern, from: oder since und until.' : 'Es gibt weitere Mails, aber keine eindeutige Fortsetzung. until früher setzen.')
   return {
     mails: shown.map(({ m, a, folder }) => formatMailSummary(m, a, folder)),
     more: more || undefined,
-    next_until: more && shown.length ? localIso(shown[shown.length - 1].m.received) : undefined,
+    next_until: next === undefined ? undefined : localIso(next),
     errors: errors.length ? errors : undefined,
     warnings: warnings.length ? warnings : undefined
   }
@@ -1014,7 +1037,7 @@ export function createTools(deps: ToolDeps): ToolDef[] {
       name: 'search_mail',
       title: 'E-Mails durchsuchen',
       description:
-        'Durchsucht die Postfächer serverseitig (Exchange-Suche über Betreff, Text, Absender, Empfänger und Anhangsnamen), Standard alle Ordner, die neuesten Treffer zuerst. query versteht Wörter und KQL, z. B. "Angebot Nord", from:anna@firma.de, to:kunde.de, subject:Rechnung, hasattachments:true. Den vollen Text liefert get_mail.',
+        'Durchsucht die Postfächer serverseitig (Exchange-Suche über Betreff, Text, Absender, Empfänger und Anhangsnamen), Standard alle Ordner, die neuesten Treffer zuerst. query versteht Wörter und KQL, z. B. Angebot Nord, from:anna@firma.de, to:kunde.de, subject:Rechnung, hasattachments:true. Anführungszeichen fallen weg, Phrasen sucht Exchange als einzelne Wörter. Exchange liefert die zuletzt gesendeten Treffer zuerst. Bei more: true die Suche enger fassen. Den vollen Text liefert get_mail.',
       inputSchema: schema(
         {
           query: { type: 'string', description: 'Suchwörter oder KQL' },
@@ -1029,7 +1052,8 @@ export function createTools(deps: ToolDeps): ToolDef[] {
       ),
       run: async (args) => {
         const query = str(args.query)
-        if (!query) throw new ToolError('query fehlt')
+        if (!query?.replace(/["\\]/g, '').trim()) throw new ToolError('query fehlt')
+        if (/:\s*"/.test(query)) throw new ToolError('Feldwerte in Anführungszeichen (subject:"…") gehen nicht. Wörter ohne Anführungszeichen angeben, z. B. subject:Angebot Nord.')
         return runMailQuery(deps, args.account, {
           query,
           folderArg: str(args.folder),

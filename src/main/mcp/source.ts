@@ -117,7 +117,7 @@ export function mcpAccount(acct: AccountService): McpAccount {
     download: (url) => download(acct, url),
     hasMail: () => acct.api.hasMailToken(),
     mailFolders: () => acct.getMailFolders(),
-    mailQuery: (q) => acct.queryMail(q),
+    mailQuery: (q, next) => acct.queryMail(q, next),
     async mail(id) {
       const { bodyType, body, inlineImages: _, ...rest } = await acct.getMail(id, { inlineImages: false })
       return { ...rest, text: bodyType === 'html' ? mailHtmlToText(body) : body.replace(/\r\n?/g, '\n').trim() }

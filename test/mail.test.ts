@@ -160,6 +160,9 @@ test('Outlook als zweiter Weg: Adressen, Ordnernamen und Folgeseiten', () => {
   assert.equal(folderName('graph', 'deleteditems'), 'deleteditems')
   assert.equal(mailPageApi("https://outlook.office.com/api/v2.0/me/MailFolders('Inbox')/messages?$skip=40"), 'outlook')
   assert.equal(mailPageApi('https://outlook.office.com/api/v2.0/me/sendmail'), undefined)
+  // Suche im ganzen Postfach (MCP)
+  assert.equal(mailPageApi('https://graph.microsoft.com/v1.0/me/messages?$search=%22x%22&$skip=25'), 'graph')
+  assert.equal(mailPageApi('https://graph.microsoft.com/v1.0/me/messages/AAMk/send'), undefined)
   assert.equal(mailPageApi('https://outlook.office.com.evil.example/api/v2.0/me/MailFolders/Inbox/messages'), undefined)
 })
 
@@ -193,6 +196,9 @@ test('MCP-Abfrage: Ordner mit Filter und Sortierung, ungelesen immer nach dem Da
   assert.equal(o.pathname, '/api/v2.0/me/MailFolders/SentItems/messages')
   assert.equal(o.searchParams.get('$filter'), 'ReceivedDateTime ge 1900-01-01T00:00:00Z and ReceivedDateTime lt 2026-11-20T10:00:00Z')
   assert.equal(o.searchParams.get('$top'), '5')
+  // Bruchteile von until runden auf, die Mail von 10:00:00 bleibt drin
+  const frac = new URL(mailQueryUrl('graph', { until: Date.parse('2026-11-20T10:00:00.500Z'), top: 5 }))
+  assert.match(frac.searchParams.get('$filter')!, /lt 2026-11-20T10:00:01Z$/)
 })
 
 test('MCP-Suche: ganzes Postfach, KQL mit Zeitraum, ohne $filter und $orderby', () => {
@@ -236,6 +242,11 @@ Zeile 2</pre></div></body></html>`
   assert.equal(
     mailHtmlToText('<p class=MsoNormal>Gr&uuml;&szlig;e<o:p></o:p></p><p class=MsoNormal><o:p>&nbsp;</o:p></p><p class=MsoNormal>Kim<o:p></o:p></p>'),
     'Grüße\n\nKim'
+  )
+  // Outlook: jede Zelle ein eigener Absatz, die Zeile bleibt trotzdem eine Zeile
+  assert.equal(
+    mailHtmlToText('<table><tr><td width=80><p class=MsoNormal>4711<o:p></o:p></p></td><td><p class=MsoNormal>5 St&uuml;ck</p></td></tr></table>'),
+    '4711 | 5 Stück'
   )
   // Gmail und neues Outlook: Leerzeile als <div><br></div>, <br> am Blockende zählt nicht doppelt
   assert.equal(mailHtmlToText('<div>Hallo<br></div><div><br></div><div>Text</div><div>Ende</div>'), 'Hallo\n\nText\nEnde')

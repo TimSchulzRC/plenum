@@ -1341,10 +1341,10 @@ export class AccountService extends EventEmitter<AccountEvents> {
   }
 
   // Für den MCP-Server: Ordner oder ganzes Postfach, neueste zuerst
-  async queryMail(q: MailQuery): Promise<MailSummary[]> {
-    const res = await this.api.mailQuery(q)
+  async queryMail(q: MailQuery, next?: string): Promise<{ items: MailSummary[]; next?: string }> {
+    const res = await this.api.mailQuery(q, next)
     const items: any[] = res?.value ?? []
-    return items.map((m) => mapSummary(m, this.id))
+    return { items: items.map((m) => mapSummary(m, this.id)), next: res?.['@odata.nextLink'] || undefined }
   }
 
   // inlineImages: false lädt keine eingebetteten Bilder (der MCP-Server braucht nur den Text)

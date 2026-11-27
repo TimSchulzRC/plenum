@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTools, decodeCursor, encodeCursor, imageUrls, ToolError, type McpAccount, type McpMail } from '../src/main/mcp/tools.ts'
+import { createTools, decodeCursor, encodeCursor, imageUrls, localIso as localIsoOf, ToolError, type McpAccount, type McpMail } from '../src/main/mcp/tools.ts'
 import { McpProtocol } from '../src/main/mcp/protocol.ts'
 import { McpServer } from '../src/main/mcp/server.ts'
 import { mcpCommand, mcpJsonConfig, mcpReplaceCommand, mcpTomlConfig } from '../src/shared/mcp.ts'
@@ -44,6 +44,8 @@ interface FakeOpts {
   mails?: McpMail[]
   // Wie ein Exchange, das received>= in $search nicht versteht
   rejectKqlRange?: boolean
+  // Folgeseiten scheitern (z. B. Drosselung)
+  failNextPage?: boolean
   folders?: MailFolder[]
 }
 
@@ -104,17 +106,21 @@ function fakeAccount(o: FakeOpts, log: string[] = [], queries: MailQuery[] = [])
     hasMail: () => !!o.mails,
     mailFolders: async () => o.folders ?? [],
     // Wie Exchange: Ordner, Zeitraum, ungelesen; die Suche hier nur über Betreff und Absender
-    async mailQuery(q) {
-      queries.push(q)
+    // Seitenweise wie Graph: next ist die Adresse der Folgeseite mit skip
+    async mailQuery(q, next) {
+      if (!next) queries.push(q)
+      if (next && o.failNextPage) throw Object.assign(new Error('Zu viele Anfragen'), { status: 429 })
       if (o.rejectKqlRange && q.search && (q.since || q.until)) throw Object.assign(new Error('BadRequest'), { status: 400 })
       const words = (q.search ?? '').toLowerCase().split(' ').filter(Boolean)
       const folder = q.folder && (o.folders?.find((f) => f.kind === q.folder)?.id ?? q.folder)
-      return (o.mails ?? [])
+      const list = (o.mails ?? [])
         .filter((m) => !folder || m.folderId === folder)
         .filter((m) => q.search || ((!q.since || m.received >= q.since) && (!q.until || m.received < q.until) && (!q.unreadOnly || !m.isRead)))
         .filter((m) => words.every((w) => `${m.subject} ${m.from?.address}`.toLowerCase().includes(w)))
         .sort((a, b) => b.received - a.received)
-        .slice(0, q.top)
+      const skip = next ? Number(new URL(next).searchParams.get('skip')) : 0
+      const more = skip + q.top < list.length
+      return { items: list.slice(skip, skip + q.top), next: more ? `https://graph.microsoft.com/v1.0/me/messages?skip=${skip + q.top}` : undefined }
     },
     async mail(id) {
       const m = o.mails?.find((x) => x.id === id)
@@ -457,7 +463,8 @@ test('list_mail: Ordner per Name, Standardname oder all, unbekannter Ordner mit 
 })
 
 test('search_mail: ganzes Postfach, Zeitraum genau zugeschnitten', async () => {
-  const { json, cleanup } = setup()
+  const { json, call, cleanup } = setup()
+  assert.match((await call('search_mail', { query: 'subject:"Angebot Nord"' })).content[0].text!, /Feldwerte in Anführungszeichen/)
   const r = await json('search_mail', { query: 'angebot' })
   assert.deepEqual(r.mails.map((m: { message_id: string; folder: string }) => [m.message_id, m.folder]), [
     ['m4', 'Gesendete Elemente'],
@@ -495,6 +502,21 @@ test('read_mail_attachment: Text direkt, mit Pfad', async () => {
   cleanup()
 })
 
+// Werkzeuge mit eigenen Konten, für Fälle, die setup() nicht abdeckt
+function mailCall(accounts: McpAccount[]) {
+  const tools = createTools({ accounts: () => accounts, saveFile: async (n) => n, now: () => NOW })
+  const protocol = new McpProtocol({ name: 'plenum', title: 'Plenum', version: '0.1.0', instructions: 'x' }, tools)
+  return async (name: string, args: Record<string, unknown>) => {
+    const res = (await protocol.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })) as {
+      result: { content: { text: string }[]; isError?: boolean }
+    }
+    assert.ok(!res.result.isError, res.result.content[0].text)
+    return JSON.parse(res.result.content[0].text)
+  }
+}
+
+const ids = (r: { mails: { message_id: string }[] }) => r.mails.map((m) => m.message_id)
+
 test('search_mail: lehnt Exchange den Zeitraum ab, wird ohne gesucht und lokal zugeschnitten', async () => {
   const queries: MailQuery[] = []
   const a = fakeAccount(
@@ -509,12 +531,61 @@ test('search_mail: lehnt Exchange den Zeitraum ab, wird ohne gesucht und lokal z
     [],
     queries
   )
-  const tools = createTools({ accounts: () => [a], saveFile: async (n) => n, now: () => NOW })
-  const protocol = new McpProtocol({ name: 'plenum', title: 'Plenum', version: '0.1.0', instructions: 'x' }, tools)
-  const res = (await protocol.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'search_mail', arguments: { query: 'angebot', since: '2026-11-25' } } })) as {
-    result: { content: { text: string }[]; isError?: boolean }
-  }
-  assert.ok(!res.result.isError, res.result.content[0].text)
-  assert.deepEqual(JSON.parse(res.result.content[0].text).mails.map((m: { message_id: string }) => m.message_id), ['m1'])
+  const r = await mailCall([a])('search_mail', { query: 'angebot', since: '2026-11-25' })
+  assert.deepEqual(ids(r), ['m1'])
   assert.deepEqual(queries.map((q) => !!q.since), [true, false])
+})
+
+test('search_mail: liest weitere Seiten, wenn der Filter eine Seite leert', async () => {
+  const read = Array.from({ length: 12 }, (_, i) => mail(`r${i}`, i + 1, { subject: 'Angebot' }))
+  const a = fakeAccount({ id: 'a1', upn: 'tim@firma.de', chats: [], messages: {}, mails: [...read, mail('u1', 20, { subject: 'Angebot', isRead: false })] })
+  const r = await mailCall([a])('search_mail', { query: 'angebot', unread_only: true, limit: 5 })
+  assert.deepEqual(ids(r), ['u1'])
+  assert.equal(r.more, undefined)
+  // Scheitert eine Folgeseite, bleibt, was schon gefunden war
+  const b = fakeAccount({ id: 'a1', upn: 'tim@firma.de', chats: [], messages: {}, failNextPage: true, mails: [mail('u0', 0.5, { subject: 'Angebot', isRead: false }), ...read] })
+  const partial = await mailCall([b])('search_mail', { query: 'angebot', unread_only: true, limit: 5 })
+  assert.deepEqual(ids(partial), ['u0'])
+  assert.equal(partial.more, true)
+  assert.match(partial.errors[0], /Zu viele Anfragen/)
+  // Mehr Treffer als limit: kein next_until (Exchange sortiert die Suche nach Sendezeit), aber ein Hinweis
+  const many = await mailCall([a])('search_mail', { query: 'angebot', limit: 5 })
+  assert.equal(many.more, true)
+  assert.equal(many.next_until, undefined)
+  assert.match(many.warnings[0], /enger fassen/)
+})
+
+test('list_mail: Mails derselben Sekunde im selben Postfach gehen beim Blättern nicht verloren', async () => {
+  const folders: MailFolder[] = [{ id: 'f-inbox', name: 'Posteingang', kind: 'inbox', unread: 0, total: 3 }]
+  const a = fakeAccount({ id: 'a1', upn: 'tim@firma.de', chats: [], messages: {}, folders, mails: [mail('m1', 1), mail('m2', 2), mail('m3', 2), mail('m4', 4)] })
+  const call = mailCall([a])
+  const seen: string[] = []
+  let until: string | undefined
+  for (let i = 0; i < 6; i++) {
+    const r = await call('list_mail', { limit: 2, until })
+    seen.push(...ids(r))
+    until = r.next_until
+    if (!until) break
+  }
+  assert.deepEqual([...new Set(seen)].sort(), ['m1', 'm2', 'm3', 'm4'])
+  // Mehr Mails in einer Sekunde als limit: kein next_until, das dieselbe Seite wiederholen würde
+  const first = await call('list_mail', { limit: 1, until: localIsoOf(NOW - 1.5 * H) })
+  assert.deepEqual(ids(first), ['m2'])
+  const stuck = await call('list_mail', { limit: 1, until: first.next_until })
+  assert.equal(stuck.next_until, undefined)
+  assert.match(stuck.warnings[0], /until früher setzen/)
+})
+
+test('list_mail: next_until überspringt keine Mail derselben Sekunde aus einem anderen Konto', async () => {
+  const inbox = { folderId: 'f-inbox' }
+  const folders: MailFolder[] = [{ id: 'f-inbox', name: 'Posteingang', kind: 'inbox', unread: 0, total: 2 }]
+  const a = fakeAccount({ id: 'a1', upn: 'tim@firma.de', chats: [], messages: {}, folders, mails: [mail('m1', 1, inbox), mail('m2', 3, inbox)] })
+  const b = fakeAccount({ id: 'b2', upn: 'tim@verein.org', chats: [], messages: {}, folders, mails: [mail('v1', 3, inbox)] })
+  const call = mailCall([a, b])
+  const first = await call('list_mail', { limit: 2 })
+  assert.deepEqual(ids(first), ['m1', 'm2'])
+  assert.equal(first.more, true)
+  const second = await call('list_mail', { limit: 2, until: first.next_until })
+  assert.deepEqual(ids(second).sort(), ['m2', 'v1'])
+  assert.equal(second.more, undefined)
 })

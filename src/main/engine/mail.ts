@@ -69,7 +69,9 @@ export function mailQueryUrl(api: MailApi, q: MailQuery): string {
   } else {
     // Exchange verlangt die Spalte aus $orderby als erste Bedingung im Filter
     const f = [`${p('receivedDateTime')} ge ${isoUtc(q.since ?? Date.UTC(1900, 0, 1))}`]
-    if (q.until) f.push(`${p('receivedDateTime')} lt ${isoUtc(q.until)}`)
+    // Auf die volle Sekunde aufrunden, sonst fiele bei until 12:00:00.5 die Mail von 12:00:00 weg.
+    // Den genauen Schnitt macht der Aufrufer.
+    if (q.until) f.push(`${p('receivedDateTime')} lt ${isoUtc(Math.ceil(q.until / 1000) * 1000)}`)
     if (q.unreadOnly) f.push(`${p('isRead')} eq false`)
     parts.push(`$filter=${encodeURIComponent(f.join(' and '))}`, `$orderby=${p('receivedDateTime')} desc`)
   }
@@ -94,12 +96,13 @@ export function messageActionUrl(api: MailApi, id: string, action = ''): string 
 
 // Folgeseite nur, wenn sie wieder auf Graph bzw. Outlook zeigt: Die Adresse kommt vom Server und
 // bekommt den Token. Der Ordner steht darin als mailFolders('inbox'), wir fragen mit mailFolders/inbox.
+// Ohne Ordner (Suche des MCP-Servers im ganzen Postfach) heißt der Pfad nur …/me/messages.
 export function mailPageApi(url: string | undefined): MailApi | undefined {
   if (!url) return undefined
   try {
     const u = new URL(url)
-    if (u.origin === 'https://graph.microsoft.com' && /^\/v1\.0\/me\/mailFolders(?:\/[^/()]+|\('[^/']+'\))\/messages$/.test(u.pathname)) return 'graph'
-    if (u.origin === 'https://outlook.office.com' && /^\/api\/v2\.0\/me\/mailfolders(?:\/[^/()]+|\('[^/']+'\))\/messages$/i.test(u.pathname)) return 'outlook'
+    if (u.origin === 'https://graph.microsoft.com' && /^\/v1\.0\/me(?:\/mailFolders(?:\/[^/()]+|\('[^/']+'\)))?\/messages$/.test(u.pathname)) return 'graph'
+    if (u.origin === 'https://outlook.office.com' && /^\/api\/v2\.0\/me(?:\/mailfolders(?:\/[^/()]+|\('[^/']+'\)))?\/messages$/i.test(u.pathname)) return 'outlook'
   } catch {
     /* ungültig */
   }
@@ -336,6 +339,12 @@ export function mailHtmlToText(html: string): string {
     .replace(/\s*\n\s*/g, ' ')
     .replace(/[ \t]+/g, ' ')
     .replace(/<img\b[^>]*\balt\s*=\s*"([^"]+)"[^>]*>/gi, ' $1 ')
+  // Absätze direkt in Tabellenzellen (Outlook: <td><p class=MsoNormal>…</p></td>) sind keine
+  // eigenen Zeilen, sonst zerfiele jede Tabellenzeile
+  for (let i = 0; i < 3; i++) {
+    s = s.replace(/(<t[dh]\b[^>]*>)\s*<(?:p|div|span)\b[^>]*>/gi, '$1').replace(/<\/(?:p|div|span)\s*>\s*(<\/t[dh]\s*>)/gi, '$1')
+  }
+  s = s
     .replace(/<\/t[dh]\s*>/gi, ' | ')
     .replace(/<li\b[^>]*>/gi, '\u0001- ')
     .replace(/<hr\b[^>]*>/gi, '\u0001---\u0001')
