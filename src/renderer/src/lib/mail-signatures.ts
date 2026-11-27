@@ -21,29 +21,23 @@ const valid = (v: unknown): MailSignatures | undefined => (v && Array.isArray((v
 export type SignatureStatus = 'loading' | 'done' | 'error'
 
 // Signaturen eines Kontos: gespeicherte Fassung sofort, die aus Outlook sobald geladen
-export function useMailSignatures(accountId: string, enabled = true): { sigs?: MailSignatures; status: SignatureStatus; error?: string; retry: () => void } {
+export function useMailSignatures(accountId: string, enabled = true): { sigs?: MailSignatures; status: SignatureStatus; retry: () => void } {
   const sigs = useStore((s) => valid(s.settings?.mailSignatures?.[accountId]))
   const [status, setStatus] = useState<SignatureStatus>('loading')
-  const [error, setError] = useState<string>()
   const [tick, setTick] = useState(0)
   useEffect(() => {
     if (!enabled) return
     let alive = true
     setStatus('loading')
-    setError(undefined)
     refreshSignatures(accountId).then(
       () => alive && setStatus('done'),
-      (e: unknown) => {
-        if (!alive) return
-        setStatus('error')
-        setError(e instanceof Error ? e.message : String(e))
-      }
+      () => alive && setStatus('error')
     )
     return () => {
       alive = false
     }
   }, [accountId, enabled, tick])
-  return { sigs, status, error, retry: () => setTick((t) => t + 1) }
+  return { sigs, status, retry: () => setTick((t) => t + 1) }
 }
 
 export function findSignature(sigs: MailSignatures | undefined, name: string | null | undefined): OutlookSignature | undefined {

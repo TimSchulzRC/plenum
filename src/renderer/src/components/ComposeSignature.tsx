@@ -73,6 +73,11 @@ export function ComposeSignature({
     const s = findSignature(sigs, name)
     onChange({ ...value, name: s ? s.name : null, html: s ? cleanSignature(s) : '', edited: false, chosen: true })
   }
+  // Änderungen verwerfen. Gewählt ist sie dadurch nicht: Der Standard folgt weiter Outlook.
+  const reset = () => {
+    const s = findSignature(sigs, value?.name)
+    if (value && s) onChange({ ...value, html: cleanSignature(s), edited: false })
+  }
   return (
     <div className="compose-signature">
       <div className="sig-bar">
@@ -101,7 +106,7 @@ export function ComposeSignature({
         {status === 'loading' && <Spinner size="extra-tiny" title="Wird mit Outlook abgeglichen" />}
         <div style={{ flex: 1 }} />
         {value?.edited && current && (
-          <Button size="small" appearance="transparent" onClick={() => pick(current)}>
+          <Button size="small" appearance="transparent" onClick={reset}>
             Zurücksetzen
           </Button>
         )}

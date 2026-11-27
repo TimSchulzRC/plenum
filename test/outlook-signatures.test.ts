@@ -24,9 +24,12 @@ test('Outlook-Signaturen: Liste und Standards, Namen ohne Rücksicht auf Groß- 
   assert.equal(parseSignatureList([{ name: 'roaming_signature_list', value: 'Kurz' }, { name: 'roaming_new_signature', value: 'Weg' }]).newDefault, undefined)
   // Ohne Liste wenigstens die Standards
   assert.deepEqual(parseSignatureList([{ name: 'roaming_new_signature', value: 'Kurz' }]).names, ['Kurz'])
-  // Unerwartete Antworten
-  assert.deepEqual(parseSignatureList({}), { names: [], newDefault: undefined, replyDefault: undefined })
+  // Leere Antwort heißt keine Signatur, eine unerwartete ist ein Fehler (die gespeicherte Fassung bleibt)
+  assert.deepEqual(parseSignatureList([]), { names: [], newDefault: undefined, replyDefault: undefined })
   assert.deepEqual(parseSignatureList([null, 3, 'x']), { names: [], newDefault: undefined, replyDefault: undefined })
+  assert.throws(() => parseSignatureList({}), /Unerwartete Antwort/)
+  assert.throws(() => parseSignatureList('<html>Anmelden</html>'), /Unerwartete Antwort/)
+  assert.throws(() => parseSignatureBodies({ value: [] }, ['Kurz']), /Unerwartete Antwort/)
 })
 
 test('Outlook-Signaturen: Texte zu den Namen, ohne Text keine Signatur', () => {

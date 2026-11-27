@@ -2189,27 +2189,39 @@ button {
   border-bottom: 0;
 }
 .mail-compose.docked .compose-fields {
+  flex-shrink: 0;
   padding: 10px 16px 2px;
   gap: 6px;
   overflow-y: auto;
 }
 .mail-compose.docked .compose-body {
-  flex: 1 1 auto;
+  /* Schrumpft nie unter das Textfeld, eng wird es nur für die Signatur */
+  flex: 0 0 auto;
   min-height: 0;
   padding: 6px 16px 0;
 }
+/* Kleiner bei niedrigem Fenster: auch bei der Mindesthöhe der App passen Text, Signatur und Senden in
+   die 55 % unter dem Verlauf */
 .mail-compose.docked .compose-text textarea {
-  min-height: 96px;
-  height: 140px;
+  min-height: 64px;
+  height: clamp(64px, 17vh, 140px);
   resize: vertical;
 }
 /* Signatur unter dem Text: Leiste mit Auswahl, darunter die Signatur, wie sie rausgeht (bearbeitbar) */
+/* Wird es eng, schrumpft die Signatur und scrollt, Textfeld und Leiste bleiben */
 .compose-signature {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   padding: 2px 16px 0;
   font-size: 12.5px;
   color: var(--fg-3);
+}
+/* Leiste und mindestens 40px der Signatur bleiben sichtbar */
+.compose-signature:has(.sig-edit) {
+  min-height: 72px;
 }
 .mail-compose:not(.docked) .compose-signature {
   padding: 0 20px 12px;
@@ -2218,6 +2230,7 @@ button {
   order: 2;
 }
 .sig-bar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2236,6 +2249,8 @@ button {
 }
 /* Weiß wie beim Empfänger. contain: Stile der Signatur bleiben im Kasten. */
 .sig-edit {
+  flex: 0 1 auto;
+  min-height: 40px;
   max-height: 180px;
   overflow: auto;
   contain: paint;

@@ -17,7 +17,12 @@ interface Setting {
   secondaryKey?: unknown
   nameBase64Encoded?: unknown
 }
-const settings = (res: unknown): Setting[] => (Array.isArray(res) ? res.filter((x): x is Setting => !!x && typeof x === 'object') : [])
+// OWS antwortet mit einem Array. Alles andere (Anmeldeseite, Fehlerobjekt) ist keine leere Liste, sonst
+// überschriebe es die zuletzt geladene Fassung.
+function settings(res: unknown): Setting[] {
+  if (!Array.isArray(res)) throw new Error('Unerwartete Antwort von Outlook')
+  return res.filter((x): x is Setting => !!x && typeof x === 'object')
+}
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 // Outlook schreibt die Namen der Einstellungen mal klein, mal groß
 const key = (name: string): string => name.trim().toLowerCase()

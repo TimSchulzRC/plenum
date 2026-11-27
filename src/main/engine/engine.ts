@@ -25,6 +25,8 @@ const LOGIN_HOSTS = [
 
 // Markiert Aufrufe aus request(), der Header selbst geht nicht ins Netz.
 const OWN_REQUEST_HEADER = 'x-te-own-request'
+// Eigene Anfrage ohne Vorlage (bare): ihre Header nicht als Vorlage für spätere Anfragen merken
+const BARE_REQUEST_HEADER = 'x-te-bare-request'
 const TOKEN_HEADERS = new Set(['authorization', 'authentication', 'x-skypetoken'])
 
 const MS_HOSTS = [
@@ -108,8 +110,10 @@ export class Engine extends EventEmitter<EngineEvents> {
           for (const k of Object.keys(details.requestHeaders)) if (TOKEN_HEADERS.has(k.toLowerCase())) delete details.requestHeaders[k]
         }
       }
+      const bare = Object.keys(details.requestHeaders).find((k) => k.toLowerCase() === BARE_REQUEST_HEADER)
+      if (bare) delete details.requestHeaders[bare]
       try {
-        this.tokens.capture(details.url, details.method, details.requestHeaders as Record<string, string>)
+        if (!bare) this.tokens.capture(details.url, details.method, details.requestHeaders as Record<string, string>)
       } catch (e) {
         log.warn('capture failed', e)
       }
@@ -431,6 +435,7 @@ export class Engine extends EventEmitter<EngineEvents> {
       headers['referer'] = origin + '/'
     }
     headers[OWN_REQUEST_HEADER] = '1'
+    if (init.bare) headers[BARE_REQUEST_HEADER] = '1'
     // Graph und Outlook antworten mit Access-Control-Allow-Origin: *. Mit Cookies lehnt Chromium das
     // ab (net::ERR_FAILED), und sie brauchen nur den Bearer-Token.
     const credentials = init.bare || family === 'graph' || family === 'outlook' ? 'omit' : 'include'
