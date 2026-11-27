@@ -42,6 +42,8 @@ interface FakeOpts {
   messages: Record<string, Message[]>
   calls?: CallLogEntry[]
   mails?: McpMail[]
+  // Wie ein Exchange, das received>= in $search nicht versteht
+  rejectKqlRange?: boolean
   folders?: MailFolder[]
 }
 
@@ -104,6 +106,7 @@ function fakeAccount(o: FakeOpts, log: string[] = [], queries: MailQuery[] = [])
     // Wie Exchange: Ordner, Zeitraum, ungelesen; die Suche hier nur über Betreff und Absender
     async mailQuery(q) {
       queries.push(q)
+      if (o.rejectKqlRange && q.search && (q.since || q.until)) throw Object.assign(new Error('BadRequest'), { status: 400 })
       const words = (q.search ?? '').toLowerCase().split(' ').filter(Boolean)
       const folder = q.folder && (o.folders?.find((f) => f.kind === q.folder)?.id ?? q.folder)
       return (o.mails ?? [])
@@ -490,4 +493,28 @@ test('read_mail_attachment: Text direkt, mit Pfad', async () => {
   assert.equal(info.text, 'Pos;Menge\n1;5')
   assert.equal(info.saved_to, join(dir, 'Bestellung.csv'))
   cleanup()
+})
+
+test('search_mail: lehnt Exchange den Zeitraum ab, wird ohne gesucht und lokal zugeschnitten', async () => {
+  const queries: MailQuery[] = []
+  const a = fakeAccount(
+    {
+      id: 'a1',
+      upn: 'tim@firma.de',
+      chats: [],
+      messages: {},
+      rejectKqlRange: true,
+      mails: [mail('m1', 1, { subject: 'Angebot neu' }), mail('m2', 48, { subject: 'Angebot alt' })]
+    },
+    [],
+    queries
+  )
+  const tools = createTools({ accounts: () => [a], saveFile: async (n) => n, now: () => NOW })
+  const protocol = new McpProtocol({ name: 'plenum', title: 'Plenum', version: '0.1.0', instructions: 'x' }, tools)
+  const res = (await protocol.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'search_mail', arguments: { query: 'angebot', since: '2026-11-25' } } })) as {
+    result: { content: { text: string }[]; isError?: boolean }
+  }
+  assert.ok(!res.result.isError, res.result.content[0].text)
+  assert.deepEqual(JSON.parse(res.result.content[0].text).mails.map((m: { message_id: string }) => m.message_id), ['m1'])
+  assert.deepEqual(queries.map((q) => !!q.since), [true, false])
 })

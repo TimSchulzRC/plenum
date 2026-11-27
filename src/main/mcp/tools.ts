@@ -493,7 +493,12 @@ async function runMailQuery(deps: ToolDeps, accountArg: unknown, o: MailRun): Pr
         errors.push(`${label(a)}: ${folder}`)
         return []
       }
-      const items = await a.mailQuery({ folder: folder.id, search: o.query, since: o.since, until: o.until, unreadOnly: o.unreadOnly, top: o.limit })
+      const q: MailQuery = { folder: folder.id, search: o.query, since: o.since, until: o.until, unreadOnly: o.unreadOnly, top: o.limit }
+      // Lehnt Exchange den Zeitraum in der KQL-Suche ab (400), ohne ihn suchen und unten zuschneiden
+      const items = await a.mailQuery(q).catch((e: unknown) => {
+        if (!o.query || !(o.since || o.until) || (e as { status?: number }).status !== 400) throw e
+        return a.mailQuery({ ...q, since: undefined, until: undefined })
+      })
       if (items.length >= o.limit) full = true
       const names = new Map(folders.map((f) => [f.id, f.name]))
       return items
