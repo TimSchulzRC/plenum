@@ -182,10 +182,14 @@ export function MailView(): JSX.Element {
         if (old && f.error) merged = old.items.length ? old : f
         // Die erste Seite ersetzt die alte. Was „mehr laden“ geholt hat, bleibt dahinter stehen, solange es
         // älter ist als die neue erste Seite. Ohne Folgeseite ist das der ganze Ordner, dann nichts.
+        // Endet die neue erste Seite woanders als die alte (neue Mails haben Zeilen nach hinten geschoben),
+        // klaffte zwischen ihr und den älteren eine Lücke: dann von der neuen ersten Seite aus weiterblättern.
         else if (old?.older?.length && f.next) {
-          const oldest = Math.min(...f.items.map((i) => i.received))
-          const keep = old.older.filter((i) => i.received < oldest && !f.items.some((x) => x.id === i.id))
-          merged = keep.length ? { ...f, items: [...f.items, ...keep], older: keep, next: old.next } : f
+          const first = old.items.filter((i) => !old.older?.some((x) => x.id === i.id))
+          if (first.at(-1)?.id === f.items.at(-1)?.id) {
+            const keep = old.older.filter((i) => !f.items.some((x) => x.id === i.id))
+            merged = { ...f, items: [...f.items, ...keep], older: keep, next: old.next }
+          }
         }
         return old ? list.map((x) => (x === old ? merged : x)) : [...list, merged]
       })
@@ -318,14 +322,14 @@ export function MailView(): JSX.Element {
   const patchItem = (m: Open, patch: Partial<MailSummary>, pending = false) => {
     const settle = noteMailChange(m.accountId, m.id, { patch }, pending)
     const fn = (items: MailSummary[]) => items.map((i) => (i.id === m.id ? { ...i, ...patch } : i))
-    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items) })))
+    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items), older: s.older && fn(s.older) })))
     return settle
   }
 
   const removeItem = (m: Open) => {
     noteMailChange(m.accountId, m.id, { deleted: true })
     const fn = (items: MailSummary[]) => items.filter((i) => i.id !== m.id)
-    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items) })))
+    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items), older: s.older && fn(s.older) })))
   }
 
   // Nach Senden oder Löschen: Gesendete bzw. Gelöschte neu laden, gleich, wenn der Ordner jetzt offen ist
@@ -367,7 +371,11 @@ export function MailView(): JSX.Element {
           patchItem(m, { isRead: false })
           bumpUnread(m.accountId, 1)
         })
-        .finally(() => done.forEach((f) => f()))
+        .finally(() => {
+          done.forEach((f) => f())
+          // Jetzt kennt der Server die Änderung: Zahlen der Ordner frisch holen
+          loadFolders(true)
+        })
     }
   }
 

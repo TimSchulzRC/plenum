@@ -17,8 +17,8 @@ const background = new Map<string, object>()
 // Servers, auch wenn man die Mail inzwischen anderswo (Outlook) wieder geändert hat.
 type Change = { patch?: Partial<MailSummary>; deleted?: boolean; settled: number }
 const changes = new Map<string, Change>()
-// Ungelesen-Zahlen, die die App selbst angepasst hat, je Konto und Ordner
-type Bump = { delta: number; settled: number }
+// Ungelesen-Zahlen, die die App selbst angepasst hat, je Konto: welche Ordner und bis wann
+type Bump = { folders: Set<string>; settled: number }
 const bumps = new Map<string, Bump[]>()
 const KEEP = 120_000
 
@@ -43,11 +43,17 @@ function withChanges(accountId: string, items: MailSummary[], started: number): 
 
 const folderKey = (f: MailFolder) => (f.kind === 'inbox' ? 'inbox' : f.id)
 
+// Antwort auf eine Anfrage, die vor dem Abschluss einer eigenen Anpassung begann: Ob die Zahl die
+// Änderung schon enthält, weiß man nicht. Dann bleibt die angepasste Zahl, den Stand des Servers holt die
+// Ansicht nach dem Abschluss neu.
 function withBumps(accountId: string, list: MailFolder[], started: number): MailFolder[] {
   prune(Date.now())
+  const open = new Set((bumps.get(accountId) ?? []).filter((b) => started < b.settled).flatMap((b) => [...b.folders]))
+  if (!open.size) return list
+  const mine = folders.peek(accountId)
   return list.map((f) => {
-    const delta = (bumps.get(`${accountId}|${folderKey(f)}`) ?? []).filter((b) => started < b.settled).reduce((n, b) => n + b.delta, 0)
-    return delta ? { ...f, unread: Math.max(0, f.unread + delta) } : f
+    const cur = open.has(folderKey(f)) ? mine?.find((x) => x.id === f.id) : undefined
+    return cur ? { ...f, unread: cur.unread } : f
   })
 }
 
@@ -103,7 +109,9 @@ export function warmMail(accountIds: string[]): void {
 export function noteMailChange(accountId: string, id: string, change: { patch: Partial<MailSummary> } | { deleted: true }, pending = false): () => void {
   const c: Change = { ...change, settled: pending ? Infinity : Date.now() }
   changes.set(`${accountId}|${id}`, c)
-  for (const k of lists.keys()) if (k.startsWith(`${accountId}|`)) lists.update(k, (p) => ({ ...p, items: withChanges(accountId, p.items, -Infinity) }))
+  // Nur diese Mail: Andere hat der Server inzwischen womöglich anders gemeldet
+  const apply = (items: MailSummary[]) => items.flatMap((i) => (i.id !== id ? [i] : 'deleted' in change ? [] : [{ ...i, ...change.patch }]))
+  for (const k of lists.keys()) if (k.startsWith(`${accountId}|`)) lists.update(k, (p) => ({ ...p, items: apply(p.items) }))
   return () => {
     c.settled = Date.now()
   }
@@ -112,9 +120,8 @@ export function noteMailChange(accountId: string, id: string, change: { patch: P
 // Ungelesen-Zahl eines Ordners selbst angepasst (folderId wie in der Liste, Posteingang 'inbox'): auch im
 // Speicher und in Antworten, die vor dem Abschluss beginnen
 export function noteUnreadBump(accountId: string, folderId: string, delta: number, pending = false): () => void {
-  const b: Bump = { delta, settled: pending ? Infinity : Date.now() }
-  const k = `${accountId}|${folderId}`
-  bumps.set(k, [...(bumps.get(k) ?? []), b])
+  const b: Bump = { folders: new Set([folderId]), settled: pending ? Infinity : Date.now() }
+  bumps.set(accountId, [...(bumps.get(accountId) ?? []), b])
   folders.update(accountId, (list) => list.map((f) => (folderKey(f) === folderId ? { ...f, unread: Math.max(0, f.unread + delta) } : f)))
   return () => {
     b.settled = Date.now()
