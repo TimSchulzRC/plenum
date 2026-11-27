@@ -14,6 +14,7 @@ import { currentBundlePath, renameBundleAfterQuit, Updater } from './updater'
 import { log } from './log'
 import { migrateLegacyUserData, renamedBundlePath } from './legacy-data'
 import { LiveNotifications } from './live-notifications'
+import { refreshNotificationIcon } from './notification-icon'
 import { appVariant, dataName, displayName, legacyDataNames } from './variant'
 import { analytics } from './analytics'
 import { setupCrashReporting, setupUiAnalytics, trackApiCall, trackApiFailure, trackFocus, usageContext, watchAccount } from './usage'
@@ -652,6 +653,7 @@ void app.whenReady().then(() => {
   // zeigen Dock, App-Umschalter und Über-Fenster. Erzeugt von `pnpm run icons`.
   // PR-Builds bringen das Dev-Icon im Bundle mit.
   if (variant === 'dev' && !app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon-dev.png'))
+  refreshNotificationIcon()
   settings = store.loadSettings()
   nativeTheme.themeSource = settings.theme
   const launch = analytics.init({ variant, dynamic: () => ({ account_count: accounts.size }) })
