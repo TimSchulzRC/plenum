@@ -2518,6 +2518,18 @@ button {
   vertical-align: bottom;
   margin: 2px 0;
 }
+.composer-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 12px 6px;
+}
+.composer-files .file-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--fg-3);
+}
 .composer.drop {
   outline: 2px dashed var(--brand-fg);
   outline-offset: -2px;

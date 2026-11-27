@@ -8,7 +8,7 @@ import { cacheKey, fetchHorizons, fetchMessages, horizonCache, messageCache, rec
 import { readReceipt } from '../lib/receipts'
 import { personName, useStore } from '../store'
 import { AccountChip, ChatAvatar, PersonAvatar, presenceLabel } from './Avatars'
-import { Composer, imageFiles, type ComposerHandle, type SendPayload } from './Composer'
+import { Composer, type ComposerHandle, type SendPayload } from './Composer'
 import { MessageItem } from './MessageItem'
 
 function merge(prev: Message[], next: Message[]): Message[] {
@@ -225,6 +225,8 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
 
   const send = async (p: SendPayload) => {
     if (editing) {
+      // Teams hängt Dateien nur an neue Nachrichten
+      if (p.files.length) throw new Error('Beim Bearbeiten lassen sich keine Dateien anhängen. Schick sie in einer neuen Nachricht.')
       await api.editMessage(accountId, chat.id, editing.id, p.html)
       setEditing(null)
       void reload()
@@ -244,13 +246,13 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
       text: p.text,
       importance: p.importance,
       reactions: [],
-      attachments: [],
+      attachments: p.files.map((f) => ({ kind: 'file', name: f.name, size: f.data.byteLength })),
       pending: true
     }
     stick.current = true
     setMsgs((prev) => [...prev, temp])
     try {
-      const real = await api.sendMessage(accountId, chat.id, p.html, { importance: p.importance })
+      const real = await api.sendMessage(accountId, chat.id, p.html, { importance: p.importance, files: p.files })
       setMsgs((prev) => merge(prev.filter((m) => m.id !== temp.id), [real]))
     } catch (e) {
       // Der Composer bekommt den Text zurück. Bliebe die Blase stehen, gäbe es beim erneuten Senden zwei.
@@ -336,7 +338,7 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
   return (
     <div
       className="main-pane"
-      // Bilder, die irgendwo im Chat abgelegt werden, landen im Eingabefeld
+      // Dateien, die irgendwo im Chat abgelegt werden, landen im Eingabefeld
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes('Files')) return
         e.preventDefault()
@@ -345,9 +347,7 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
       onDrop={(e) => {
         if (!e.dataTransfer.types.includes('Files')) return
         e.preventDefault()
-        const files = imageFiles(e.dataTransfer.files)
-        if (files.length) composer.current?.addImages(files)
-        else alert('Hier lassen sich nur Bilder (PNG, JPEG, GIF, WebP) ablegen.')
+        composer.current?.addFiles([...e.dataTransfer.files])
       }}
     >
       <div className="pane-header">

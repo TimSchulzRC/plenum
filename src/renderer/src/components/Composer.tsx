@@ -1,5 +1,8 @@
 import { Popover, PopoverSurface, PopoverTrigger, Tooltip } from '@fluentui/react-components'
 import {
+  Attach20Regular,
+  Dismiss12Regular,
+  Document20Regular,
   Emoji20Regular,
   Send20Filled,
   Send20Regular,
@@ -12,14 +15,16 @@ import {
   TextBulletListLtr20Regular
 } from '@fluentui/react-icons'
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
-import type { Message } from '@shared/types'
+import type { ChatFile, Message } from '@shared/types'
 import { EMOJI_PICKER } from '../lib/html'
+import { fileSize } from '../lib/mail'
 
 export interface ComposerHandle {
   focus(): void
   insertText(t: string): void
   setContent(html: string): void
-  addImages(files: File[], at?: { x: number; y: number }): void
+  // Bilder landen im Text, alle anderen Dateien als Anhang
+  addFiles(files: File[], at?: { x: number; y: number }): void
 }
 
 export interface SendPayload {
@@ -27,6 +32,7 @@ export interface SendPayload {
   text: string
   subject?: string
   importance?: 'normal' | 'high' | 'urgent'
+  files: ChatFile[]
 }
 
 interface Props {
@@ -49,18 +55,24 @@ function escapeHtml(s: string): string {
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'])
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024
 
-export function imageFiles(list: FileList | null | undefined): File[] {
-  return [...(list ?? [])].filter((f) => IMAGE_TYPES.has(f.type))
-}
+// Teams selbst lässt viel größere Dateien zu. Die Bytes gehen hier aber einmal komplett durch den
+// Speicher und über IPC, darum eine Grenze, die das noch verträgt.
+const MAX_FILE_BYTES = 250 * 1024 * 1024
 
-// Bilder aus der Zwischenablage nur nehmen, wenn sie das Kopierte selbst sind. Word und Excel legen
-// neben dem Text ein Bild der Auswahl ab, dann soll der Text ankommen.
-function clipboardImages(data: DataTransfer): File[] {
-  const files = imageFiles(data.files)
-  if (files.length === 0) return []
-  if (data.types.includes('text/rtf')) return []
+type PendingFile = ChatFile & { key: number; size: number }
+
+const isImage = (f: File) => IMAGE_TYPES.has(f.type)
+
+// Dateien aus der Zwischenablage. Bilder nur, wenn sie das Kopierte selbst sind: Word und Excel legen
+// neben dem Text ein Bild der Auswahl ab, dann soll der Text ankommen. Andere Dateien (aus dem
+// Finder kopiert) kommen immer als Anhang.
+function clipboardFiles(data: DataTransfer): File[] {
+  const files = [...data.files]
+  const others = files.filter((f) => !isImage(f))
+  const images = files.filter(isImage)
+  if (images.length === 0 || data.types.includes('text/rtf')) return others
   const html = data.getData('text/html')
-  if (html && !/<img\b/i.test(html)) return []
+  if (html && !/<img\b/i.test(html)) return others
   return files
 }
 
@@ -118,6 +130,15 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [sending, setSending] = useState(false)
   const [showFormat, setShowFormat] = useState(false)
   const [dropping, setDropping] = useState(false)
+  const [files, setFilesState] = useState<PendingFile[]>([])
+  // Senden liest die Anhänge direkt nach dem Einlesen, bevor React neu gezeichnet hat
+  const filesRef = useRef<PendingFile[]>([])
+  const setFiles = (next: PendingFile[] | ((cur: PendingFile[]) => PendingFile[])) => {
+    filesRef.current = typeof next === 'function' ? next(filesRef.current) : next
+    setFilesState(filesRef.current)
+  }
+  const picker = useRef<HTMLInputElement>(null)
+  const fileKey = useRef(0)
   const lastTyping = useRef(0)
   // Bilder werden erst gelesen, dann eingefügt. Enter direkt danach wartet darauf.
   const inserting = useRef<Promise<void>>(Promise.resolve())
@@ -127,6 +148,33 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const addImages = (files: File[], at?: { x: number; y: number }) => {
     const draft = draftId.current
     inserting.current = inserting.current.then(() => insertImages(files, draft, at)).catch((e: Error) => alert(`Bild konnte nicht eingefügt werden: ${e.message}`))
+  }
+
+  // Dateien als Anhang einlesen. Senden wartet darauf wie auf eingefügte Bilder.
+  const attachFiles = (list: File[]) => {
+    if (disabled || list.length === 0) return
+    const draft = draftId.current
+    const tooBig = list.filter((f) => f.size > MAX_FILE_BYTES)
+    if (tooBig.length) alert(`${tooBig.map((f) => f.name).join(', ')}: Dateien dürfen hier höchstens 250 MB groß sein.`)
+    const empty = list.filter((f) => f.size === 0)
+    if (empty.length) alert(`${empty.map((f) => f.name).join(', ')}: Die Datei ist leer.`)
+    const ok = list.filter((f) => f.size > 0 && f.size <= MAX_FILE_BYTES)
+    if (ok.length === 0) return
+    inserting.current = inserting.current
+      .then(async () => {
+        const read = await Promise.all(
+          ok.map(async (f) => ({ key: ++fileKey.current, name: f.name || 'Datei', contentType: f.type || 'application/octet-stream', size: f.size, data: new Uint8Array(await f.arrayBuffer()) }))
+        )
+        if (draft !== draftId.current) return
+        setFiles((cur) => [...cur, ...read])
+      })
+      .catch((e: Error) => alert(`Datei konnte nicht angehängt werden: ${e.message}`))
+  }
+
+  const addFiles = (list: File[], at?: { x: number; y: number }) => {
+    const images = list.filter(isImage)
+    if (images.length) addImages(images, at)
+    attachFiles(list.filter((f) => !isImage(f)))
   }
 
   // Bilder an der Schreibmarke einfügen, bei Drag & Drop an der Stelle, wo sie abgelegt wurden
@@ -169,6 +217,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       if (!el) return
       draftId.current++
       el.innerHTML = html
+      setFiles([])
       setEmpty(el.innerText.trim() === '')
       el.focus()
       const range = document.createRange()
@@ -178,7 +227,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       sel?.removeAllRanges()
       sel?.addRange(range)
     },
-    addImages
+    addFiles
   }))
 
   const send = async () => {
@@ -188,8 +237,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     const el = editor.current
     if (!el || sending) return
     const text = el.innerText.trim()
-    if (!text && !el.querySelector('img')) return
-    let html = normalizeHtml(el)
+    const attached = filesRef.current
+    if (!text && !el.querySelector('img') && attached.length === 0) return
+    let html = text || el.querySelector('img') ? normalizeHtml(el) : ''
     if (replyTo) {
       const preview = escapeHtml(replyTo.text.slice(0, 200))
       html =
@@ -205,14 +255,22 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     el.innerHTML = ''
     setEmpty(true)
     setSubject('')
+    setFiles([])
     try {
-      await onSend({ html, text, subject: withSubject && showFormat && draftSubject.trim() ? draftSubject.trim() : undefined, importance: important ? 'high' : undefined })
+      await onSend({
+        html,
+        text,
+        subject: withSubject && showFormat && draftSubject.trim() ? draftSubject.trim() : undefined,
+        importance: important ? 'high' : undefined,
+        files: attached.map(({ name, contentType, data }) => ({ name, contentType, data }))
+      })
       setImportant(false)
       onCancelReply?.()
     } catch (e) {
       // Entwurf zurückholen, vor dem, was inzwischen getippt wurde
       const typed = el.innerText.trim() || el.querySelector('img') ? el.innerHTML : ''
       el.innerHTML = typed ? `${draft}<br>${typed}` : draft
+      setFiles((cur) => [...attached, ...cur])
       setEmpty(false)
       setSubject((s) => s || draftSubject)
       alert(`Nachricht konnte nicht gesendet werden: ${(e as Error).message}`)
@@ -240,9 +298,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           if (!e.dataTransfer.types.includes('Files')) return
           e.preventDefault()
           e.stopPropagation()
-          const files = imageFiles(e.dataTransfer.files)
-          if (files.length) addImages(files, { x: e.clientX, y: e.clientY })
-          else alert('Hier lassen sich nur Bilder (PNG, JPEG, GIF, WebP) ablegen.')
+          addFiles([...e.dataTransfer.files], { x: e.clientX, y: e.clientY })
         }}
       >
         {replyTo && (
@@ -296,15 +352,31 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           }}
           onPaste={(e) => {
             e.preventDefault()
-            const images = clipboardImages(e.clipboardData)
-            if (images.length) {
-              addImages(images)
+            const pasted = clipboardFiles(e.clipboardData)
+            if (pasted.length) {
+              addFiles(pasted)
               return
             }
             const text = e.clipboardData.getData('text/plain')
             document.execCommand('insertText', false, text)
           }}
         />
+        {files.length > 0 && (
+          <div className="composer-files">
+            {files.map((f) => (
+              <span key={f.key} className="mail-attachment chip-file">
+                <Document20Regular className="file-icon" />
+                <span className="att-name" title={f.name}>
+                  {f.name}
+                </span>
+                <span className="att-size">{fileSize(f.size)}</span>
+                <button type="button" className="icon-btn" title="Entfernen" onClick={() => setFiles((cur) => cur.filter((x) => x.key !== f.key))}>
+                  <Dismiss12Regular />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="tools">
           <Tooltip content="Formatieren" relationship="label">
             <button className={`icon-btn ${showFormat ? 'active' : ''}`} onClick={() => setShowFormat(!showFormat)}>
@@ -348,6 +420,22 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               </div>
             </PopoverSurface>
           </Popover>
+          <Tooltip content="Datei anhängen" relationship="label">
+            <button className="icon-btn" disabled={disabled} onClick={() => picker.current?.click()}>
+              <Attach20Regular />
+            </button>
+          </Tooltip>
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              addFiles([...(e.currentTarget.files ?? [])])
+              e.currentTarget.value = ''
+              editor.current?.focus()
+            }}
+          />
           <Tooltip content="Als wichtig markieren" relationship="label">
             <button className={`icon-btn ${important ? 'active' : ''}`} onClick={() => setImportant(!important)} style={important ? { color: 'var(--danger-fg)' } : undefined}>
               <Important20Regular />
@@ -361,8 +449,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               </button>
             </Tooltip>
           )}
-          <button className="send-btn" disabled={empty || sending || disabled} onClick={() => void send()} title="Senden (Eingabetaste)">
-            {empty ? <Send20Regular /> : <Send20Filled />}
+          <button className="send-btn" disabled={(empty && files.length === 0) || sending || disabled} onClick={() => void send()} title="Senden (Eingabetaste)">
+            {empty && files.length === 0 ? <Send20Regular /> : <Send20Filled />}
           </button>
         </div>
       </div>

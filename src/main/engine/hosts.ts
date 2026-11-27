@@ -18,6 +18,18 @@ export function mayReceiveTokens(rawUrl: string): boolean {
   return !!h && TOKEN_HOSTS.test(h)
 }
 
+// Ein Bearer-Token darf außerdem genau an die Origin gehen, für die er ausgestellt ist (aud), etwa die
+// eigene SharePoint-Site. aud ist dann eine URL, keine App-ID.
+export function isTokenAudience(aud: string | undefined, rawUrl: string): boolean {
+  if (!aud || !hostOf(rawUrl) || !/^https:\/\//i.test(aud)) return false
+  try {
+    const a = new URL(aud)
+    return a.pathname.replace(/\/+$/, '') === '' && a.origin === new URL(rawUrl).origin
+  } catch {
+    return false
+  }
+}
+
 // Links, die die Teams-Web-App selbst öffnen kann (Besprechungen, Chats).
 const TEAMS_HOSTS = /(^|\.)teams\.(microsoft\.com|cloud\.microsoft|live\.com|microsoft\.us)$/
 

@@ -157,6 +157,23 @@ export class TeamsApi {
     return uploadAmsImage((url, init) => this.json('ams', url, init), skype, conversationId, data, mime)
   }
 
+  // ---------- Dateien in OneDrive/SharePoint (Anhänge an Chatnachrichten) ----------
+  // Eigene Einstellungen im Chat-Dienst, darin personalFileSite (OneDrive-Adresse)
+  myProperties(): Promise<any> {
+    return this.json('chatsvc', this.chatsvc('/v1/users/ME/properties'))
+  }
+
+  // Aufruf an eine SharePoint-Site mit dem Token genau dieser Site
+  async site<T = any>(url: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<T> {
+    const token = await this.engine.sharepointToken(new URL(url).origin)
+    return this.json<T>('sharepoint', url, { ...init, headers: { ...(init.headers ?? {}), authorization: `Bearer ${token}` } })
+  }
+
+  // Teil einer Upload-Session: Die Adresse ist vorsigniert und bekommt keinen Token
+  uploadChunk(url: string, body: Uint8Array, headers: Record<string, string>): Promise<any> {
+    return this.json('sharepoint', url, { method: 'PUT', body, headers })
+  }
+
   // ---------- Chat-Service-Aggregator (Teams, Kanäle, Chats) ----------
   teamsAndChats(): Promise<any> {
     return this.json(
