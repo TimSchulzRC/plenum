@@ -551,11 +551,19 @@ export function parseMailDate(raw: string): number | undefined {
   let year: number
   let month: number | undefined
   let day: number
-  const num = t.match(/\b(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})\b/) ?? t.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/)
+  const num = t.match(/\b(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})\b/)
+  // Mit Schrägstrich schreibt Outlook in den USA Monat/Tag, in Großbritannien Tag/Monat. Nur wenn
+  // eine Zahl über 12 liegt, ist klar, welche der Tag ist. Sonst bleibt der Text des Kopfes stehen.
+  const slash = num ? null : t.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})\b/)
   if (num) {
     day = +num[1]
     month = +num[2] - 1
     year = +num[3] < 100 ? 2000 + +num[3] : +num[3]
+  } else if (slash) {
+    const [a, b] = [+slash[1], +slash[2]]
+    if (a <= 12 && b <= 12 && a !== b) return undefined
+    ;[day, month] = a > 12 ? [a, b - 1] : [b, a - 1]
+    year = +slash[3] < 100 ? 2000 + +slash[3] : +slash[3]
   } else {
     const y = t.match(/\b((?:19|20)\d{2})\b/)
     if (!y) return undefined
@@ -585,12 +593,13 @@ export function parseMailDate(raw: string): number | undefined {
 
 const tokens = (t?: string) => new Set((t ?? '').toLowerCase().match(/\p{L}{2,}/gu) ?? [])
 
-// Stammt die Nachricht von einem der eigenen Konten? Die Adresse entscheidet. Outlook nennt im Kopf
-// oft nur den Namen („Von: Beispiel, Alex“), dann zählen Vor- und Nachname in beliebiger Reihenfolge.
+// Stammt die Nachricht von einem der eigenen Konten? Steht eine Adresse da, entscheidet nur sie: Ein
+// Namensvetter mit anderer Adresse ist jemand anderes. Outlook nennt im Kopf oft nur den Namen
+// („Von: Beispiel, Alex“), dann zählen Vor- und Nachname in beliebiger Reihenfolge.
 export function isMe(sender: Person | undefined, me: Person[]): boolean {
   if (!sender) return false
   const address = sender.address?.toLowerCase()
-  if (address && me.some((p) => p.address?.toLowerCase() === address)) return true
+  if (address) return me.some((p) => p.address?.toLowerCase() === address)
   const a = tokens(sender.name)
   if (a.size < 2) return false
   return me.some((p) => {

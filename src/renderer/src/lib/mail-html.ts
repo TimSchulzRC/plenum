@@ -26,6 +26,9 @@ export interface ChatOptions {
   topHeader: string[]
   // Zeitpunkt aus einem zitierten Kopf wie topTime beschriften
   formatTime: (ms: number) => string
+  // In dieser Sitzung gesendete Antworten, älteste zuerst. Sie stehen noch nicht in der Mail und
+  // kommen als eigene Blasen unter den Verlauf.
+  sent?: { name: string; text: string; time: string; header: string[]; files: number }[]
 }
 
 export interface SignatureOptions {
@@ -337,8 +340,14 @@ function chatBody(root: Element, lines: DomLine[], parts: ThreadPart[], chat: Ch
     ].join('')
     out.push(`<div class="msg ${mine ? 'mine' : 'other'}">${meta ? `<div class="meta">${meta}</div>` : ''}<div class="bubble">${body || '<span class="empty">(ohne Text)</span>'}</div></div>`)
   })
+  // Gesendete Antworten: Klartext, Zeilenumbrüche bleiben
+  const sent = (chat.sent ?? []).map((x) => {
+    const text = esc(x.text.trim()).replace(/\r?\n/g, '<br>')
+    const files = x.files ? `<div class="files">${x.files === 1 ? '1 Anhang' : `${x.files} Anhänge`}</div>` : ''
+    return `<div class="msg mine sent"><div class="meta"><div class="who">${esc(x.name)}</div><div class="when has-pop" tabindex="0">${esc(x.time)} · gesendet<div class="pop"><div class="card">${headLines(x.header).join('')}</div></div></div></div><div class="bubble">${text || '<span class="empty">(ohne Text)</span>'}${files}</div></div>`
+  })
   // Älteste oben, neueste unten
-  return `<div class="thread">${out.reverse().join('')}</div>`
+  return `<div class="thread">${[...out.reverse(), ...sent].join('')}</div>`
 }
 
 // Chat-Ansicht: Hintergrund, Blasen, Name und Uhrzeit mit Pop-up beim Überfahren (ohne Skript)
@@ -346,7 +355,7 @@ const chatCss = (dark: boolean) => {
   const c = dark
     ? { bg: '#1f1f1f', other: '#292929', mine: '#2b2b40', fg: '#dbdbdb', meta: '#adadad', card: '#2e2e2e', line: '#3d3d3d', shadow: 'rgba(0,0,0,.5)' }
     : { bg: '#f5f5f5', other: '#ffffff', mine: '#e8ebfa', fg: '#242424', meta: '#616161', card: '#ffffff', line: '#e0e0e0', shadow: 'rgba(0,0,0,.16)' }
-  return `html{height:100%;background:${c.bg}}body.chat{height:100%;margin:0;display:flex;flex-direction:column-reverse;overflow-y:auto;overflow-x:hidden}.thread{margin-bottom:auto;padding:18px 24px 22px;display:flex;flex-direction:column;gap:18px}.msg{display:flex;flex-direction:column;align-items:flex-start;max-width:min(86%,780px);min-width:0}.msg.mine{align-self:flex-end;align-items:flex-end}.meta{position:relative;display:flex;gap:10px;align-items:baseline;margin:0 6px 4px;font-size:12px;color:${c.meta};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.who{font-weight:600;font-size:12.5px;color:${c.fg}}.has-pop{cursor:default;outline:none}.has-pop:hover,.has-pop:focus{text-decoration:underline dotted;text-underline-offset:3px}.pop{display:none;position:absolute;top:100%;left:-6px;z-index:10;padding-top:6px;font-weight:400;cursor:auto}.mine .pop{left:auto;right:-6px}.has-pop:hover>.pop,.has-pop:focus-within>.pop{display:block}.card{width:max-content;max-width:min(440px,calc(100vw - 64px));max-height:min(380px,60vh);overflow:auto;padding:10px 12px;border-radius:10px;background:${c.card};color:${c.fg};border:1px solid ${c.line};box-shadow:0 8px 24px ${c.shadow};font-size:12.5px;line-height:1.45;text-decoration:none}.card .addr{color:${c.meta};margin-bottom:6px}.card .addr:last-child{margin-bottom:0}.card .sig{border-top:1px solid ${c.line};padding-top:8px}.card .addr+.sig{margin-top:2px}.card .sig:first-child{border-top:0;padding-top:0}.card .hl{margin:1px 0}.bubble{min-width:0;max-width:100%;overflow-x:auto;padding:10px 14px;border-radius:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;background:${c.other};color:${c.fg};box-shadow:0 1px 2px rgba(0,0,0,${dark ? '.4' : '.08'})}.mine .bubble{background:${c.mine}}.bubble :not(pre,code,pre *,code *,tt,kbd,samp){font-family:inherit!important}.bubble .empty{color:${c.meta};font-style:italic}.bubble blockquote[type=cite],.bubble .gmail_quote,.bubble blockquote.gmail_quote{margin:0!important;padding:0!important;border:0!important}`
+  return `html{height:100%;background:${c.bg}}body.chat{height:100%;margin:0;display:flex;flex-direction:column-reverse;overflow-y:auto;overflow-x:hidden}.thread{margin-bottom:auto;padding:18px 24px 22px;display:flex;flex-direction:column;gap:18px}.msg{display:flex;flex-direction:column;align-items:flex-start;max-width:min(86%,780px);min-width:0}.msg.mine{align-self:flex-end;align-items:flex-end}.meta{position:relative;display:flex;gap:10px;align-items:baseline;margin:0 6px 4px;font-size:12px;color:${c.meta};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.who{font-weight:600;font-size:12.5px;color:${c.fg}}.has-pop{cursor:default;outline:none}.has-pop:hover,.has-pop:focus{text-decoration:underline dotted;text-underline-offset:3px}.pop{display:none;position:absolute;top:100%;left:-6px;z-index:10;padding-top:6px;font-weight:400;cursor:auto}.mine .pop{left:auto;right:-6px}.has-pop:hover>.pop,.has-pop:focus-within>.pop{display:block}.msg:last-child:not(:first-child) .pop{top:auto;bottom:100%;padding-top:0;padding-bottom:6px}.card{width:max-content;max-width:min(440px,calc(100vw - 64px));max-height:min(380px,60vh);overflow:auto;padding:10px 12px;border-radius:10px;background:${c.card};color:${c.fg};border:1px solid ${c.line};box-shadow:0 8px 24px ${c.shadow};font-size:12.5px;line-height:1.45;text-decoration:none}.card .addr{color:${c.meta};margin-bottom:6px}.card .addr:last-child{margin-bottom:0}.card .sig{border-top:1px solid ${c.line};padding-top:8px}.card .addr+.sig{margin-top:2px}.card .sig:first-child{border-top:0;padding-top:0}.card .hl{margin:1px 0}.bubble{min-width:0;max-width:100%;overflow-x:auto;padding:10px 14px;border-radius:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;background:${c.other};color:${c.fg};box-shadow:0 1px 2px rgba(0,0,0,${dark ? '.4' : '.08'})}.mine .bubble{background:${c.mine}}.card{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.bubble :not(pre,code,pre *,code *,tt,kbd,samp),.card :not(pre,code,pre *,code *,tt,kbd,samp){font-family:inherit!important}.bubble .files{margin-top:6px;font-size:12px;color:${c.meta}}.bubble .empty{color:${c.meta};font-style:italic}.bubble blockquote[type=cite],.bubble .gmail_quote,.bubble blockquote.gmail_quote{margin:0!important;padding:0!important;border:0!important}`
 }
 
 // „Signatur anzeigen“ und die Kurzform der Kopfzeilen im Dokument, hell oder dunkel

@@ -48,7 +48,7 @@ import { modelRanges, modelRequest, type SigRange } from '../lib/mail-signature'
 import { setMailUnread } from '../lib/mail-unread'
 import { useStore } from '../store'
 import { useDarkMode } from '../theme'
-import { MailCompose, type ComposeState } from '../components/MailCompose'
+import { MailCompose, type ComposeState, type SentMail } from '../components/MailCompose'
 import { MailAvatar } from '../components/Avatars'
 
 type Sel = { kind: 'all' } | { kind: 'folder'; accountId: string; folderId: string; name: string; folderKind?: MailFolderKind }
@@ -411,6 +411,9 @@ function Count({ n }: { n: number }): JSX.Element | null {
 
 // Ergebnis des Sprachmodells je Mail, damit Umschalten und erneutes Öffnen nicht noch einmal fragen
 const modelCache = new Map<string, SigRange[]>()
+// Antworten, die in dieser Sitzung auf eine Mail gesendet wurden. Sie stehen nicht in der Mail selbst,
+// die Chat-Ansicht zeigt sie trotzdem unter dem Verlauf.
+const sentCache = new Map<string, SentMail[]>()
 
 // Signaturen ausblenden: einmal eingestellt, gilt für alle Mails. Standard ist an.
 const HIDE_SIG_KEY = 'mail.hideSignatures'
@@ -608,7 +611,7 @@ function MailReader({
   const [chat, setChat] = useState(() => loadHidden(CHAT_KEY))
   // Antwort unten im Lesebereich, der Verlauf bleibt darüber sichtbar
   const [reply, setReply] = useState<MailReplyKind | null>(null)
-  const [sent, setSent] = useState(false)
+  const [sent, setSent] = useState<SentMail[]>(() => sentCache.get(key(target)) ?? [])
   const [busy, setBusy] = useState(false)
   // Im dunklen Theme dunkel, einzeln auf hell umschaltbar, falls eine Mail umgekehrt schlecht aussieht
   const darkTheme = useDarkMode()
@@ -648,9 +651,24 @@ function MailReader({
         ...(m.cc.length ? [`Cc: ${m.cc.map(who).join('; ')}`] : []),
         `Gesendet: ${fmt(m.received, 'EEEE, d. MMMM yyyy HH:mm')}`,
         `Betreff: ${m.subject}`
-      ]
+      ],
+      sent: sent.map((x) => {
+        const from = accounts.find((a) => a.id === x.accountId)
+        return {
+          name: from?.displayName || from?.upn || 'Du',
+          text: x.text,
+          time: messageTime(x.at),
+          files: x.files,
+          header: [
+            `Von: ${from?.upn ?? ''}`,
+            `An: ${x.to.join('; ')}`,
+            ...(x.cc.length ? [`Cc: ${x.cc.join('; ')}`] : []),
+            `Gesendet: ${fmt(x.at, 'EEEE, d. MMMM yyyy HH:mm')}`
+          ]
+        }
+      })
     }
-  }, [m, chat, accounts])
+  }, [m, chat, accounts, sent])
   const doc = useMemo(
     () => (m ? mailDocument(m, remote, dark, { hide: hideSig, hideHeaders: hideHead, extra: modelSig, chat: chatOptions }) : null),
     [m, remote, dark, hideSig, hideHead, modelSig, chatOptions]
@@ -687,10 +705,7 @@ function MailReader({
     setChat(!chat)
     saveHidden(CHAT_KEY, !chat)
   }
-  const startReply = (kind: MailReplyKind) => {
-    setSent(false)
-    setReply(kind)
-  }
+  const startReply = (kind: MailReplyKind) => setReply(kind)
 
   if (error && !m) {
     return (
@@ -824,9 +839,11 @@ function MailReader({
           accounts={accounts}
           color={color}
           onClose={() => setReply(null)}
-          onSent={() => {
+          onSent={(x) => {
             setReply(null)
-            setSent(true)
+            const list = [...sent, x]
+            sentCache.set(key(target), list)
+            setSent(list)
             onSent()
           }}
         />
@@ -834,7 +851,7 @@ function MailReader({
         <div className="reply-bar">
           <button className="reply-start" disabled={busy} onClick={() => startReply('reply')}>
             <ArrowReply20Regular />
-            <span>{sent ? 'Gesendet. Noch einmal antworten …' : `Antworten an ${m.from ? addressLabel(m.from) : 'Absender'} …`}</span>
+            <span>{`Antworten an ${m.from ? addressLabel(m.from) : 'Absender'} …`}</span>
           </button>
           {m.to.length + m.cc.length > 1 && (
             <Tooltip content="Allen antworten" relationship="label">

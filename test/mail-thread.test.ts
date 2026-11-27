@@ -42,7 +42,8 @@ test('Eigene Nachrichten: Adresse entscheidet, sonst Vor- und Nachname', () => {
   const me = [{ name: 'Alex Beispiel', address: 'alex@contoso.com' }]
   assert.equal(isMe({ name: 'Irgendwer', address: 'ALEX@contoso.com' }, me), true)
   assert.equal(isMe({ name: 'Beispiel, Alex (Contoso)' }, me), true)
-  assert.equal(isMe({ name: 'Alex Beispiel', address: 'alex.beispiel@contoso.com' }, me), true)
+  // Gleicher Name, andere Adresse: jemand anderes
+  assert.equal(isMe({ name: 'Alex Beispiel', address: 'alex.beispiel@example.org' }, me), false)
   assert.equal(isMe({ name: 'Alex' }, me), false)
   assert.equal(isMe({ name: 'Alex Kim' }, me), false)
   assert.equal(isMe({ name: 'Kim Fabrik', address: 'kim@fabrikam.de' }, me), false)
@@ -91,6 +92,11 @@ test('Datum aus dem Kopf: deutsche und englische Schreibweisen', () => {
   assert.equal(parseMailDate('Tue, Nov 24, 2026 at 12:15 AM'), at(2026, 11, 24, 0, 15))
   assert.equal(parseMailDate('Friday, 27 November 2026 20:44'), at(2026, 11, 27, 20, 44))
   assert.equal(parseMailDate('Mon Nov 23 2026 09:00'), at(2026, 11, 23, 9, 0))
+  // Schrägstrich: nur eindeutig, wenn eine Zahl über 12 liegt (US: Monat/Tag, UK: Tag/Monat)
+  assert.equal(parseMailDate('11/24/2026 3:00 PM'), at(2026, 11, 24, 15, 0))
+  assert.equal(parseMailDate('24/11/2026 15:00'), at(2026, 11, 24, 15, 0))
+  assert.equal(parseMailDate('11/12/2026 10:00'), undefined)
+  assert.equal(parseMailDate('5/5/2026 10:00'), at(2026, 5, 5, 10, 0))
   // Ohne Jahr, ohne Monat oder unmöglich: kein Datum
   assert.equal(parseMailDate('Dienstag 11:03'), undefined)
   assert.equal(parseMailDate('am Wochenende 2026'), undefined)

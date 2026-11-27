@@ -9,6 +9,15 @@ import { addressLabel, fileSize, replyDraft } from '../lib/mail'
 import { fmt } from '../lib/format'
 
 export type ComposeState = { kind: 'new'; accountId: string } | { kind: MailReplyKind; accountId: string; source: MailMessage }
+// Was gesendet wurde, damit die Chat-Ansicht die Antwort sofort zeigt
+export interface SentMail {
+  accountId: string
+  to: string[]
+  cc: string[]
+  text: string
+  files: number
+  at: number
+}
 
 const TITLES: Record<ComposeState['kind'], string> = { new: 'Neue E-Mail', reply: 'Antworten', replyAll: 'Allen antworten', forward: 'Weiterleiten' }
 // Graph nimmt Anhänge direkt nur unter 3 MB, jede Datei in einer eigenen Anfrage
@@ -38,7 +47,7 @@ export function MailCompose({
   // Unten im Lesebereich unter dem Verlauf: ohne Betreff und ohne Vorschau der Mail, die steht darüber
   docked?: boolean
   onClose: () => void
-  onSent: () => void
+  onSent: (sent: SentMail) => void
 }): JSX.Element {
   const source = state.kind === 'new' ? undefined : state.source
   const [accountId, setAccountId] = useState(state.accountId)
@@ -100,7 +109,7 @@ export function MailCompose({
     try {
       const draft = { to: toList.valid, cc: ccList.valid, subject, text, attachments: files.map(({ name, contentType, data }) => ({ name, contentType, data })) }
       await api.sendMail(accountId, draft, source && state.kind !== 'new' ? { id: source.id, kind: state.kind } : undefined)
-      onSent()
+      onSent({ accountId, to: draft.to, cc: draft.cc, text, files: files.length, at: Date.now() })
     } catch (e) {
       setError(ipcErrorText(e))
       setBusy(false)
