@@ -226,3 +226,25 @@ test('Bildspeicher: ein früh fertiger Leser räumt die Warteliste eines später
   // b kommt im zweiten Durchgang nach etwa 30 + 1 ms, nicht erst nach c (80 ms)
   assert.ok(Date.now() - t0 < 70, `b nach ${Date.now() - t0} ms`)
 })
+
+test('Bildspeicher: gerade gemerkte Liste bleibt, auch wenn 200 andere Mails laden', async () => {
+  let lists = 0
+  const store = new MailImageStore({
+    list: async () => {
+      lists++
+      return []
+    },
+    fetch: async (m, id) => {
+      if (m.startsWith('busy')) await wait(20)
+      return entry(`${id}@x`)
+    }
+  })
+  const busy = Array.from({ length: 200 }, (_, i) => {
+    store.remember(`busy${i}`, [{ id: 'a', size: 1 }])
+    return store.load(`busy${i}`, false)
+  })
+  store.remember('neu', [{ id: 'n', size: 1 }])
+  assert.equal((await store.image('neu', 'n@x'))?.cid, 'n@x')
+  assert.equal(lists, 0)
+  await Promise.all(busy)
+})
