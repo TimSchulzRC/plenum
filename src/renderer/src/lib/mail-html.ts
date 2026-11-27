@@ -263,6 +263,16 @@ const headLines = (texts: string[]) =>
     return `<div class="hl">${m ? `<b>${esc(m[1])}:</b> ${esc(m[2])}` : esc(t)}</div>`
   })
 
+// Name oder Uhrzeit mit Pop-up. Das Pop-up hängt per CSS-Ankerpositionierung an seinem Auslöser und
+// öffnet nach unten oder oben, je nachdem, wo im iframe mehr Platz ist. Jeder Auslöser braucht dafür
+// einen eigenen Ankernamen.
+let popSeq = 0
+function popTrigger(cls: string, label: string, card: string): string {
+  if (!card) return `<div class="${cls}">${label}</div>`
+  const id = `--p${++popSeq}`
+  return `<div class="${cls} has-pop" tabindex="0" style="anchor-name:${id}">${label}<div class="pop" style="position-anchor:${id}"><div class="card">${card}</div></div></div>`
+}
+
 // Mail in Nachrichten zerschneiden und als Chat aufbauen. Jede Grenze bekommt eine Markierung, dann
 // wird zwischen je zwei Markierungen herausgelöst. Kopf und Signatur landen in Pop-ups.
 function chatBody(root: Element, lines: DomLine[], parts: ThreadPart[], chat: ChatOptions): string {
@@ -333,10 +343,8 @@ function chatBody(root: Element, lines: DomLine[], parts: ThreadPart[], chat: Ch
     const header = k === 0 && p.body === p.start ? chat.topHeader : head
     const who = [p.sender?.name && p.sender.address ? `<div class="addr">${esc(p.sender.address)}</div>` : '', signature ? `<div class="sig">${signature}</div>` : ''].join('')
     const meta = [
-      name ? `<div class="who${who ? ' has-pop' : ''}" tabindex="0">${esc(name)}${who ? `<div class="pop"><div class="card">${who}</div></div>` : ''}</div>` : '',
-      time || header.length
-        ? `<div class="when${header.length ? ' has-pop' : ''}" tabindex="0">${esc(time || 'Details')}${header.length ? `<div class="pop"><div class="card">${headLines(header).join('')}</div></div>` : ''}</div>`
-        : ''
+      name ? popTrigger('who', esc(name), who) : '',
+      time || header.length ? popTrigger('when', esc(time || 'Details'), headLines(header).join('')) : ''
     ].join('')
     out.push(`<div class="msg ${mine ? 'mine' : 'other'}">${meta ? `<div class="meta">${meta}</div>` : ''}<div class="bubble">${body || '<span class="empty">(ohne Text)</span>'}</div></div>`)
   })
@@ -344,7 +352,7 @@ function chatBody(root: Element, lines: DomLine[], parts: ThreadPart[], chat: Ch
   const sent = (chat.sent ?? []).map((x) => {
     const text = esc(x.text.trim()).replace(/\r?\n/g, '<br>')
     const files = x.files ? `<div class="files">${x.files === 1 ? '1 Anhang' : `${x.files} Anhänge`}</div>` : ''
-    return `<div class="msg mine sent"><div class="meta"><div class="who">${esc(x.name)}</div><div class="when has-pop" tabindex="0">${esc(x.time)} · gesendet<div class="pop"><div class="card">${headLines(x.header).join('')}</div></div></div></div><div class="bubble">${text || '<span class="empty">(ohne Text)</span>'}${files}</div></div>`
+    return `<div class="msg mine sent"><div class="meta">${popTrigger('who', esc(x.name), '')}${popTrigger('when', `${esc(x.time)} · gesendet`, headLines(x.header).join(''))}</div><div class="bubble">${text || '<span class="empty">(ohne Text)</span>'}${files}</div></div>`
   })
   // Älteste oben, neueste unten
   return `<div class="thread">${[...out.reverse(), ...sent].join('')}</div>`
@@ -355,7 +363,7 @@ const chatCss = (dark: boolean) => {
   const c = dark
     ? { bg: '#1f1f1f', other: '#292929', mine: '#2b2b40', fg: '#dbdbdb', meta: '#adadad', card: '#2e2e2e', line: '#3d3d3d', shadow: 'rgba(0,0,0,.5)' }
     : { bg: '#f5f5f5', other: '#ffffff', mine: '#e8ebfa', fg: '#242424', meta: '#616161', card: '#ffffff', line: '#e0e0e0', shadow: 'rgba(0,0,0,.16)' }
-  return `html{height:100%;background:${c.bg}}body.chat{height:100%;margin:0;display:flex;flex-direction:column-reverse;overflow-y:auto;overflow-x:hidden}.thread{margin-bottom:auto;padding:18px 24px 22px;display:flex;flex-direction:column;gap:18px}.msg{display:flex;flex-direction:column;align-items:flex-start;max-width:min(86%,780px);min-width:0}.msg.mine{align-self:flex-end;align-items:flex-end}.meta{position:relative;display:flex;gap:10px;align-items:baseline;margin:0 6px 4px;font-size:12px;color:${c.meta};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.who{font-weight:600;font-size:12.5px;color:${c.fg}}.has-pop{cursor:default;outline:none}.has-pop:hover,.has-pop:focus{text-decoration:underline dotted;text-underline-offset:3px}.pop{display:none;position:absolute;top:100%;left:-6px;z-index:10;padding-top:6px;font-weight:400;cursor:auto}.mine .pop{left:auto;right:-6px}.has-pop:hover>.pop,.has-pop:focus-within>.pop{display:block}.msg:last-child:not(:first-child) .pop{top:auto;bottom:100%;padding-top:0;padding-bottom:6px}.card{width:max-content;max-width:min(440px,calc(100vw - 64px));max-height:min(380px,60vh);overflow:auto;padding:10px 12px;border-radius:10px;background:${c.card};color:${c.fg};border:1px solid ${c.line};box-shadow:0 8px 24px ${c.shadow};font-size:12.5px;line-height:1.45;text-decoration:none}.card .addr{color:${c.meta};margin-bottom:6px}.card .addr:last-child{margin-bottom:0}.card .sig{border-top:1px solid ${c.line};padding-top:8px}.card .addr+.sig{margin-top:2px}.card .sig:first-child{border-top:0;padding-top:0}.card .hl{margin:1px 0}.bubble{min-width:0;max-width:100%;overflow-x:auto;padding:10px 14px;border-radius:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;background:${c.other};color:${c.fg};box-shadow:0 1px 2px rgba(0,0,0,${dark ? '.4' : '.08'})}.mine .bubble{background:${c.mine}}.card{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.bubble :not(pre,code,pre *,code *,tt,kbd,samp),.card :not(pre,code,pre *,code *,tt,kbd,samp){font-family:inherit!important}.bubble .files{margin-top:6px;font-size:12px;color:${c.meta}}.bubble .empty{color:${c.meta};font-style:italic}.bubble blockquote[type=cite],.bubble .gmail_quote,.bubble blockquote.gmail_quote{margin:0!important;padding:0!important;border:0!important}`
+  return `html{height:100%;background:${c.bg}}body.chat{height:100%;margin:0;display:flex;flex-direction:column-reverse;overflow-y:auto;overflow-x:hidden}.thread{margin-bottom:auto;padding:18px 24px 22px;display:flex;flex-direction:column;gap:18px}.msg{display:flex;flex-direction:column;align-items:flex-start;max-width:min(86%,780px);min-width:0}.msg.mine{align-self:flex-end;align-items:flex-end}.meta{position:relative;display:flex;gap:10px;align-items:baseline;margin:0 6px 4px;font-size:12px;color:${c.meta};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.who{font-weight:600;font-size:12.5px;color:${c.fg}}.has-pop{cursor:default;outline:none}.has-pop:hover,.has-pop:focus{text-decoration:underline dotted;text-underline-offset:3px}.pop{display:none;position:fixed;z-index:10;position-area:block-end span-inline-end;position-try:most-height flip-block,flip-inline,flip-block flip-inline;max-height:100%;padding:6px 0;margin-inline:-6px;box-sizing:border-box;flex-direction:column;font-weight:400;cursor:auto}.mine .pop{position-area:block-end span-inline-start}.has-pop:hover>.pop,.has-pop:focus-within>.pop{display:flex}.card{width:max-content;max-width:min(440px,calc(100vw - 64px));max-height:380px;min-height:0;flex:0 1 auto;overflow:auto;padding:10px 12px;border-radius:10px;background:${c.card};color:${c.fg};border:1px solid ${c.line};box-shadow:0 8px 24px ${c.shadow};font-size:12.5px;line-height:1.45;text-decoration:none}.card .addr{color:${c.meta};margin-bottom:6px}.card .addr:last-child{margin-bottom:0}.card .sig{border-top:1px solid ${c.line};padding-top:8px}.card .addr+.sig{margin-top:2px}.card .sig:first-child{border-top:0;padding-top:0}.card .hl{margin:1px 0}.bubble{min-width:0;max-width:100%;overflow-x:auto;padding:10px 14px;border-radius:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;background:${c.other};color:${c.fg};box-shadow:0 1px 2px rgba(0,0,0,${dark ? '.4' : '.08'})}.mine .bubble{background:${c.mine}}.card{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.bubble :not(pre,code,pre *,code *,tt,kbd,samp),.card :not(pre,code,pre *,code *,tt,kbd,samp){font-family:inherit!important}.bubble>:first-child,.bubble>:first-child>:first-child{margin-top:0}.bubble>:last-child,.bubble>:last-child>:last-child{margin-bottom:0}.bubble .files{margin-top:6px;font-size:12px;color:${c.meta}}.bubble .empty{color:${c.meta};font-style:italic}.bubble blockquote[type=cite],.bubble .gmail_quote,.bubble blockquote.gmail_quote{margin:0!important;padding:0!important;border:0!important}`
 }
 
 // „Signatur anzeigen“ und die Kurzform der Kopfzeilen im Dokument, hell oder dunkel
@@ -473,5 +481,5 @@ export function mailDocument(
   const img = remote ? 'data: https: http:' : 'data:'
   const csp = `default-src 'none'; img-src ${img}; style-src 'unsafe-inline'${remote ? ' https:' : ''}; font-src data:${remote ? ' https:' : ''}`
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html{${dark ? 'background:#292929;color:#dbdbdb;color-scheme:dark' : 'background:#fff;color:#242424'}}${dark ? 'a{color:#8ab4f8}' : ''}body{margin:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:14px;line-height:1.45;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin:0 0 0 8px;padding-left:12px;border-left:2px solid ${dark ? '#4a4a4a' : '#d1d1d1'}}${sig.chat ? chatCss(dark) : foldCss(dark)}</style>${head}</head><body${sig.chat ? ' class="chat"' : ''}>${body}</body></html>`
-  return { html, blocked, signatures: all.length, headers: headers.length, unresolved, messages: parts.length }
+  return { html, blocked, signatures: all.length, headers: headers.length, unresolved, messages: parts.length + (sig.chat?.sent?.length ?? 0) }
 }
