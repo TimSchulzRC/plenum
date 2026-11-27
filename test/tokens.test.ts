@@ -57,3 +57,11 @@ test('Ohne Token des Chat-Dienstes: ein Token des eigenen Mandanten ersetzt ein 
   t.capture('https://teams.microsoft.com/api/mt/emea/beta/users/z', 'GET', auth({ aud: 'https://api.spaces.skype.com', oid: 'me-guest', tid: GUEST, idp: `https://sts.windows.net/${HOME}/`, exp: 9900 }))
   assert.equal(t.me.tid, HOME)
 })
+
+test('Graph-Token auch mit der App-ID als Audience', () => {
+  const t = new TokenStore()
+  t.capture('https://teams.microsoft.com/api/csa/emea/api/v3/teams/users/me', 'GET', auth({ aud: 'https://chatsvcagg.teams.microsoft.com', oid: 'me-home', tid: HOME, exp: 2000 }))
+  const g = jwt({ aud: '00000003-0000-0000-c000-000000000000', oid: 'me-home', tid: HOME, exp: 4000 })
+  t.capture('https://graph.microsoft.com/v1.0/me', 'GET', { authorization: `Bearer ${g}` })
+  assert.equal(t.graphBearer(), g)
+})

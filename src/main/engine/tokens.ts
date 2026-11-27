@@ -243,6 +243,11 @@ export class TokenStore {
     return best
   }
 
+  // Graph-Token: Audience als Adresse oder als App-ID von Microsoft Graph
+  graphBearer(): string | undefined {
+    return this.pick((a) => a.includes('graph.microsoft.com') || a === '00000003-0000-0000-c000-000000000000')?.token
+  }
+
   findBearer(audPart: string): string | undefined {
     return this.pick((a) => a.includes(audPart))?.token
   }

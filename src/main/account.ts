@@ -248,6 +248,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
     this.intervalTimer = setInterval(() => {
       // Auch im Lauf: Eine Besprechung oder ein Link aus einem anderen Mandanten kann die Web-App dorthin bringen
       if (!this.record.parentId && this.leaveForeignTenant()) return
+      // Kam die eigene Identität erst nach „bereit“ (Token des Chat-Dienstes später), jetzt übernehmen
+      this.adoptIdentity()
       if (Date.now() - this.fullSyncAt > FULL_SYNC_INTERVAL) void this.fullSync()
       else void this.deltaSync()
     }, SYNC_INTERVAL)
@@ -255,15 +257,24 @@ export class AccountService extends EventEmitter<AccountEvents> {
     this.presenceTimer = setInterval(() => void this.refreshPresence(), PRESENCE_INTERVAL)
     // Hauptkonto als Gast in einem fremden Mandanten: nichts übernehmen, sonst hielte die App die
     // Gastidentität für das Konto (falscher Name, falsche Chats, kein Postfach)
+    if (!this.record.parentId && this.leaveForeignTenant()) return
+    this.adoptIdentity()
+    this.emit('changed')
+    void this.fullSync()
+  }
+
+  // Identität der Sitzung übernehmen, beim Hauptkonto nur aus einer Sitzung als Mitglied (dann ist ihr
+  // Mandant der Heimatmandant, künftig fest dorthin starten). Meldet nur Änderungen.
+  private adoptIdentity(): void {
+    const me = this.engine.tokens.me
     if (!this.record.parentId) {
-      if (this.leaveForeignTenant()) return
-      // Als Mitglied angemeldet: Das ist der Heimatmandant, künftig fest dorthin starten
+      if (guestSession(me)) return
       if (me.tid && this.record.homeTenantId !== me.tid) {
         this.record = { ...this.record, homeTenantId: me.tid }
         this.emit('record-updated', this.record)
       }
       if (me.tid) this.engine.setStartTenant(me.tid)
-    }
+    } else if (me.tid && this.record.tenantId && me.tid.toLowerCase() !== this.record.tenantId.toLowerCase()) return
     if (me.oid) {
       const mri = `8:orgid:${me.oid}`
       const changed = this.record.mri !== mri || this.record.displayName !== me.name || this.record.upn !== me.upn || (!!me.tid && this.record.tenantId !== me.tid)
@@ -272,8 +283,6 @@ export class AccountService extends EventEmitter<AccountEvents> {
       this.people.set(mri, { ...(this.people.get(mri) ?? {}), ...this.me })
       if (changed) this.emit('record-updated', this.record)
     }
-    this.emit('changed')
-    void this.fullSync()
   }
 
   // Läuft die Web-App des Hauptkontos als Gast in einem fremden Mandanten (idp-Claim im Token)? Dann die
