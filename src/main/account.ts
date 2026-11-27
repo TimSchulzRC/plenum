@@ -54,7 +54,7 @@ import { analytics } from './analytics'
 import { errorSummary } from '@shared/analytics'
 import { parseRealtimeFrame } from './engine/realtime'
 import { OlderCursors } from './older-cursors'
-import { foreignHome, homeTenantOf, parseTenants } from './tenants'
+import { foreignHome, guestSession, parseTenants } from './tenants'
 
 export interface AccountRecord {
   id: string
@@ -282,7 +282,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
   // höchstens alle 5 Minuten. true, solange sie fremd läuft.
   private leaveForeignTenant(): boolean {
     const me = this.engine.tokens.me
-    if (!me.idp || homeTenantOf(me) === me.tid?.toLowerCase()) {
+    if (!guestSession(me)) {
       this.foreign = false
       return false
     }
@@ -345,14 +345,14 @@ export class AccountService extends EventEmitter<AccountEvents> {
   // Nicht abgleichen: Gastmandant im falschen Mandanten, doppelt angelegt, oder das Hauptkonto läuft gerade
   // in einem fremden Mandanten (auch zwischen zwei Prüfungen im Intervall bemerkt)
   private outOfTenant(): boolean {
-    return this.wrongTenant || this.duplicate || this.foreign || (!this.record.parentId && !!foreignHome(this.engine.tokens.me))
+    return this.wrongTenant || this.duplicate || this.foreign || (!this.record.parentId && guestSession(this.engine.tokens.me))
   }
 
   async fullSync(): Promise<void> {
     if (this.syncing || !this.started || this.outOfTenant()) return
     this.syncing = true
+    const epoch = this.epoch
     try {
-      const epoch = this.epoch
       if (this.engine.tokens.has('csa')) {
         const data = await this.api.teamsAndChats()
         // Konto entfernt oder inzwischen aus einem fremden Mandanten zurück: Antwort gehört nicht mehr dazu
@@ -374,7 +374,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
     } catch (e) {
       log.warn(`[${this.id}] fullSync failed`, (e as Error).message)
       this.trackSyncFailure('full', e)
-      this.noteSync(e)
+      if (epoch === this.epoch && !this.outOfTenant()) this.noteSync(e)
     } finally {
       this.syncing = false
       if (this.started) {
@@ -640,6 +640,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
       if (e instanceof ApiError && (e.status === 400 || e.status === 404)) this.syncStateUrl = undefined
       log.warn(`[${this.id}] deltaSync failed`, (e as Error).message)
       this.trackSyncFailure('delta', e)
+      // Aus der Zeit im fremden Mandanten: nichts mehr ändern
+      if (epoch !== this.epoch || this.outOfTenant()) return
       this.noteSync(e)
       if (this.started && touched.length > 0) this.emit('conversation-updated', touched)
       return

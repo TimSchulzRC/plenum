@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { foreignHome, homeTenantOf, parseTenants } from '../src/main/tenants.ts'
+import { foreignHome, guestSession, homeTenantOf, parseTenants } from '../src/main/tenants.ts'
 
 test('Mandantenliste aus tenantsv2: aktueller Mandant zuerst, offene Einladungen fallen weg', () => {
   const raw = [
@@ -38,4 +38,10 @@ test('Heimatmandant: Mitglied ohne idp, Gast mit dem Aussteller des Heimatmandan
   assert.equal(foreignHome({ tid: guest, idp: 'live.com' }), undefined)
   // Ohne Token
   assert.equal(foreignHome({}), undefined)
+  // Gastsitzung auch dann, wenn sich der Heimatmandant nicht lesen lässt
+  assert.equal(guestSession({ tid: guest, idp: 'live.com' }), true)
+  assert.equal(guestSession({ tid: guest, idp: `https://sts.windows.net/${home}/` }), true)
+  assert.equal(guestSession({ tid: home }), false)
+  assert.equal(guestSession({ tid: home, idp: `https://sts.windows.net/${home.toUpperCase()}/` }), false)
+  assert.equal(guestSession({}), false)
 })
