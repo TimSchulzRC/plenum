@@ -595,6 +595,15 @@ export function lightSignature(html: string): string {
   return div.innerHTML
 }
 
+// Eingefügtes in die Signatur: bereinigt wie die Signatur selbst (Links, Bilder, einfache Auszeichnung),
+// aber ohne Farben, Stile und Klassen. So übernimmt es die Formatierung der Zeile.
+export function pastedSignatureHtml(html: string): string {
+  const div = document.implementation.createHTMLDocument('').createElement('div')
+  div.innerHTML = cleanSignature({ html, text: '' })
+  for (const el of div.querySelectorAll('*')) for (const a of ['style', 'class', 'color', 'bgcolor', 'background']) el.removeAttribute(a)
+  return div.innerHTML
+}
+
 // Signatur zum Senden: Bilder als data: werden eingebettete Anhänge (cid:), wie Outlook es macht.
 // Viele Mail-Programme zeigen data:-Bilder nicht an.
 export function signatureForSend(html: string): { html: string; files: MailFile[] } {

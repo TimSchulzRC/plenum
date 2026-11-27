@@ -2,7 +2,7 @@ import { Button, Menu, MenuButton, MenuDivider, MenuItemRadio, MenuList, MenuPop
 import { Dismiss16Regular } from '@fluentui/react-icons'
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { MailSignatures } from '@shared/types'
-import { cleanSignature, darkSignature, lightSignature } from '../lib/mail-html'
+import { cleanSignature, darkSignature, lightSignature, pastedSignatureHtml } from '../lib/mail-html'
 import { useDarkMode } from '../theme'
 import { findSignature, type SignatureStatus } from '../lib/mail-signatures'
 
@@ -122,6 +122,16 @@ export function ComposeSignature({
   )
 }
 
+// Eingefügte Bilder werden eingebettete Anhänge, wie das Logo
+const MAX_IMAGE = 2_000_000
+const dataUrl = (f: File) =>
+  new Promise<string>((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.onerror = () => reject(r.error ?? new Error('Bild nicht lesbar'))
+    r.readAsDataURL(f)
+  })
+
 // Bearbeitbare Signatur. Was man tippt, bleibt im Feld stehen. Neu gesetzt wird der Inhalt nur, wenn html
 // von außen kommt (andere Signatur, Zurücksetzen, neue Fassung aus Outlook) oder das Theme wechselt. Im
 // dunklen Theme zeigt das Feld die umgerechneten Farben, html bleibt die helle Fassung, die rausgeht.
@@ -143,11 +153,36 @@ function SignatureEditor({ html, onInput }: { html: string; onInput: (html: stri
     shown.current = { html, dark }
     setPainted(dark)
   }, [html, dark, blurs])
-  // Nur reiner Text: Formatierter Text aus der Zwischenablage hätte eigene Farben, die das Umrechnen
-  // zwischen dunkel und hell verdreht. So übernimmt er die Formatierung der Zeile.
-  const insertText = (text: string) => {
-    if (text) document.execCommand('insertText', false, text)
+  // Eingefügtes ohne eigene Farben und Stile (pastedSignatureHtml): Es übernimmt die Formatierung der Zeile,
+  // sonst verdrehte das Umrechnen zwischen dunkel und hell seine Farben. Links und Bilder bleiben.
+  const insert = async (data: DataTransfer) => {
+    const html = data.getData('text/html')
+    const image = [...data.files].find((f) => /^image\//.test(f.type) && f.size <= MAX_IMAGE)
+    const clean = html ? pastedSignatureHtml(html) : image ? `<img src="${await dataUrl(image)}">` : ''
+    if (clean) insertHtml(clean)
+    else document.execCommand('insertText', false, data.getData('text/plain'))
   }
+  // Selbst einfügen statt execCommand('insertHTML'): Chromium gäbe dem Eingefügten Schrift und Größe des
+  // Felds als Stil mit, die gingen mit raus
+  const insertHtml = (html: string) => {
+    const el = ref.current
+    const sel = getSelection()
+    if (!el || !sel?.rangeCount || !el.contains(sel.getRangeAt(0).commonAncestorContainer)) return
+    const range = sel.getRangeAt(0)
+    range.deleteContents()
+    const frag = range.createContextualFragment(html)
+    const last = frag.lastChild
+    range.insertNode(frag)
+    if (last) {
+      range.setStartAfter(last)
+      range.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  // Verschieben innerhalb der Signatur macht der Browser selbst, ihr Inhalt ist schon passend
+  const dragging = useRef(false)
   return (
     <div
       ref={ref}
@@ -161,16 +196,19 @@ function SignatureEditor({ html, onInput }: { html: string; onInput: (html: stri
       onBlur={() => setBlurs((n) => n + 1)}
       onPaste={(e) => {
         e.preventDefault()
-        insertText(e.clipboardData.getData('text/plain'))
+        void insert(e.clipboardData)
       }}
+      onDragStart={() => (dragging.current = true)}
+      onDragEnd={() => (dragging.current = false)}
       onDrop={(e) => {
+        if (dragging.current) return
         e.preventDefault()
         const range = document.caretRangeFromPoint(e.clientX, e.clientY)
         if (range) {
           getSelection()?.removeAllRanges()
           getSelection()?.addRange(range)
         }
-        insertText(e.dataTransfer.getData('text/plain'))
+        void insert(e.dataTransfer)
       }}
       onInput={() => {
         const raw = ref.current?.innerHTML ?? ''
