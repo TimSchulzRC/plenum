@@ -13,6 +13,7 @@ import {
   messagesUrl,
   newDraftBody,
   pascalize,
+  forEachLimit,
   recipientsPatch,
   replyDraftBody,
   sortFolders,
@@ -22,7 +23,7 @@ import {
 } from '../src/main/engine/mail.ts'
 
 const isGraphPage = (u?: string) => mailPageApi(u) === 'graph'
-import { fileSize, mergeMail, replyDraft } from '../src/renderer/src/lib/mail.ts'
+import { fileSize, inlineToLoad, mergeMail, replyDraft, withImages } from '../src/renderer/src/lib/mail.ts'
 
 test('Folgeseiten nur von Graph, sonst bekäme eine fremde Adresse den Token', () => {
   const next = 'https://graph.microsoft.com/v1.0/me/mailFolders/AAMk/messages?$top=40&$skip=40'
@@ -266,4 +267,48 @@ test('Eigene Signatur unter dem Text, Logo als eingebetteter Anhang', () => {
   assert.equal(inline.contentId, 'logo@sig')
   assert.equal(pascalize(inline).ContentId, 'logo@sig')
   assert.equal(attachmentBody({ name: 'plan.pdf', contentType: 'application/pdf', data: 'AAA' }).isInline, undefined)
+})
+
+test('Eingebettete Bilder: höchstens 20 und 8 MB, in Reihenfolge der Anhänge', () => {
+  const att = (id: string, size: number, isInline = true) => ({ id, name: id, size, isInline })
+  assert.deepEqual(inlineToLoad([att('a', 100), att('doc', 100, false), att('b', 7 * 1024 * 1024), att('c', 2 * 1024 * 1024), att('d', 500)]), ['a', 'b', 'd'])
+  assert.equal(inlineToLoad(Array.from({ length: 30 }, (_, i) => att(String(i), 10))).length, 20)
+  assert.deepEqual(inlineToLoad([att('doc', 1, false)]), [])
+})
+
+test('Mail mit nachgeladenen Bildern: eingebettete Anhänge fallen aus der Liste', () => {
+  const m = {
+    id: 'm1', accountId: 'a', subject: 's', to: [], cc: [], replyTo: [], preview: '', received: 0, isRead: true, isDraft: false, hasAttachments: true,
+    importance: 'normal' as const, flagged: false, bodyType: 'html' as const, body: '<img src="cid:logo@x"><p>Hi</p>', inlineImages: {},
+    attachments: [
+      { id: 'logo', name: 'logo.png', size: 10, isInline: true },
+      { id: 'unused', name: 'bild.png', size: 10, isInline: true },
+      { id: 'failed', name: 'x.png', size: 10, isInline: true },
+      { id: 'pdf', name: 'plan.pdf', size: 10, isInline: false }
+    ]
+  }
+  // Vorher: nur echte Anhänge, keine Bilder
+  const before = withImages(m)
+  assert.deepEqual(before.attachments.map((a) => a.id), ['pdf'])
+  assert.deepEqual(before.inlineImages, {})
+  // Danach: das genutzte Logo ist eingebettet, ein nicht genutztes oder nicht geladenes Bild bleibt als Datei
+  const after = withImages(m, { images: { 'logo@x': 'data:image/png;base64,AAA', 'unused@x': 'data:image/png;base64,BBB' }, cids: { logo: 'logo@x', unused: 'unused@x' } })
+  assert.deepEqual(after.attachments.map((a) => a.id), ['unused', 'failed', 'pdf'])
+  assert.equal(after.inlineImages['logo@x'], 'data:image/png;base64,AAA')
+})
+
+test('Bilder parallel laden, höchstens vier gleichzeitig', async () => {
+  let running = 0
+  let peak = 0
+  const done: number[] = []
+  await forEachLimit([1, 2, 3, 4, 5, 6, 7, 8, 9], 4, async (n) => {
+    running++
+    peak = Math.max(peak, running)
+    await new Promise((r) => setTimeout(r, 5))
+    done.push(n)
+    running--
+  })
+  assert.equal(peak, 4)
+  assert.deepEqual(done.sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 9])
+  await forEachLimit([], 4, async () => assert.fail('nie aufgerufen'))
 })

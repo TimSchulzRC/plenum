@@ -9,6 +9,7 @@ import type {
   MailAttachmentsSaved,
   MailDraft,
   MailFolder,
+  MailImages,
   MailMessage,
   MailPage,
   MailReplyKind,
@@ -81,6 +82,8 @@ export interface ApiMethods {
   getMailUnread(accountId: string): number | null
   listMail(accountId: string, folderId: string, next?: string): MailPage
   getMail(accountId: string, messageId: string): MailMessage
+  // Eingebettete Bilder (Inline-Anhänge) einer Mail, höchstens 20, parallel geladen
+  getMailImages(accountId: string, messageId: string, attachmentIds: string[]): MailImages
   // Öffnen, in den Download-Ordner laden oder „Speichern unter …“. Gibt den gespeicherten Pfad zurück.
   openMailAttachment(accountId: string, messageId: string, attachmentId: string, mode: 'open' | 'download' | 'saveAs'): string | null
   // Mehrere Anhänge in den Download-Ordner oder einen gewählten Ordner (null bei Abbruch)

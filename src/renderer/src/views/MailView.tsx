@@ -37,12 +37,14 @@ import {
   DocumentText20Regular
 } from '@fluentui/react-icons'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { AccountInfo, MailAddress, MailAttachment, MailFolder, MailFolderKind, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
+import type { AccountInfo, MailAddress, MailAttachment, MailFolder, MailFolderKind, MailImages, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
 import { api } from '../api'
 import { fmt, listTime, messageTime } from '../lib/format'
 import { accountTitle } from '@shared/accounts'
 import { accountColor, ipcErrorText } from '../lib/calendar'
-import { addressLabel, fileSize, mergeMail } from '../lib/mail'
+import { addressLabel, fileSize, mergeMail, withImages } from '../lib/mail'
+import { cachedImages, cachedMail, loadImages, loadMail, prefetchMail, prefetchTop } from '../lib/mail-load'
+import { HOVER_DELAY } from '../lib/prefetch'
 import { mailDocument, type ChatOptions } from '../lib/mail-html'
 import { modelRanges, modelRequest, type SigRange } from '../lib/mail-signature'
 import { setMailUnread } from '../lib/mail-unread'
@@ -151,6 +153,27 @@ export function MailView(): JSX.Element {
   }, [wantedKey, reload])
 
   const items = useMemo(() => mergeMail((sources ?? []).map((s) => s.items)), [sources])
+  // Die obersten Mails vorladen (ohne Bilder), dann öffnen sie sofort
+  const topKey = items.slice(0, 3).map(key).join(',')
+  useEffect(() => {
+    if (topKey) void prefetchTop(items.slice(0, 3).filter((x) => !x.isDraft))
+    // topKey fasst die drei obersten zusammen
+  }, [topKey])
+  // Beim Überfahren einer Mail in der Liste: nach kurzer Pause vorladen, beim Drücken sofort
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(hoverTimer.current), [])
+  const hoverProps = (x: MailSummary) => ({
+    onMouseEnter: () => {
+      clearTimeout(hoverTimer.current)
+      hoverTimer.current = setTimeout(() => prefetchMail(x.accountId, x.id), HOVER_DELAY)
+    },
+    onMouseLeave: () => clearTimeout(hoverTimer.current),
+    onMouseDown: (e: { button: number }) => {
+      if (e.button !== 0) return
+      clearTimeout(hoverTimer.current)
+      prefetchMail(x.accountId, x.id)
+    }
+  })
   const errors = (sources ?? []).filter((s) => s.error)
   const hasMore = (sources ?? []).some((s) => s.next)
 
@@ -334,7 +357,7 @@ export function MailView(): JSX.Element {
             const selected = !!open && open.accountId === m.accountId && open.id === m.id
             const who = showTo ? m.to.map(addressLabel).join(', ') || '(Keine Empfänger)' : addressLabel(m.from) || '(Unbekannt)'
             return (
-              <div key={key(m)} className={`mail-item ${m.isRead ? '' : 'unread'} ${selected ? 'selected' : ''}`} onClick={() => openMail(m)}>
+              <div key={key(m)} className={`mail-item ${m.isRead ? '' : 'unread'} ${selected ? 'selected' : ''}`} onClick={() => openMail(m)} {...hoverProps(m)}>
                 {multi && sel.kind === 'all' && <span className="acct-bar" style={{ background: color(m.accountId) }} />}
                 <MailAvatar accountId={m.accountId} address={showTo ? m.to[0] : m.from} name={who} />
                 <div className="mail-main">
@@ -603,7 +626,10 @@ function MailReader({
   onUnread: (m: MailMessage) => Promise<void>
   onDelete: (m: MailMessage) => Promise<void>
 }): JSX.Element {
-  const [m, setM] = useState<MailMessage | null>(null)
+  // Erst der Text, dann die eingebetteten Bilder. Eine schon geladene Mail steht sofort.
+  const [base, setBase] = useState<MailMessage | null>(() => cachedMail(target.accountId, target.id) ?? null)
+  const [images, setImages] = useState<MailImages | undefined>(() => (base ? cachedImages(base) : undefined))
+  const m = useMemo(() => (base ? withImages(base, images) : null), [base, images])
   const [error, setError] = useState<string>()
   const [remote, setRemote] = useState(false)
   const [hideSig, setHideSig] = useState(() => loadHidden(HIDE_SIG_KEY))
@@ -621,9 +647,16 @@ function MailReader({
 
   useEffect(() => {
     let alive = true
-    api
-      .getMail(target.accountId, target.id)
-      .then((x) => alive && setM(x))
+    loadMail(target.accountId, target.id)
+      .then((x) => {
+        if (!alive) return
+        setBase(x)
+        // Fehlen Bilder, zeigt die Liste die Inline-Anhänge als Dateien
+        return loadImages(x).then(
+          (i) => alive && setImages(i),
+          () => alive && setImages({ images: {}, cids: {} })
+        )
+      })
       .catch((e) => alive && setError(ipcErrorText(e)))
     return () => {
       alive = false
@@ -676,8 +709,9 @@ function MailReader({
   )
 
   useEffect(() => {
-    if (!m || !(hideSig || chat) || !modelOn || modelCache.has(modelKey)) return
-    const open = mailDocument(m, remote).unresolved
+    // Mit der Mail ohne Bilder: Die Zeilen sind dieselben, und das Nachladen fragt nicht noch einmal
+    if (!base || !(hideSig || chat) || !modelOn || modelCache.has(modelKey)) return
+    const open = mailDocument(base, remote).unresolved
     const req = modelRequest(open)
     if (!req.parts.length) return
     let alive = true
@@ -692,7 +726,7 @@ function MailReader({
     return () => {
       alive = false
     }
-  }, [m, hideSig, chat, modelOn, modelKey, remote])
+  }, [base, hideSig, chat, modelOn, modelKey, remote])
 
   const toggleSignatures = () => {
     setHideSig(!hideSig)

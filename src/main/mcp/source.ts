@@ -119,7 +119,7 @@ export function mcpAccount(acct: AccountService): McpAccount {
     mailFolders: () => acct.getMailFolders(),
     mailQuery: (q, next) => acct.queryMail(q, next),
     async mail(id) {
-      const { bodyType, body, inlineImages: _, ...rest } = await acct.getMail(id, { inlineImages: false })
+      const { bodyType, body, inlineImages: _, ...rest } = await acct.getMail(id)
       return { ...rest, text: bodyType === 'html' ? mailHtmlToText(body) : body.replace(/\r\n?/g, '\n').trim() }
     },
     mailAttachment: (id, attachmentId) => acct.getMailAttachment(id, attachmentId)

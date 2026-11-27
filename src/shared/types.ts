@@ -257,8 +257,17 @@ export interface MailMessage extends MailSummary {
   bodyType: 'html' | 'text'
   body: string
   attachments: MailAttachment[]
-  // Eingebettete Bilder (cid:…) als data:-URL, Schlüssel ist die Content-ID ohne spitze Klammern
+  // Eingebettete Bilder (cid:…) als data:-URL, Schlüssel ist die Content-ID ohne spitze Klammern.
+  // getMail liefert sie leer, damit die Mail sofort steht, getMailImages lädt sie nach.
   inlineImages: Record<string, string>
+}
+
+// Nachgeladene eingebettete Bilder einer Mail
+export interface MailImages {
+  // Content-ID (ohne spitze Klammern) → data:-URL
+  images: Record<string, string>
+  // Anhang-ID → Content-ID, damit die Oberfläche eingebettete Anhänge aus der Liste nimmt
+  cids: Record<string, string>
 }
 
 export interface MailPage {

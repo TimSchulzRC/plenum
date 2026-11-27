@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { Engine, enginePreloadPath } from './engine/engine'
 import { TeamsApi, ApiError, clientMessageId } from './engine/api'
 import { amsImageIds, replaceInlineImages } from './engine/ams'
-import { contentId, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN, type MailQuery } from './engine/mail'
+import { contentId, forEachLimit, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN, type MailQuery } from './engine/mail'
 import { MailDirectory, mailMatches } from './engine/mail-people'
 import {
   conversationKind,
@@ -30,6 +30,7 @@ import type {
   MailDraft,
   MailFolder,
   MailFolderKind,
+  MailImages,
   MailMessage,
   MailPage,
   MailSummary,
@@ -1347,31 +1348,30 @@ export class AccountService extends EventEmitter<AccountEvents> {
     return { items: items.map((m) => mapSummary(m, this.id)), next: res?.['@odata.nextLink'] || undefined }
   }
 
-  // inlineImages: false lädt keine eingebetteten Bilder (der MCP-Server braucht nur den Text)
-  async getMail(id: string, opts: { inlineImages?: boolean } = {}): Promise<MailMessage> {
+  // Nachricht und Anhangsliste parallel, ohne die eingebetteten Bilder: Die lädt getMailImages
+  // danach, damit der Text sofort steht. Inline-Anhänge stehen mit isInline in der Liste.
+  async getMail(id: string): Promise<MailMessage> {
     const [m, att] = await Promise.all([this.api.mailMessage(id), listAttachments(this.api, id)])
-    const attachments = att.map(mapAttachment)
-    if (opts.inlineImages === false) return mapMessage(m, this.id, attachments, {})
-    const body = String(m?.body?.content ?? '')
-    // Eingebettete Bilder (cid:…) als data:-URL, zusammen höchstens 8 MB. Was das HTML nicht
-    // einbettet, bleibt in der Anhangsliste.
-    const inlineImages: Record<string, string> = {}
-    const embedded = new Set<string>()
-    let budget = 8 * 1024 * 1024
-    for (const a of attachments.filter((x) => x.isInline).slice(0, 20)) {
-      if (a.size > budget) continue
+    return mapMessage(m, this.id, att.map(mapAttachment), {})
+  }
+
+  // Eingebettete Bilder (Logos, Screenshots) als data:-URL, höchstens 20, je bis zu vier gleichzeitig:
+  // Exchange drosselt schon bei sieben gleichzeitigen Anfragen je Postfach. Auswahl und Größenbudget
+  // trifft die Oberfläche, sie kennt die Anhangsliste.
+  async getMailImages(id: string, attachmentIds: string[]): Promise<MailImages> {
+    const out: MailImages = { images: {}, cids: {} }
+    await forEachLimit([...new Set(attachmentIds)].slice(0, 20), 4, async (a) => {
       try {
-        const full = await this.api.mailAttachment(id, a.id)
+        const full = await this.api.mailAttachment(id, a)
         const cid = contentId(full?.contentId)
-        if (!cid || typeof full?.contentBytes !== 'string' || !body.includes(`cid:${cid}`)) continue
-        inlineImages[cid] = `data:${full.contentType || 'application/octet-stream'};base64,${full.contentBytes}`
-        embedded.add(a.id)
-        budget -= a.size
+        if (!cid || typeof full?.contentBytes !== 'string') return
+        out.images[cid] = `data:${full.contentType || 'application/octet-stream'};base64,${full.contentBytes}`
+        out.cids[a] = cid
       } catch (e) {
         log.warn('[mail] Eingebettetes Bild nicht geladen', (e as Error).message)
       }
-    }
-    return mapMessage(m, this.id, attachments.filter((a) => !embedded.has(a.id)), inlineImages)
+    })
+    return out
   }
 
   async getMailAttachment(id: string, attachmentId: string): Promise<{ name: string; contentType?: string; data: Uint8Array }> {

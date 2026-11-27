@@ -1,6 +1,8 @@
 import type { MailMessage, OwnSignature } from '@shared/types'
 import { api } from '../api'
 import { ownSignature } from './mail-html'
+import { withImages } from './mail'
+import { loadImages, loadMail } from './mail-load'
 
 // So viele gesendete Mails liest die App, um die eigene Signatur zu finden. Nacheinander, Exchange
 // drosselt schon bei wenigen gleichzeitigen Anfragen je Postfach.
@@ -18,7 +20,11 @@ export function learnOwnSignature(accountId: string): Promise<OwnSignature> {
     const mails: MailMessage[] = []
     if (sent) {
       const page = await api.listMail(accountId, sent.id)
-      for (const item of page.items.filter((x) => !x.isDraft).slice(0, SENT_MAILS)) mails.push(await api.getMail(accountId, item.id))
+      // Mit den eingebetteten Bildern, sonst fehlte das Logo
+      for (const item of page.items.filter((x) => !x.isDraft).slice(0, SENT_MAILS)) {
+        const m = await loadMail(accountId, item.id)
+        mails.push(withImages(m, await loadImages(m).catch(() => undefined)))
+      }
     }
     const found = ownSignature(mails)
     const value: OwnSignature = { html: found?.html ?? '', text: found?.text ?? '', source: 'sent', at: Date.now() }
