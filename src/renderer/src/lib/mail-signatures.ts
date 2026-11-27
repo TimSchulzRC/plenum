@@ -20,6 +20,11 @@ const valid = (v: unknown): MailSignatures | undefined => (v && Array.isArray((v
 
 export type SignatureStatus = 'loading' | 'done' | 'error'
 
+// Kurz nach dem Start fehlt oft nur der Outlook-Token, den die Web-App erst noch anfordert: still weiter
+// versuchen, solange Entwurf oder Einstellungen offen sind
+const RETRY_MS = 15_000
+const RETRIES = 8
+
 // Signaturen eines Kontos: gespeicherte Fassung sofort, die aus Outlook sobald geladen
 export function useMailSignatures(accountId: string, enabled = true): { sigs?: MailSignatures; status: SignatureStatus; retry: () => void } {
   const sigs = useStore((s) => valid(s.settings?.mailSignatures?.[accountId]))
@@ -28,13 +33,21 @@ export function useMailSignatures(accountId: string, enabled = true): { sigs?: M
   useEffect(() => {
     if (!enabled) return
     let alive = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const load = (tries: number) =>
+      refreshSignatures(accountId).then(
+        () => alive && setStatus('done'),
+        () => {
+          if (!alive) return
+          setStatus('error')
+          if (tries < RETRIES) timer = setTimeout(() => void load(tries + 1), RETRY_MS)
+        }
+      )
     setStatus('loading')
-    refreshSignatures(accountId).then(
-      () => alive && setStatus('done'),
-      () => alive && setStatus('error')
-    )
+    void load(0)
     return () => {
       alive = false
+      clearTimeout(timer)
     }
   }, [accountId, enabled, tick])
   return { sigs, status, retry: () => setTick((t) => t + 1) }

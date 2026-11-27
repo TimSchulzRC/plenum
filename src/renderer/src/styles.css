@@ -2180,6 +2180,8 @@ button {
 .mail-compose.docked {
   flex: 0 0 auto;
   max-height: 55%;
+  /* Reicht auch die kleinste Signatur nicht (niedriges Fenster, Von und Cc offen): ganz scrollen */
+  overflow-y: auto;
   border-top: 1px solid var(--border);
   background: var(--surface);
 }

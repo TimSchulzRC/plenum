@@ -103,7 +103,8 @@ export function MailCompose({
     if (sig.edited) return
     const html = cleanSignature(s)
     if (html !== sig.html) setSig({ ...sig, html })
-  }, [sigs, accountId])
+    // Nach Zurücksetzen gilt wieder der aktuelle Standard, auch wenn er sich beim Bearbeiten geändert hat
+  }, [sigs, accountId, sig?.chosen, sig?.edited])
   // Noch nie geladen: kurz warten, sonst ginge die erste Mail ohne Signatur raus
   const sigPending = !sigs && sigStatus === 'loading' && account?.status === 'ready'
 
