@@ -72,6 +72,8 @@ Die Builds sind ad hoc signiert und nicht notarisiert. macOS blockiert sie desha
 
 Zusätzlich gibt es je Architektur ein Patch-ZIP `Plenum-<Version>-mac-<Architektur>-patch.zip`. Es enthält die App ohne `Contents/Frameworks/*.framework` und ist nur wenige MB groß (`scripts/patch-zip.sh`, im Release-Workflow nach dem Build). Der Updater lädt zuerst das Patch-ZIP und kopiert die Frameworks aus der installierten App dazu. Solange die Electron-Version gleich bleibt, sind sie bitgleich, und das Bundle besteht die Signaturprüfung. Nach einem Electron-Upgrade scheitert die Prüfung, dann lädt der Updater die volle ZIP. Fehlt das Patch-ZIP oder sein Eintrag in `SHA256SUMS.txt`, nimmt er ebenfalls die volle ZIP.
 
+Nach dem Tausch setzt das Skript ein neues Änderungsdatum und registriert das Bundle neu (`lsregister -f`), damit Finder und Dock ein geändertes Icon zeigen. Notification Center lädt das Icon für Mitteilungen erst nach einem Neustart des Prozesses neu. Deshalb merkt sich die App die SHA256-Summe von `Contents/Resources/icon.icns` in `notification-icon.txt` im Datenordner. Weicht sie beim Start ab, beendet die App einmal `NotificationCenter`, launchd startet ihn sofort neu (`src/main/notification-icon.ts`).
+
 ## Übergang von Teams Everywhere
 
 Bis November 2026 hieß die App „Teams Everywhere“. Installationen aus dieser Zeit kommen ohne Neuinstallation auf Plenum:
