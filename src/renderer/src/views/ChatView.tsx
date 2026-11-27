@@ -134,6 +134,9 @@ function ChatList(): JSX.Element {
 }
 
 const HEAD_HEIGHT = 36
+// Abstand zwischen den Köpfen, auch wenn sie oben oder unten kleben (passt zu .acct-head in styles.css)
+const HEAD_GAP = 6
+const HEAD_STEP = HEAD_HEIGHT + HEAD_GAP
 const EXPANDED_KEY = 'chatlist.expanded'
 
 function loadExpanded(): Record<string, boolean> {
@@ -164,7 +167,7 @@ function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: Acc
     requestAnimationFrame(() => {
       const body = bodies.current[id]
       const scroller = body?.parentElement
-      if (body && scroller) scroller.scrollTop = body.offsetTop - (index + 1) * HEAD_HEIGHT
+      if (body && scroller) scroller.scrollTop = body.offsetTop - index * HEAD_STEP - HEAD_HEIGHT
     })
   }
   return (
@@ -181,7 +184,7 @@ function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: Acc
               mode={open ? 'full' : 'collapsed'}
               bodyRef={(el) => void (bodies.current[a.id] = el)}
               head={(unread) => (
-                <AccountHead account={a} unread={unread} open={open} style={{ top: i * HEAD_HEIGHT, bottom: (accounts.length - 1 - i) * HEAD_HEIGHT, zIndex: 2 + i }} onToggle={() => toggle(a.id, i)} />
+                <AccountHead account={a} unread={unread} open={open} style={{ top: i * HEAD_STEP, bottom: (accounts.length - 1 - i) * HEAD_STEP, zIndex: 2 + i }} onToggle={() => toggle(a.id, i)} />
               )}
             />
           </AccountScope.Provider>
