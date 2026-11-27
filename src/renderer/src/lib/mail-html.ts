@@ -1,7 +1,7 @@
 import DOMPurify from 'dompurify'
 import type { MailFile, MailMessage } from '@shared/types'
 import { darkColor, darkCss } from './mail-dark'
-import { bodyStart, findHeaders, findSignatures, isMe, learnSignature, parseMailDate, partStarts, shortDate, threadParts, type OpenPart, type Person, type SigLine, type SigRange, type ThreadPart } from './mail-signature'
+import { bodyStart, findHeaders, findSignatures, isMe, parseMailDate, partStarts, shortDate, threadParts, type OpenPart, type Person, type SigLine, type SigRange, type ThreadPart } from './mail-signature'
 
 export interface MailDoc {
   html: string
@@ -78,9 +78,6 @@ function collectLines(root: Element): DomLine[] {
   let text = ''
   let first: Node | undefined
   let image = false
-  let imageKey = ''
-  // Ein Bild ohne Quelle: Die Zeile gilt in keiner anderen Mail als gleich
-  let unknownImage = false
   // Nummer des äußersten markierten Signatur-Elements, in dem wir gerade sind
   const markers: number[] = []
   let markerSeq = 0
@@ -92,14 +89,12 @@ function collectLines(root: Element): DomLine[] {
     if (first && (t || image)) {
       // „-- “ mit Leerzeichen am Ende ist der Signaturtrenner, das Leerzeichen fällt beim Trimmen weg
       const sep = /^[ \t\r\n]*--[ \u00a0]$/.test(text.replace(/[\r\n]+$/, '')) || undefined
-      out.push({ text: t, image: image || undefined, imageKey: (!unknownImage && imageKey) || undefined, first, marker: markers[0], sep, boundary: boundary || undefined })
+      out.push({ text: t, image: image || undefined, first, marker: markers[0], sep, boundary: boundary || undefined })
       boundary = false
     }
     text = ''
     first = undefined
     image = false
-    imageKey = ''
-    unknownImage = false
   }
   const visit = (node: Node) => {
     for (const child of [...node.childNodes]) {
@@ -117,10 +112,6 @@ function collectLines(root: Element): DomLine[] {
       if (el.tagName === 'IMG') {
         first ??= el
         image = true
-        // Länge und Ende der Quelle (bei data: das Ende der Bilddaten) unterscheiden zwei Bilder
-        const src = el.getAttribute('src') ?? ''
-        if (src) imageKey += `${src.length}:${src.slice(-64)};`
-        else unknownImage = true
         continue
       }
       if (el.tagName === 'STYLE') continue
@@ -518,29 +509,17 @@ export function mailDocument(
   return { html, blocked, signatures: all.length, headers: headers.length, unresolved, messages: parts.length + (sig.chat?.sent?.length ?? 0) }
 }
 
-// Eigene Signatur aus den zuletzt gesendeten Mails (neueste zuerst): HTML mit Formatierung und Bildern
-// (eingebettete als data:), dazu der Text für die Vorschau. Siehe learnSignature().
-export function ownSignature(mails: MailInput[]): { html: string; text: string } | undefined {
-  const docs = mails.map((m) => {
-    const { root } = mailRoot(m, true, false)
-    return { root, lines: collectLines(root), sender: senderText(m) }
+// Signatur aus Outlook für den Entwurf und zum Senden: ohne Skripte, Formulare, Stylesheets und
+// Kennungen, Bilder nur eingebettet (data:) oder über https. So zeigt der Entwurf genau die Bilder, die mit
+// der Mail rausgehen. Ohne HTML der Text mit Zeilenumbrüchen.
+export function cleanSignature(sig: { html: string; text: string }): string {
+  const source = sig.html.trim() ? sig.html : esc(sig.text.trim()).replace(/\r?\n/g, '<br>')
+  // Eigenes Dokument: Bilder lädt hier noch nichts
+  const div = document.implementation.createHTMLDocument('').createElement('div')
+  div.innerHTML = DOMPurify.sanitize(source, {
+    FORBID_TAGS: ['style', 'link', 'meta', 'base', 'title', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed'],
+    FORBID_ATTR: ['id', 'contenteditable']
   })
-  const hit = learnSignature(docs.map(({ lines, sender }) => ({ lines, sender })))
-  if (!hit) return undefined
-  const { root, lines } = docs[hit.mail]
-  const range = root.ownerDocument.createRange()
-  range.setStartBefore(cutBefore(root, lines[hit.start]))
-  if (hit.end < lines.length) range.setEndBefore(cutBefore(root, lines[hit.end]))
-  else range.setEnd(root, root.childNodes.length)
-  const frag = range.extractContents()
-  wrapTableParts(frag)
-  const div = root.ownerDocument.createElement('div')
-  div.append(frag)
-  trimBlank(div)
-  // Markierungen des Mail-Clients (id="Signature" …) nicht in jede neue Mail mitnehmen
-  for (const el of div.querySelectorAll('[id]')) el.removeAttribute('id')
-  // Bilder nur eingebettet (data:) oder über https: So zeigt die Vorschau, die man bestätigt, genau die
-  // Bilder, die mit der Mail rausgehen
   const allowed = (url: string) => /^(?:data:image\/|https:)/i.test(url.trim())
   for (const img of div.querySelectorAll('img')) if (!allowed(img.getAttribute('src') ?? '')) img.remove()
   // Ebenso Bilder aus CSS. Den Stil liest der CSS-Parser des Browsers (Escapes, Zeilenumbrüche, Kurzformen),
@@ -561,9 +540,8 @@ export function ownSignature(mails: MailInput[]): { html: string; text: string }
     else el.removeAttribute('style')
   }
   for (const el of div.querySelectorAll('[background]')) if (!allowed(el.getAttribute('background') ?? '')) el.removeAttribute('background')
-  const html = div.innerHTML.trim()
-  if (!html) return undefined
-  return { html, text: lines.slice(hit.start, hit.end).map((l) => l.text).filter(Boolean).join('\n') }
+  trimBlank(div)
+  return div.innerHTML.trim()
 }
 
 // Signatur zum Senden: Bilder als data: werden eingebettete Anhänge (cid:), wie Outlook es macht.

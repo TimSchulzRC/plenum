@@ -9,7 +9,7 @@ import type {
   MailAttachmentsSaved,
   MailDraft,
   MailFolder,
-  MailImages,
+  MailSignatures,
   MailMessage,
   MailPage,
   MailReplyKind,
@@ -83,8 +83,6 @@ export interface ApiMethods {
   listMail(accountId: string, folderId: string, next?: string): MailPage
   // background: nur vorgeladen, geöffnete Mails gehen vor
   getMail(accountId: string, messageId: string, background?: boolean): MailMessage
-  // Eingebettete Bilder einer Mail als data:-URL (für die eigene Signatur). Der Leser lädt sie über tmimg://mailcid.
-  getMailImages(accountId: string, messageId: string): MailImages
   // Anhang-ID → Content-ID der eingebetteten Bilder, nach dem Laden
   getMailImageIndex(accountId: string, messageId: string): Record<string, string>
   // Eingebettete Bilder schon laden, hinter geöffneten Mails
@@ -95,6 +93,8 @@ export interface ApiMethods {
   saveMailAttachments(accountId: string, messageId: string, attachmentIds: string[], target: 'downloads' | 'choose'): MailAttachmentsSaved | null
   // Von der App gespeicherte Datei im Dateimanager zeigen
   showSavedFile(path: string): void
+  // Signaturen aus Outlook laden, speichert sie auch als settings.mailSignatures[accountId]
+  loadMailSignatures(accountId: string): MailSignatures
   setMailRead(accountId: string, messageId: string, isRead: boolean): void
   deleteMail(accountId: string, messageId: string): void
   sendMail(accountId: string, draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): void

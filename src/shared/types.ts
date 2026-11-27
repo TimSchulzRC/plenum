@@ -478,18 +478,22 @@ export interface AppSettings {
   callVideoFit?: 'contain' | 'cover'
   // Signaturen in Mails zusätzlich mit Apple Intelligence (auf dem Gerät) suchen. Fehlt: an.
   mailSignatureModel?: boolean
-  // Eigene Signatur je Konto, aus den gesendeten Mails gelesen. Fehlt ein Konto: noch nicht gelesen.
-  mailSignatures?: Record<string, OwnSignature>
+  // Signaturen je Konto aus Outlook, die zuletzt geladene Fassung. Fehlt ein Konto: noch nie geladen.
+  mailSignatures?: Record<string, MailSignatures>
 }
 
-export interface OwnSignature {
-  // leer: in den gesendeten Mails keine gefunden oder abgeschaltet
+// Eine Signatur, wie sie in Outlook hinterlegt ist. html mit eingebetteten Bildern (data:), text ohne Formatierung.
+export interface OutlookSignature {
+  name: string
   html: string
   text: string
-  // sent: aus den gesendeten Mails, off: abgeschaltet
-  source: 'sent' | 'off'
-  // Gelesen ist nicht bestätigt: Angehängt wird erst, wenn man die Vorschau übernommen hat
-  confirmed?: boolean
+}
+
+export interface MailSignatures {
+  list: OutlookSignature[]
+  // Standard für neue Mails und für Antworten und Weiterleitungen (Name aus list). Fehlt: keine Signatur.
+  newDefault?: string
+  replyDefault?: string
   at: number
 }
 

@@ -352,7 +352,6 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     getMailUnread: (id) => get(id).getMailUnread(),
     listMail: (id, folderId, next) => get(id).listMail(folderId, next),
     getMail: (id, mid, background) => get(id).getMail(mid, background),
-    getMailImages: (id, mid) => get(id).getMailImages(mid),
     getMailImageIndex: (id, mid) => get(id).getMailImageIndex(mid),
     prefetchMailImages: (id, mid) => get(id).prefetchMailImages(mid),
     openMailAttachment: async (id, mid, aid, mode) => deliverAttachment(sender(), await get(id).getMailAttachment(mid, aid), mode),
@@ -376,6 +375,14 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
       return { folder, inDownloads: folder === downloadsDir(), paths, skipped }
     },
     showSavedFile: (path) => showSavedFile(path),
+    // Signaturen aus Outlook laden und als zuletzt geladene Fassung des Kontos speichern
+    loadMailSignatures: async (id) => {
+      const sigs = await get(id).getMailSignatures()
+      settings = { ...settings, mailSignatures: { ...settings.mailSignatures, [id]: sigs } }
+      store.saveSettings(settings)
+      broadcast('settings', settings)
+      return sigs
+    },
     setMailRead: (id, mid, isRead) => get(id).setMailRead(mid, isRead),
     deleteMail: (id, mid) => get(id).deleteMail(mid),
     sendMail: (id, draft, reply) => get(id).sendMail(draft, reply),
@@ -413,8 +420,6 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     setSettings: (patch) => {
       const prev = settings
       settings = { ...settings, ...patch }
-      // Signaturen je Konto: nur die übergebenen Konten ändern, sonst überschriebe ein Konto das andere
-      if (patch.mailSignatures) settings.mailSignatures = { ...prev.mailSignatures, ...patch.mailSignatures }
       store.saveSettings(settings)
       for (const c of settingsChanges(prev, settings)) analytics.track(c.event, c.props, { active: true })
       if (patch.activeAccountId && patch.activeAccountId !== prev.activeAccountId && accounts.size > 1) {

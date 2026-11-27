@@ -26,12 +26,6 @@ export async function loadImageIndex(m: MailMessage): Promise<MailImages> {
   return { images: {}, cids: await api.getMailImageIndex(m.accountId, m.id) }
 }
 
-// Bilder als data:-URL, für die eigene Signatur (Logo)
-export function loadImages(m: MailMessage): Promise<MailImages> {
-  if (!m.attachments.some((a) => a.isInline)) return Promise.resolve({ images: {}, cids: {} })
-  return api.getMailImages(m.accountId, m.id)
-}
-
 // Beim Überfahren in der Liste: Mail und Bilder schon laden, hinter geöffneten Mails. Fehler zeigt
 // erst das Öffnen. Entwürfe nicht.
 export function prefetchMail(m: { accountId: string; id: string; isDraft: boolean }): void {

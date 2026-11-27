@@ -17,8 +17,6 @@ export interface SigLine {
   boundary?: boolean
   // Enthält ein Bild (Logo, Social-Media-Symbole)
   image?: boolean
-  // Kennung der Bilder der Zeile (aus der Quelle), um gleiche Bilder in zwei Mails zu erkennen
-  imageKey?: string
 }
 
 export interface SigRange {
@@ -634,76 +632,6 @@ export function threadParts(lines: SigLine[], signatures: { start: number; end: 
     if (sig) part.signature = { start: sig.start, end: Math.min(sig.end, end) }
     return part
   })
-}
-
-// ---------- Eigene Signatur aus gesendeten Mails ----------
-
-export interface SentMailLines {
-  lines: SigLine[]
-  // Anzeigename und Teil der Adresse vor dem @ der eigenen Mails
-  sender?: string
-}
-
-// Gleiche Zeile in zwei Mails: gleicher Text, und ein Bild nur, wenn es dasselbe Bild ist. Ein Bild
-// ohne bekannte Quelle ist nie gleich: Zwei verschiedene Screenshots unter derselben Bildunterschrift
-// sind keine Signatur.
-const sameLine = (a: SigLine, b: SigLine) => a.text === b.text && (!a.image ? !b.image : !!b.image && !!a.imageKey && a.imageKey === b.imageKey)
-
-// Eigene Signatur: das Ende der eigenen Nachricht, das in mindestens zwei der letzten gesendeten Mails
-// gleich ist. Sie beginnt bei der Zeile mit dem eigenen Namen, höchstens ein Logo darf davor stehen:
-// Was davor gleich ist (Grußformel, ein Satz, ein Link), schreibt man selbst und hängt nicht an jede
-// Mail. Neueste Mail zuerst. Findet sich keins, die Signatur, die die Regeln in einer der Mails finden,
-// wenn sie ebenso mit dem eigenen Namen beginnt. Ergebnis: Mail und Zeilen [start, end).
-export function learnSignature(mails: SentMailLines[]): { mail: number; start: number; end: number } | undefined {
-  // Nur die eigene Nachricht, ohne zitierten Verlauf
-  const own = mails.map((m) => m.lines.slice(0, partStarts(m.lines)[1] ?? m.lines.length))
-  const me = nameTokens(mails.find((m) => m.sender)?.sender ?? '')
-  if (!me.size) return undefined
-  const need = Math.min(2, me.size)
-  const ownName = (l: SigLine) => {
-    const t = l.text.trim()
-    return !l.image && t.length <= 60 && !prose(l) && [...nameTokens(t.split(/\s*[|·,]\s*/)[0])].filter((w) => me.has(w)).length >= need
-  }
-  // Beginn einer Signatur bei from: Namenszeile, davor höchstens Bilder. Sonst -1.
-  const signatureStart = (lines: SigLine[], from: number) => {
-    for (let n = from; n < lines.length; n++) {
-      if (!ownName(lines[n])) continue
-      let s = n
-      while (s > from && imageOnly(lines[s - 1])) s--
-      return s
-    }
-    return -1
-  }
-  const valid = (block: SigLine[]) => block.length >= 2 && block.some((l) => specific(l) || link(l)) && !block.some(prose)
-  for (let i = 0; i < own.length; i++) {
-    const a = own[i]
-    let same = 0
-    for (let j = 0; j < own.length; j++) {
-      if (j === i) continue
-      const b = own[j]
-      let k = 0
-      while (k < a.length && k < b.length && sameLine(a[a.length - 1 - k], b[b.length - 1 - k])) k++
-      same = Math.max(same, k)
-    }
-    // Die erste Zeile ist Inhalt, auch wenn zwei Mails gleich lauten
-    const start = signatureStart(a, Math.max(1, a.length - same))
-    if (start >= 0 && valid(a.slice(start))) return { mail: i, start, end: a.length }
-  }
-  // Ein Bild im Block muss auch in einer anderen gesendeten Mail stehen (Logo), sonst ist es ein
-  // Screenshot oder Foto, das man einmal mitgeschickt hat. Mit nur einer Mail lässt sich das nicht
-  // prüfen, dann entscheidet die Vorschau, die man bestätigt.
-  const knownImages = (i: number, block: SigLine[]) =>
-    own.length < 2 || block.every((l) => !l.image || own.some((o, j) => j !== i && o.some((x) => sameLine(l, x))))
-  for (let i = 0; i < own.length; i++) {
-    const r = findSignatures(mails[i].lines, mails[i].sender).find((x) => x.start < own[i].length)
-    if (!r) continue
-    const end = Math.min(r.end, own[i].length)
-    // Die Namenszeile steht direkt über dem Bereich, den der Lesebereich einklappt
-    const start = signatureStart(own[i], Math.max(1, r.start - 1))
-    const block = own[i].slice(start, end)
-    if (start >= 0 && start <= r.start && valid(block) && knownImages(i, block)) return { mail: i, start, end }
-  }
-  return undefined
 }
 
 // ---------- Sprachmodell (Apple Intelligence) für Teile ohne Regel-Treffer ----------

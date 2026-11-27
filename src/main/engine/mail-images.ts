@@ -235,12 +235,6 @@ export class MailImageStore {
     return Object.fromEntries([...(this.got.get(messageId) ?? new Map<string, ImageEntry>())].map(([id, e]) => [id, e.cid]))
   }
 
-  // Alle Bilder einer Mail als Einträge (für die eigene Signatur)
-  async all(messageId: string): Promise<[string, ImageEntry][]> {
-    await this.load(messageId, true)
-    return [...(this.got.get(messageId) ?? new Map<string, ImageEntry>())]
-  }
-
   // Älteste Mails zuerst verwerfen, die gerade geladene bleibt
   private evict(keep: string): void {
     for (const [id, got] of this.got) {

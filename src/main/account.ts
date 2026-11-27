@@ -8,6 +8,7 @@ import { TeamsApi, ApiError, clientMessageId } from './engine/api'
 import { amsImageIds, replaceInlineImages } from './engine/ams'
 import { inlineToLoad, Limiter, MailImageStore, type ImageEntry } from './engine/mail-images'
 import { contentId, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN, type MailQuery } from './engine/mail'
+import { mailSignatures, parseSignatureBodies, parseSignatureList, signatureBodiesUrl, signatureListUrl } from './engine/outlook-signatures'
 import { MailDirectory, mailMatches } from './engine/mail-people'
 import {
   conversationKind,
@@ -31,7 +32,7 @@ import type {
   MailDraft,
   MailFolder,
   MailFolderKind,
-  MailImages,
+  MailSignatures,
   MailMessage,
   MailPage,
   MailSummary,
@@ -1387,14 +1388,13 @@ export class AccountService extends EventEmitter<AccountEvents> {
     return this.mailImages.index(id)
   }
 
-  // Alle eingebetteten Bilder als data:-URL, für die eigene Signatur (Logo)
-  async getMailImages(id: string): Promise<MailImages> {
-    const out: MailImages = { images: {}, cids: {} }
-    for (const [attachmentId, e] of await this.mailImages.all(id)) {
-      out.images[e.cid] = `data:${e.type};base64,${Buffer.from(e.data).toString('base64')}`
-      out.cids[attachmentId] = e.cid
-    }
-    return out
+  // Signaturen aus Outlook: Liste mit den Standards, dann alle Texte in einer Anfrage, wie Outlook im Web
+  async getMailSignatures(): Promise<MailSignatures> {
+    const list = parseSignatureList(await this.mailLimit.run(() => this.api.outlookSettings(signatureListUrl()), true))
+    const bodies = list.names.length
+      ? parseSignatureBodies(await this.mailLimit.run(() => this.api.outlookSettings(signatureBodiesUrl(list.names), true), true), list.names)
+      : []
+    return mailSignatures(list, bodies)
   }
 
   async getMailAttachment(id: string, attachmentId: string): Promise<{ name: string; contentType?: string; data: Uint8Array }> {

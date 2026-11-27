@@ -6,7 +6,8 @@ import { api } from '../api'
 import { USAGE_DATA_DOC } from '../analytics'
 import { PersonAvatar } from '../components/Avatars'
 import { McpSettings } from '../components/McpSettings'
-import { confirmOwnSignature, disableOwnSignature, learnOwnSignature } from '../lib/own-signature'
+import { cleanSignature } from '../lib/mail-html'
+import { defaultSignature, useMailSignatures } from '../lib/mail-signatures'
 import { SignaturePreview } from '../components/SignaturePreview'
 import { accountTitle } from '@shared/accounts'
 import { statusText } from '../components/TitleBar'
@@ -126,10 +127,10 @@ export function SettingsView(): JSX.Element {
         {accounts
           .filter((a) => !a.parentId)
           .map((a) => (
-            <OwnSignatureRow key={a.id} account={a} multi={accounts.filter((x) => !x.parentId).length > 1} />
+            <SignatureRow key={a.id} account={a} multi={accounts.filter((x) => !x.parentId).length > 1} />
           ))}
         <div className="hint">
-          Deine Signatur liest die App aus deinen zuletzt gesendeten Mails: was dort ab deinem Namen am Ende gleich ist, mit Formatierung und Logo. Nach dem Übernehmen hängt sie an neue Mails und Antworten. Eine Grußformel schreibst du selbst.
+          Die Signaturen kommen aus Outlook, mit Formatierung und Logo. Neue Mails und Antworten bekommen den Standard, den du dort eingestellt hast. Beim Schreiben wählst du eine andere, änderst sie für diese Mail oder lässt sie weg. Die Signaturen selbst bearbeitest du in Outlook unter Einstellungen › Konten › Signaturen.
         </div>
         <div className="row">
           <div className="grow">Signaturen auch mit Apple Intelligence erkennen</div>
@@ -484,52 +485,29 @@ function Tenants({ account }: { account: AccountInfo }): JSX.Element | null {
 }
 
 // Eigene Signatur eines Kontos: Vorschau, neu einlesen, abschalten
-function OwnSignatureRow({ account, multi }: { account: AccountInfo; multi: boolean }): JSX.Element {
-  const own = useStore((s) => s.settings?.mailSignatures?.[account.id])
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string>()
-  const relearn = async () => {
-    setBusy(true)
-    setError(undefined)
-    try {
-      await learnOwnSignature(account.id)
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-  const status = busy
-    ? 'Wird aus den gesendeten Mails gelesen …'
-    : !own
-      ? 'Noch nicht gelesen. Das passiert beim ersten Verfassen.'
-      : own.source === 'off'
-        ? 'Wird nicht angehängt.'
-        : own.html
-          ? own.confirmed
-            ? 'Hängt an neue Mails und Antworten.'
-            : 'Gefunden, noch nicht übernommen.'
-          : 'In den gesendeten Mails keine gefunden.'
+function SignatureRow({ account, multi }: { account: AccountInfo; multi: boolean }): JSX.Element {
+  const { sigs, status, retry } = useMailSignatures(account.id, account.status === 'ready')
+  const loading = status === 'loading' && account.status === 'ready'
+  const def = defaultSignature(sigs, false)
+  const reply = sigs?.replyDefault
+  const q = (n?: string) => (n ? `„${n}“` : 'keine')
+  const text = !sigs
+    ? loading
+      ? 'Wird aus Outlook geladen …'
+      : 'Aus Outlook nicht erreichbar.'
+    : !sigs.list.length
+      ? 'In Outlook ist keine Signatur hinterlegt.'
+      : `${sigs.list.length === 1 ? '1 Signatur' : `${sigs.list.length} Signaturen`} in Outlook. Neue Mails: ${q(sigs.newDefault)}, Antworten: ${q(reply)}.`
   return (
     <div className="row own-signature">
       <div className="grow">
         <div>{multi ? `Signatur · ${accountTitle(account).name}` : 'Signatur'}</div>
-        <div className="hint">{error ?? status}</div>
-        {own?.source === 'sent' && own.html && !busy && <SignaturePreview html={own.html} />}
+        <div className="hint">{text}</div>
+        {def && <SignaturePreview html={cleanSignature(def)} />}
       </div>
-      {own?.source === 'sent' && own.html && !own.confirmed && (
-        <Button size="small" appearance="primary" disabled={busy} onClick={() => void confirmOwnSignature(account.id, own)}>
-          Übernehmen
-        </Button>
-      )}
-      <Button size="small" disabled={busy || account.status !== 'ready'} onClick={() => void relearn()}>
-        Neu einlesen
+      <Button size="small" disabled={loading || account.status !== 'ready'} onClick={retry}>
+        Neu laden
       </Button>
-      {own?.source === 'sent' && own.html && (
-        <Button size="small" appearance="subtle" disabled={busy} onClick={() => void disableOwnSignature(account.id)}>
-          Nicht anhängen
-        </Button>
-      )}
     </div>
   )
 }

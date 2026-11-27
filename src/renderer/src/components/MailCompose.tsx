@@ -1,4 +1,4 @@
-import { Button, Checkbox, Dropdown, Field, Input, Option, Spinner, Textarea } from '@fluentui/react-components'
+import { Button, Dropdown, Field, Input, Option, Textarea } from '@fluentui/react-components'
 import { Attach20Regular, Dismiss12Regular, Send20Regular } from '@fluentui/react-icons'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AccountInfo, MailFile, MailMessage, MailReplyKind } from '@shared/types'
@@ -7,10 +7,9 @@ import { accountTitle } from '@shared/accounts'
 import { ipcErrorText, parseAttendees } from '../lib/calendar'
 import { addressLabel, fileSize, replyDraft } from '../lib/mail'
 import { fmt } from '../lib/format'
-import { signatureForSend } from '../lib/mail-html'
-import { confirmOwnSignature, disableOwnSignature, learnOwnSignature } from '../lib/own-signature'
-import { SignaturePreview } from './SignaturePreview'
-import { useStore } from '../store'
+import { cleanSignature, signatureForSend } from '../lib/mail-html'
+import { defaultSignature, findSignature, useMailSignatures } from '../lib/mail-signatures'
+import { ComposeSignature, type SignatureChoice } from './ComposeSignature'
 
 export type ComposeState = { kind: 'new'; accountId: string } | { kind: MailReplyKind; accountId: string; source: MailMessage }
 // Was gesendet wurde, damit die Chat-Ansicht die Antwort sofort zeigt
@@ -74,30 +73,39 @@ export function MailCompose({
   const [reading, setReading] = useState(0)
   const [error, setError] = useState<string>()
   const picker = useRef<HTMLInputElement>(null)
-  // Eigene Signatur des Kontos. Beim ersten Verfassen liest die App sie aus den gesendeten Mails.
-  const own = useStore((s) => s.settings?.mailSignatures?.[accountId])
-  const [learning, setLearning] = useState(false)
-  const [withSignature, setWithSignature] = useState(true)
-  const ready = account?.status === 'ready'
+  // Signatur aus Outlook: der Standard für neue Mails oder für Antworten, für diese Mail änderbar
+  const reply = state.kind !== 'new'
+  const { sigs, status: sigStatus, retry: retrySigs } = useMailSignatures(accountId, account?.status === 'ready')
+  const [sig, setSig] = useState<SignatureChoice>()
   useEffect(() => {
-    // Sobald die Signatur in den Einstellungen steht, ist das Lesen fertig
-    if (own || !ready) {
-      setLearning(false)
+    if (!sigs) {
+      // Anderes Konto, dessen Signaturen noch nicht da sind: Die des alten Kontos gilt nicht mehr
+      if (sig && sig.accountId !== accountId) setSig(undefined)
       return
     }
-    let alive = true
-    setLearning(true)
-    learnOwnSignature(accountId)
-      .catch(() => {})
-      .finally(() => alive && setLearning(false))
-    return () => {
-      alive = false
+    // Erstes Laden, anderes Konto oder noch nichts gewählt: Standard des Kontos, auch wenn er sich
+    // beim Abgleich mit Outlook ändert
+    if (!sig || sig.accountId !== accountId || (!sig.chosen && !sig.edited)) {
+      const d = defaultSignature(sigs, reply)
+      const html = d ? cleanSignature(d) : ''
+      if (!sig || sig.accountId !== accountId || sig.name !== (d?.name ?? null) || sig.html !== html) {
+        setSig({ accountId, name: d?.name ?? null, html, edited: false, chosen: false })
+      }
+      return
     }
-  }, [accountId, !!own, ready])
-  // Angehängt wird nur eine bestätigte Signatur. Eine neu gefundene zeigt die App einmal zur Prüfung.
-  const found = own?.source === 'sent' && !!own.html
-  const pending = found && !own.confirmed
-  const signature = found && own.confirmed ? own.html : ''
+    // In Outlook gelöscht: weg, auch wenn man sie geändert hat. Die Leiste zeigt sie dann nicht mehr.
+    const s = findSignature(sigs, sig.name)
+    if (!s) {
+      if (sig.name) setSig({ ...sig, name: null, html: '', edited: false })
+      return
+    }
+    // Neue Fassung aus Outlook übernehmen, solange man sie nicht geändert hat
+    if (sig.edited) return
+    const html = cleanSignature(s)
+    if (html !== sig.html) setSig({ ...sig, html })
+  }, [sigs, accountId])
+  // Noch nie geladen: kurz warten, sonst ginge die erste Mail ohne Signatur raus
+  const sigPending = !sigs && sigStatus === 'loading' && account?.status === 'ready'
 
   const toList = parseAttendees(to)
   const ccList = parseAttendees(cc)
@@ -110,8 +118,8 @@ export function MailCompose({
         ? `${big.name} ist größer als 3 MB`
         : reading
           ? 'Dateien werden noch gelesen'
-          : learning && withSignature
-            ? 'Signatur wird noch gelesen'
+          : sigPending
+            ? 'Signatur wird noch geladen'
           : account && account.status !== 'ready'
           ? `${accountTitle(account).name} ist nicht verbunden`
           : undefined
@@ -139,17 +147,19 @@ export function MailCompose({
     setBusy(true)
     setError(undefined)
     try {
-      const sig = withSignature && signature ? signatureForSend(signature) : undefined
+      // Nur was unter dem Text zu sehen ist: Signatur dieses Kontos
+      const sigHtml = sig?.name && sig.accountId === accountId ? cleanSignature({ html: sig.html, text: '' }) : ''
+      const sent = sigHtml ? signatureForSend(sigHtml) : undefined
       const draft = {
         to: toList.valid,
         cc: ccList.valid,
         subject,
         text,
-        signature: sig?.html,
-        attachments: [...files.map(({ name, contentType, data }) => ({ name, contentType, data })), ...(sig?.files ?? [])]
+        signature: sent?.html,
+        attachments: [...files.map(({ name, contentType, data }) => ({ name, contentType, data })), ...(sent?.files ?? [])]
       }
       await api.sendMail(accountId, draft, source && state.kind !== 'new' ? { id: source.id, kind: state.kind } : undefined)
-      onSent({ accountId, to: draft.to, cc: draft.cc, text, files: files.length, at: Date.now(), signature: sig ? signature : undefined })
+      onSent({ accountId, to: draft.to, cc: draft.cc, text, files: files.length, at: Date.now(), signature: sigHtml || undefined })
     } catch (e) {
       setError(ipcErrorText(e))
       setBusy(false)
@@ -267,40 +277,7 @@ export function MailCompose({
           resize="none"
         />
       </div>
-      <div className="compose-signature">
-        {learning ? (
-          <>
-            <Spinner size="extra-tiny" />
-            <span>Signatur wird aus deinen gesendeten Mails gelesen …</span>
-          </>
-        ) : pending && own ? (
-          <div className="sig-confirm">
-            <div>In deinen gesendeten Mails steht diese Signatur. Soll die App sie an deine Mails hängen?</div>
-            <SignaturePreview html={own.html} />
-            <div className="sig-actions">
-              <Button size="small" appearance="primary" onClick={() => void confirmOwnSignature(accountId, own)}>
-                Übernehmen
-              </Button>
-              <Button size="small" appearance="subtle" onClick={() => void disableOwnSignature(accountId)}>
-                Nicht anhängen
-              </Button>
-            </div>
-          </div>
-        ) : signature ? (
-          <Checkbox
-            size="medium"
-            checked={withSignature}
-            onChange={(_e, d) => setWithSignature(!!d.checked)}
-            label={
-              <span className="sig-label" title={own?.text}>
-                Signatur anhängen: <span className="sig-text">{own?.text.split('\n').join(' · ')}</span>
-              </span>
-            }
-          />
-        ) : (
-          <span>{own?.source === 'off' ? 'Signatur abgeschaltet, in den Einstellungen wieder einlesen.' : 'Keine Signatur in deinen gesendeten Mails gefunden. Einstellungen › E-Mail liest sie neu ein.'}</span>
-        )}
-      </div>
+      <ComposeSignature sigs={sigs} status={sigStatus} value={sig} onChange={setSig} onRetry={retrySigs} />
       {error && <div className="mail-error">{error}</div>}
       {source && !docked && (
         <div className="compose-quote">
