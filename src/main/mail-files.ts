@@ -42,7 +42,7 @@ export async function deliverAttachment(win: BrowserWindow | null, file: Attachm
     saved.add(res.filePath)
     return res.filePath
   }
-  const base = join(app.getPath('temp'), 'Teams Everywhere Mail')
+  const base = join(app.getPath('temp'), 'Plenum Mail')
   await mkdir(base, { recursive: true, mode: 0o700 })
   const dir = await mkdtemp(join(base, 'anhang-'))
   const path = join(dir, safeName(file.name))

@@ -21,7 +21,7 @@ body:
     id: version
     attributes:
       label: App-Version
-      description: Steht unter „Über Teams Everywhere“, z. B. 0.1.0-nightly.20261118.12
+      description: Steht unter „Über Plenum“, z. B. 0.1.0-nightly.20261118.12
     validations:
       required: true
   - type: input
@@ -35,5 +35,5 @@ body:
     id: log
     attributes:
       label: Log-Auszug
-      description: "Aus ~/Library/Application Support/Teams Everywhere/logs/main.log. Bitte vorher Namen, Mailadressen und Nachrichteninhalte entfernen."
+      description: "Aus ~/Library/Application Support/Plenum/logs/main.log. Bitte vorher Namen, Mailadressen und Nachrichteninhalte entfernen."
       render: text

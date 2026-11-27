@@ -3,30 +3,32 @@
   <img src="assets/icons/stable.svg" width="64" height="64" alt="">
 </picture>
 
-# Teams Everywhere
+# Plenum
 
-[![CI](https://github.com/TimSchulzRC/teams-everywhere/actions/workflows/ci.yml/badge.svg)](https://github.com/TimSchulzRC/teams-everywhere/actions/workflows/ci.yml)
-[![Release](https://github.com/TimSchulzRC/teams-everywhere/actions/workflows/release.yml/badge.svg)](https://github.com/TimSchulzRC/teams-everywhere/actions/workflows/release.yml)
-[![Neuester Nightly](https://img.shields.io/github/v/release/TimSchulzRC/teams-everywhere?include_prereleases&label=nightly)](https://github.com/TimSchulzRC/teams-everywhere/releases)
-[![Lizenz: MIT](https://img.shields.io/github/license/TimSchulzRC/teams-everywhere)](LICENSE)
+[![CI](https://github.com/TimSchulzRC/plenum/actions/workflows/ci.yml/badge.svg)](https://github.com/TimSchulzRC/plenum/actions/workflows/ci.yml)
+[![Release](https://github.com/TimSchulzRC/plenum/actions/workflows/release.yml/badge.svg)](https://github.com/TimSchulzRC/plenum/actions/workflows/release.yml)
+[![Neuester Nightly](https://img.shields.io/github/v/release/TimSchulzRC/plenum?include_prereleases&label=nightly)](https://github.com/TimSchulzRC/plenum/releases)
+[![Lizenz: MIT](https://img.shields.io/github/license/TimSchulzRC/plenum)](LICENSE)
 
-Eigener Teams-Client mit einer selbst gebauten Oberfläche im Stil der Teams-Desktop-App. Daten, Anmeldung und Anrufe kommen aus der Teams-Web-App, die pro Konto unsichtbar im Hintergrund läuft. Die App kann deshalb genau das, was die Web-App auf diesem Gerät kann.
+Eigener Client für Microsoft Teams mit Mail und Kalender, mit einer selbst gebauten Oberfläche im Stil der Teams-Desktop-App. Daten, Anmeldung und Anrufe kommen aus der Teams-Web-App, die pro Konto unsichtbar im Hintergrund läuft. Die App kann deshalb genau das, was die Web-App auf diesem Gerät kann.
 
-Aktuell läuft Teams Everywhere auf macOS. Windows und Linux sind geplant.
+Aktuell läuft Plenum auf macOS. Windows und Linux sind geplant.
+
+Bis November 2026 hieß die App Teams Everywhere. Bestehende Installationen bekommen Plenum als normales Update. Beim ersten Start benennt sich die App in Programme um und übernimmt Konten, Anmeldungen und Einstellungen.
 
 > [!NOTE]
-> Teams Everywhere ist ein privates Open-Source-Projekt. Es steht in keiner Verbindung zu Microsoft und wird von Microsoft weder unterstützt noch geprüft. „Microsoft Teams“ ist eine Marke der Microsoft Corporation.
+> Plenum ist ein privates Open-Source-Projekt. Es steht in keiner Verbindung zu Microsoft und wird von Microsoft weder unterstützt noch geprüft. „Microsoft Teams“ ist eine Marke der Microsoft Corporation.
 
 ## Installation
 
-Fertige Builds liegen unter [Releases](https://github.com/TimSchulzRC/teams-everywhere/releases). Im Moment gibt es nur Nightlies. Sie entstehen automatisch aus `main`, höchstens alle 6 Stunden und nur, wenn es neue Commits gibt.
+Fertige Builds liegen unter [Releases](https://github.com/TimSchulzRC/plenum/releases). Im Moment gibt es nur Nightlies. Sie entstehen automatisch aus `main`, höchstens alle 6 Stunden und nur, wenn es neue Commits gibt.
 
 1. Die passende DMG laden: `…-mac-arm64.dmg` für Apple Silicon (M1 und neuer), `…-mac-x64.dmg` für Intel-Macs.
-2. Teams Everywhere aus der DMG in den Ordner Programme ziehen. Nightlies heißen „Teams Everywhere (nightly)“.
+2. Plenum aus der DMG in den Ordner Programme ziehen. Nightlies heißen „Plenum (nightly)“.
 3. Die App ist nicht von Apple notarisiert, macOS blockiert sie deshalb beim ersten Start. Einmal im Terminal ausführen (bei Stable-Releases ohne „ (nightly)“):
 
    ```sh
-   xattr -dr com.apple.quarantine "/Applications/Teams Everywhere (nightly).app"
+   xattr -dr com.apple.quarantine "/Applications/Plenum (nightly).app"
    ```
 
 Danach sucht die App selbst nach Updates, 15 Sekunden nach dem Start und dann alle 30 Minuten. Gibt es eine neue Version, erscheint unten in der linken Leiste der Knopf „Update“. Ein Klick lädt sie und prüft ihre SHA256-Summe, ein Klick auf „Neustart“ tauscht die App aus und startet sie neu. Unter Einstellungen → Updates siehst du Version und Kanal und kannst die Suche auch von Hand anstoßen. Nightly-Installationen bekommen Nightlies und Stable-Releases, Stable-Installationen nur Stable-Releases.
@@ -47,17 +49,19 @@ Das Update braucht Schreibrechte auf die App und ihren Ordner und klappt nicht, 
 
 ## Claude Code und Codex (MCP)
 
-Teams Everywhere bringt einen lokalen MCP-Server mit. Claude Code, Codex und andere MCP-Clients auf demselben Gerät können darüber deine Teams-Daten lesen, in allen angemeldeten Konten: Chats, Kanäle, Nachrichten, geteilte Dateien und Bilder, Anrufverlauf, Aktivität, Kalender und das Personenverzeichnis. Senden, ändern oder als gelesen markieren kann der Server nichts.
+Plenum bringt einen lokalen MCP-Server mit. Claude Code, Codex und andere MCP-Clients auf demselben Gerät können darüber deine Teams-Daten lesen, in allen angemeldeten Konten: Chats, Kanäle, Nachrichten, geteilte Dateien und Bilder, Anrufverlauf, Aktivität, Kalender und das Personenverzeichnis. Senden, ändern oder als gelesen markieren kann der Server nichts.
 
 1. Einstellungen → Claude Code und Codex → MCP-Server einschalten.
 2. Bei Claude Code oder Codex auf „Eintragen“ klicken. Die App ruft dann `claude mcp add` bzw. `codex mcp add` auf und trägt den Server für alle Projekte ein. Alternativ den angezeigten Befehl kopieren und im Terminal ausführen. Für andere Clients stehen dort auch der JSON-Eintrag und der Abschnitt für `~/.codex/config.toml`.
 3. Laufende Sitzungen von Claude Code oder Codex neu starten.
 
+Aus der Zeit als Teams Everywhere eingetragene Server (`teams-everywhere`) funktionieren weiter. „Eintragen“ ersetzt sie durch `plenum`.
+
 Danach reicht eine Frage wie „Was gab es heute Neues in Teams?“ oder „Welche Anrufe habe ich verpasst?“.
 
 Der Server lauscht nur auf `127.0.0.1`, Port 47311 (Dev: 47312), und läuft, solange die App offen ist. Die Adresse enthält einen geheimen Schlüssel. „Neuer Schlüssel“ in den Einstellungen macht alte Einträge ungültig, danach den Server neu eintragen. Ist der Port belegt, nimmt die App einen freien Port und zeigt die neue Adresse an.
 
-Werkzeuge: `list_accounts`, `list_conversations`, `list_teams`, `get_messages`, `search_messages`, `list_files`, `read_file`, `get_call_history`, `get_activity`, `get_calendar`, `search_people`. `search_messages` und `list_files` lesen die zuletzt aktiven Unterhaltungen ab einem Datum (Standard: 30 Tage) und durchsuchen sie lokal, eine Volltextsuche über das ganze Archiv ist das nicht. `read_file` legt jede Datei zusätzlich im Temp-Ordner unter „Teams Everywhere MCP“ ab, damit der Agent auch PDFs und Office-Dateien lesen kann. Dateien aus SharePoint und OneDrive holt die App über Microsoft Graph mit dem Token der Teams-Web-App.
+Werkzeuge: `list_accounts`, `list_conversations`, `list_teams`, `get_messages`, `search_messages`, `list_files`, `read_file`, `get_call_history`, `get_activity`, `get_calendar`, `search_people`. `search_messages` und `list_files` lesen die zuletzt aktiven Unterhaltungen ab einem Datum (Standard: 30 Tage) und durchsuchen sie lokal, eine Volltextsuche über das ganze Archiv ist das nicht. `read_file` legt jede Datei zusätzlich im Temp-Ordner unter „Plenum MCP“ ab, damit der Agent auch PDFs und Office-Dateien lesen kann. Dateien aus SharePoint und OneDrive holt die App über Microsoft Graph mit dem Token der Teams-Web-App.
 
 ## Datenschutz
 
@@ -78,17 +82,17 @@ Voraussetzung sind Node.js 24 (siehe `.nvmrc`) und pnpm in der Version aus `pack
 pnpm install
 pnpm run dev          # Entwicklung mit Hot Reload
 pnpm run typecheck
-pnpm run dist         # baut release/mac-arm64/Teams Everywhere.app (ad hoc signiert)
+pnpm run dist         # baut release/mac-arm64/Plenum.app (ad hoc signiert)
 pnpm run dist:release # baut DMG und ZIP für arm64 und x64 wie die Release-Pipeline
 ```
 
-`pnpm run dev` und `pnpm start` laufen als „Teams Everywhere (dev)“ mit eigenem Datenordner `~/Library/Application Support/Teams Everywhere (dev)`. Konten, Anmeldungen, Einstellungen und Logs der installierten App bleiben unberührt, und beide können gleichzeitig laufen. Der Dev-Ordner hängt nicht am Checkout, Anmeldungen bleiben also auch in neuen Worktrees und nach Updates erhalten. Vor jedem Start trägt `scripts/dev-app.mjs` Namen, eigene Bundle-ID (`io.github.timschulzrc.teamseverywhere.dev`) und das Dev-Icon in die Electron.app unter `node_modules` ein und signiert sie ad hoc neu. So zeigen Dock und Mitteilungen das Dev-Icon, und macOS fragt die Mitteilungen für Dev getrennt ab.
+`pnpm run dev` und `pnpm start` laufen als „Plenum (dev)“ mit eigenem Datenordner `~/Library/Application Support/Plenum (dev)`. Konten, Anmeldungen, Einstellungen und Logs der installierten App bleiben unberührt, und beide können gleichzeitig laufen. Der Dev-Ordner hängt nicht am Checkout, Anmeldungen bleiben also auch in neuen Worktrees und nach Updates erhalten. Vor jedem Start trägt `scripts/dev-app.mjs` Namen, eigene Bundle-ID (`io.github.timschulzrc.teamseverywhere.dev`) und das Dev-Icon in die Electron.app unter `node_modules` ein und signiert sie ad hoc neu. So zeigen Dock und Mitteilungen das Dev-Icon, und macOS fragt die Mitteilungen für Dev getrennt ab.
 
 Jede Ausgabe hat ein eigenes Icon mit derselben Marke: Stable dunkel mit Amber-Punkt, Nightly unter einem Nachthimmel, Dev auf einer Blaupause. Im Dev-Modus setzt die App das Dev-Icon beim Start ins Dock. `pnpm run icons` erzeugt alle Icons aus `scripts/icons.mjs` neu: die SVGs unter `assets/icons` (dunkel und hell), `build/icon.icns`, `build/icon-nightly.icns` und `build/icon-dev.png`.
 
-Zu jedem Pull Request gibt es einen fertigen Dev-Build zum Herunterladen. Er läuft ebenfalls als „Teams Everywhere (dev)“ mit demselben Datenordner, Anmeldungen aus Dev gelten also auch dort (siehe [docs/releasing.md](docs/releasing.md#pr-builds)).
+Zu jedem Pull Request gibt es einen fertigen Dev-Build zum Herunterladen. Er läuft ebenfalls als „Plenum (dev)“ mit demselben Datenordner, Anmeldungen aus Dev gelten also auch dort (siehe [docs/releasing.md](docs/releasing.md#pr-builds)).
 
-Stable und Nightly teilen sich den Ordner `~/Library/Application Support/Teams Everywhere`. Mit `TE_USER_DATA_DIR=<Ordner>` startet jede Ausgabe mit einem anderen Datenordner.
+Stable und Nightly teilen sich den Ordner `~/Library/Application Support/Plenum`. Mit `TE_USER_DATA_DIR=<Ordner>` startet jede Ausgabe mit einem anderen Datenordner.
 
 Mit `TM_DEBUG_PORT=9339` startet die App mit Remote-Debugging. Nur dann ist die Diagnose-Schnittstelle `debugRaw` aktiv.
 

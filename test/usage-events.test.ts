@@ -51,7 +51,7 @@ test('MCP: Client und Ergebnis, sonst nichts', () => {
   const spec = usageFor('installMcp', ['codex'], ctx)
   assert.equal(spec?.event, 'mcp_install_clicked')
   assert.deepEqual(spec?.props, { client: 'codex' })
-  assert.deepEqual(spec?.resultProps?.({ ok: true, message: 'codex mcp add teams-everywhere --url http://127.0.0.1:47311/mcp/geheim' }), { ok: true })
+  assert.deepEqual(spec?.resultProps?.({ ok: true, message: 'codex mcp add plenum --url http://127.0.0.1:47311/mcp/geheim' }), { ok: true })
   assert.deepEqual(usageFor('setMcpEnabled', [false], ctx), { event: 'mcp_toggled', props: { on: false } })
 })
 

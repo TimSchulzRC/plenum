@@ -1,18 +1,18 @@
 {
-  "name": "teams-everywhere",
-  "productName": "Teams Everywhere",
+  "name": "plenum",
+  "productName": "Plenum",
   "version": "0.1.0",
-  "description": "Eigener Teams-Client für den Desktop, der die Teams-Web-App als Datenquelle nutzt",
+  "description": "Desktop-Client für Microsoft Teams mit Mail und Kalender, der die Teams-Web-App als Datenquelle nutzt",
   "main": "./out/main/index.js",
   "author": "Tim Schulz",
   "license": "MIT",
-  "homepage": "https://github.com/TimSchulzRC/teams-everywhere",
+  "homepage": "https://github.com/TimSchulzRC/plenum",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TimSchulzRC/teams-everywhere.git"
+    "url": "git+https://github.com/TimSchulzRC/plenum.git"
   },
   "bugs": {
-    "url": "https://github.com/TimSchulzRC/teams-everywhere/issues"
+    "url": "https://github.com/TimSchulzRC/plenum/issues"
   },
   "engines": {
     "node": ">=22.12"
@@ -54,8 +54,8 @@
   },
   "build": {
     "appId": "io.github.timschulzrc.teamseverywhere",
-    "productName": "Teams Everywhere",
-    "artifactName": "Teams-Everywhere-${version}-mac-${arch}.${ext}",
+    "productName": "Plenum",
+    "artifactName": "Plenum-${version}-mac-${arch}.${ext}",
     "copyright": "Copyright © 2026 Tim Schulz",
     "directories": {
       "output": "release",
@@ -81,15 +81,15 @@
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "extendInfo": {
-        "NSCameraUsageDescription": "Teams Everywhere braucht die Kamera für Video in Anrufen und Besprechungen.",
-        "NSMicrophoneUsageDescription": "Teams Everywhere braucht das Mikrofon für Anrufe und Besprechungen.",
-        "NSAudioCaptureUsageDescription": "Teams Everywhere überträgt beim Teilen des Bildschirms auf Wunsch den Systemton.",
+        "NSCameraUsageDescription": "Plenum braucht die Kamera für Video in Anrufen und Besprechungen.",
+        "NSMicrophoneUsageDescription": "Plenum braucht das Mikrofon für Anrufe und Besprechungen.",
+        "NSAudioCaptureUsageDescription": "Plenum überträgt beim Teilen des Bildschirms auf Wunsch den Systemton.",
         "LSApplicationCategoryType": "public.app-category.business",
         "CFBundleURLTypes": []
       }
     },
     "dmg": {
-      "title": "Teams Everywhere ${version}"
+      "title": "Plenum ${version}"
     }
   }
 }

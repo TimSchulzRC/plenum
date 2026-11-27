@@ -21,7 +21,7 @@ export function updateTooltip(u: UpdateState): string {
   if (u.status === 'downloading') return `Update wird geladen (${u.downloadPercent ?? 0} %)`
   if (u.status === 'downloaded') return `Version ${u.downloadedVersion} ist geladen. Klicken, um neu zu starten und zu installieren.`
   if (u.status === 'installing') return 'Update wird installiert …'
-  return 'Teams Everywhere ist aktuell.'
+  return 'Plenum ist aktuell.'
 }
 
 export function updateStatusText(u: UpdateState): string {
@@ -33,7 +33,7 @@ export function updateStatusText(u: UpdateState): string {
     case 'checking':
       return 'Suche nach Updates …'
     case 'up-to-date':
-      return 'Teams Everywhere ist aktuell.'
+      return 'Plenum ist aktuell.'
     case 'available':
       return `Version ${u.availableVersion} ist verfügbar.`
     case 'downloading':
@@ -55,5 +55,5 @@ export function updateLastChecked(u: UpdateState): string | null {
 // Während eines Anrufs fragt die App vor dem Neustart nach.
 export function confirmInstall(u: UpdateState, inCall: boolean): boolean {
   if (!inCall) return true
-  return window.confirm(`Teams Everywhere startet neu, um Version ${u.downloadedVersion} zu installieren. Der laufende Anruf wird dabei beendet. Jetzt neu starten?`)
+  return window.confirm(`Plenum startet neu, um Version ${u.downloadedVersion} zu installieren. Der laufende Anruf wird dabei beendet. Jetzt neu starten?`)
 }

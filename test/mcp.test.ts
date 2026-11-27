@@ -125,7 +125,7 @@ function setup() {
     saveFile: async (name) => join(dir, name),
     now: () => NOW
   })
-  const protocol = new McpProtocol({ name: 'teams-everywhere', title: 'Teams Everywhere', version: '0.1.0', instructions: 'x' }, tools)
+  const protocol = new McpProtocol({ name: 'plenum', title: 'Plenum', version: '0.1.0', instructions: 'x' }, tools)
   const call = async (name: string, args: Record<string, unknown> = {}) => {
     const res = (await protocol.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })) as {
       result: { content: { type: string; text?: string; data?: string }[]; isError?: boolean }
@@ -275,17 +275,23 @@ test('Cursor und Bild-URLs', () => {
 
 test('Befehle für Claude Code und Codex', () => {
   const url = 'http://127.0.0.1:47311/mcp/abc123'
-  assert.equal(mcpCommand('claude', 'teams-everywhere', url), "claude mcp add --transport http --scope user teams-everywhere 'http://127.0.0.1:47311/mcp/abc123'")
-  assert.equal(mcpCommand('codex', 'teams-everywhere', url), "codex mcp add teams-everywhere --url 'http://127.0.0.1:47311/mcp/abc123'")
-  assert.match(mcpReplaceCommand('claude', 'teams-everywhere', url), /^claude mcp remove --scope user teams-everywhere >\/dev\/null 2>&1; claude mcp add/)
-  assert.deepEqual(JSON.parse(mcpJsonConfig('teams-everywhere', url)), { mcpServers: { 'teams-everywhere': { type: 'http', url } } })
-  assert.equal(mcpTomlConfig('teams-everywhere', url), `[mcp_servers.teams-everywhere]\nurl = "${url}"\n`)
+  assert.equal(mcpCommand('claude', 'plenum', url), "claude mcp add --transport http --scope user plenum 'http://127.0.0.1:47311/mcp/abc123'")
+  assert.equal(mcpCommand('codex', 'plenum', url), "codex mcp add plenum --url 'http://127.0.0.1:47311/mcp/abc123'")
+  assert.equal(
+    mcpReplaceCommand('claude', 'plenum', url),
+    "claude mcp remove --scope user plenum >/dev/null 2>&1; claude mcp remove --scope user teams-everywhere >/dev/null 2>&1; claude mcp add --transport http --scope user plenum 'http://127.0.0.1:47311/mcp/abc123'"
+  )
+  // Der alte Eintrag aus der Zeit als „Teams Everywhere“ verschwindet, sonst sähe der Agent jedes Werkzeug doppelt
+  assert.match(mcpReplaceCommand('codex', 'plenum-dev', url), /^codex mcp remove plenum-dev >\/dev\/null 2>&1; codex mcp remove teams-everywhere-dev >\/dev\/null 2>&1; codex mcp add plenum-dev /)
+  assert.match(mcpReplaceCommand('codex', 'anders', url), /^codex mcp remove anders >\/dev\/null 2>&1; codex mcp add anders /)
+  assert.deepEqual(JSON.parse(mcpJsonConfig('plenum', url)), { mcpServers: { plenum: { type: 'http', url } } })
+  assert.equal(mcpTomlConfig('plenum', url), `[mcp_servers.plenum]\nurl = "${url}"\n`)
 })
 
 test('HTTP: Schlüssel, Host- und Origin-Prüfung, JSON-RPC', async () => {
   const { protocol, dir, cleanup } = setup()
   const file = join(dir, 'mcp.json')
-  const srv = new McpServer({ file, defaultPort: 0, name: 'teams-everywhere', protocol })
+  const srv = new McpServer({ file, defaultPort: 0, name: 'plenum', protocol })
   assert.equal(srv.info().enabled, false)
   assert.equal(srv.info().url, undefined)
   const info = await srv.setEnabled(true)
@@ -302,7 +308,7 @@ test('HTTP: Schlüssel, Host- und Origin-Prüfung, JSON-RPC', async () => {
   assert.equal(init.status, 200)
   const ir = (await init.json()) as { result: { protocolVersion: string; capabilities: { tools: object }; serverInfo: { name: string } } }
   assert.equal(ir.result.protocolVersion, '2025-06-18')
-  assert.equal(ir.result.serverInfo.name, 'teams-everywhere')
+  assert.equal(ir.result.serverInfo.name, 'plenum')
 
   assert.equal((await post(url, { jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202)
   assert.equal((await post(`${base}/mcp/falsch`, { jsonrpc: '2.0', id: 1, method: 'ping' })).status, 404)

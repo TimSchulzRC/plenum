@@ -43,7 +43,7 @@ jobs:
   prepare:
     name: Version bestimmen
     # Forks sollen keine eigenen Nightlies bauen.
-    if: github.event_name != 'schedule' || github.repository == 'TimSchulzRC/teams-everywhere'
+    if: github.event_name != 'schedule' || github.repository == 'TimSchulzRC/plenum'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -89,7 +89,7 @@ jobs:
               base="$major.$minor.$((patch + 1))"
             fi
             version="$base-nightly.$(date -u +%Y%m%d).$GITHUB_RUN_NUMBER"
-            name="Teams Everywhere Nightly $version ($short)"
+            name="Plenum Nightly $version ($short)"
             previous="$last_nightly"
 
             # Geplante Läufe bauen höchstens alle 6 Stunden und nur bei neuen Commits.
@@ -112,7 +112,7 @@ jobs:
               echo "::error::Ungültige Stable-Version: '$raw'. Erwartet wird z. B. 0.2.0."
               exit 1
             fi
-            name="Teams Everywhere v$version"
+            name="Plenum v$version"
             previous="$last_stable"
           else
             echo "::error::Unbekannter Kanal: $channel"
@@ -158,7 +158,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Nightlies heißen „Teams Everywhere (nightly)“: App-Bundle, Menüleiste und Dock.
+      # Nightlies heißen „Plenum (nightly)“: App-Bundle, Menüleiste und Dock.
       # Sie bekommen das Nightly-Icon (Nachthimmel), siehe scripts/icons.mjs.
       # Bundle-ID und Datenordner bleiben gleich, Updates und Anmeldungen gelten weiter.
       - name: Version und Name setzen
@@ -168,7 +168,7 @@ jobs:
         run: |
           pnpm pkg set version="$VERSION"
           if [[ "$CHANNEL" == "nightly" ]]; then
-            pnpm pkg set build.productName="Teams Everywhere (nightly)" build.mac.icon="build/icon-nightly.icns"
+            pnpm pkg set build.productName="Plenum (nightly)" build.mac.icon="build/icon-nightly.icns"
           fi
 
       - run: pnpm run typecheck
@@ -190,9 +190,23 @@ jobs:
           set -euo pipefail
           version="${{ needs.prepare.outputs.version }}"
           app="$(node -p 'require("./package.json").build.productName').app"
-          scripts/patch-zip.sh "release/mac-arm64/$app" "release/Teams-Everywhere-$version-mac-arm64-patch.zip"
-          scripts/patch-zip.sh "release/mac/$app" "release/Teams-Everywhere-$version-mac-x64-patch.zip"
+          scripts/patch-zip.sh "release/mac-arm64/$app" "release/Plenum-$version-mac-arm64-patch.zip"
+          scripts/patch-zip.sh "release/mac/$app" "release/Plenum-$version-mac-x64-patch.zip"
           ls -la release/*-patch.zip
+
+      # Installationen aus der Zeit als „Teams Everywhere“ suchen nach
+      # „Teams-Everywhere-<Version>-mac-<Architektur>.zip“ und dem Patch-ZIP dazu. Damit sie das
+      # Update auf Plenum finden, liegt jede ZIP auch unter dem alten Namen bei. Die erste
+      # Plenum-Version benennt ihr Bundle dann selbst um (src/main/legacy-data.ts).
+      # Entfernen, sobald keine Installation mehr Teams Everywhere ist.
+      - name: ZIPs unter altem Namen
+        working-directory: release
+        run: |
+          set -euo pipefail
+          for zip in Plenum-*.zip; do
+            cp -- "$zip" "Teams-Everywhere-${zip#Plenum-}"
+          done
+          ls -la Teams-Everywhere-*.zip
 
       - name: Prüfsummen
         working-directory: release
@@ -236,8 +250,8 @@ jobs:
       - name: Release-Notes schreiben
         run: |
           set -euo pipefail
-          APP_NAME="Teams Everywhere"
-          [[ "$CHANNEL" == "nightly" ]] && APP_NAME="Teams Everywhere (nightly)"
+          APP_NAME="Plenum"
+          [[ "$CHANNEL" == "nightly" ]] && APP_NAME="Plenum (nightly)"
           {
             if [[ "$CHANNEL" == "nightly" ]]; then
               echo "Automatischer Nightly-Build aus \`${SHA:0:12}\`. Nightlies enthalten den neuesten Stand von \`main\` und können Fehler haben."
@@ -245,7 +259,7 @@ jobs:
             fi
             echo "## Installation"
             echo
-            echo "1. Passende Datei laden: \`Teams-Everywhere-$VERSION-mac-arm64.dmg\` für Apple Silicon (M1 und neuer), \`Teams-Everywhere-$VERSION-mac-x64.dmg\` für Intel-Macs."
+            echo "1. Passende Datei laden: \`Plenum-$VERSION-mac-arm64.dmg\` für Apple Silicon (M1 und neuer), \`Plenum-$VERSION-mac-x64.dmg\` für Intel-Macs. Die Dateien \`Teams-Everywhere-…\` sind nur für den Updater älterer Installationen."
             echo "2. $APP_NAME aus dem DMG in den Ordner Programme ziehen."
             echo "3. Die App ist nicht von Apple notarisiert. Vor dem ersten Start einmal im Terminal ausführen:"
             echo

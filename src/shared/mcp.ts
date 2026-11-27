@@ -25,10 +25,17 @@ export function mcpCommand(client: McpClient, name: string, url: string): string
     : `codex mcp add ${name} --url ${shellQuote(url)}`
 }
 
-// Wie mcpCommand, entfernt aber zuerst einen älteren Eintrag gleichen Namens (z. B. mit altem Schlüssel).
+// Namen der Einträge aus der Zeit, als die App „Teams Everywhere“ hieß. Sie zeigen auf denselben
+// Server, und doppelt eingetragen sähe der Agent jedes Werkzeug zweimal.
+const LEGACY_NAMES: Record<string, string> = { plenum: 'teams-everywhere', 'plenum-dev': 'teams-everywhere-dev' }
+
+// Wie mcpCommand, entfernt aber zuerst ältere Einträge gleichen oder alten Namens (z. B. mit altem Schlüssel).
 export function mcpReplaceCommand(client: McpClient, name: string, url: string): string {
-  const remove = client === 'claude' ? `claude mcp remove --scope user ${name}` : `codex mcp remove ${name}`
-  return `${remove} >/dev/null 2>&1; ${mcpCommand(client, name, url)}`
+  const names = LEGACY_NAMES[name] ? [name, LEGACY_NAMES[name]] : [name]
+  const remove = names
+    .map((n) => `${client === 'claude' ? `claude mcp remove --scope user ${n}` : `codex mcp remove ${n}`} >/dev/null 2>&1; `)
+    .join('')
+  return `${remove}${mcpCommand(client, name, url)}`
 }
 
 // Eintrag für .mcp.json, ~/.claude.json und andere Clients mit JSON-Konfiguration.

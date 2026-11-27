@@ -54,7 +54,7 @@ export function createMainWindow(): BrowserWindow {
     height: Math.min(940, Math.round(height * 0.88)),
     minWidth: 860,
     minHeight: 560,
-    title: 'Microsoft Teams',
+    title: 'Plenum',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 18, y: 18 },
     // Leiste und Titelzeile durchscheinend wie in macOS-Apps

@@ -3,7 +3,7 @@
 import type { AnalyticsProps } from '@shared/analytics'
 import { routeInfo } from './api'
 
-export const USAGE_DATA_DOC = 'https://github.com/TimSchulzRC/teams-everywhere/blob/main/docs/analytics.md'
+export const USAGE_DATA_DOC = 'https://github.com/TimSchulzRC/plenum/blob/main/docs/analytics.md'
 
 export function track(event: string, props?: AnalyticsProps): void {
   try {

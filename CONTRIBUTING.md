@@ -1,10 +1,10 @@
 # Mitmachen
 
-Danke, dass du Teams Everywhere verbessern willst. Fehlerberichte, Ideen und Pull Requests sind willkommen.
+Danke, dass du Plenum verbessern willst. Fehlerberichte, Ideen und Pull Requests sind willkommen.
 
 ## Fehler und Ideen
 
-Nutze die Vorlagen unter [Issues](https://github.com/TimSchulzRC/teams-everywhere/issues/new/choose). Bevor du Logs anhängst, entferne Namen, Mailadressen und Nachrichteninhalte. Das Log liegt unter `~/Library/Application Support/Teams Everywhere/logs/main.log`, bei `pnpm run dev` unter `~/Library/Application Support/Teams Everywhere (dev)/logs/main.log`.
+Nutze die Vorlagen unter [Issues](https://github.com/TimSchulzRC/plenum/issues/new/choose). Bevor du Logs anhängst, entferne Namen, Mailadressen und Nachrichteninhalte. Das Log liegt unter `~/Library/Application Support/Plenum/logs/main.log`, bei `pnpm run dev` unter `~/Library/Application Support/Plenum (dev)/logs/main.log`.
 
 Sicherheitslücken meldest du bitte nicht öffentlich, sondern wie in [SECURITY.md](SECURITY.md) beschrieben.
 
