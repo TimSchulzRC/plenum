@@ -240,7 +240,11 @@ export function initStore(): void {
     // Klick auf eine Mitteilung: die Unterhaltung zeigen, nicht das Einstellungsfenster davor
     if (n.view !== 'settings') s.closeSettings()
     if (n.accountId && n.accountId !== s.activeAccountId && s.accounts.some((a) => a.id === n.accountId)) s.setActiveAccount(n.accountId)
-    if (n.view === 'settings') return s.openSettings(n.settingsPage)
+    if (n.view === 'settings') {
+      // ⌘ , bei offener Bildansicht oder offenem Dialog: nicht dahinter öffnen, die liegen höher
+      if (document.querySelector('.image-viewer, [role="dialog"][aria-modal="true"]:not(.settings-dialog)')) return
+      return s.openSettings(n.settingsPage)
+    }
     if (n.view === 'teams' && n.conversationId) {
       const snap = useStore.getState().snapshots[n.accountId]
       const team = snap?.teams.find((t) => t.channels.some((c) => c.id === n.conversationId))
