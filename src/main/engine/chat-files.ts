@@ -34,9 +34,9 @@ export interface GraphRequest {
   (url: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }): Promise<any>
 }
 
-// PUT an die vorsignierte Upload-Adresse einer Session, ohne Token
-export interface ChunkPut {
-  (url: string, body: Uint8Array, headers: Record<string, string>): Promise<any>
+// Aufruf an die vorsignierte Adresse einer Upload-Session, ohne Token
+export interface SessionRequest {
+  (url: string, init: { method: string; body?: Uint8Array; headers?: Record<string, string> }): Promise<any>
 }
 
 // Zielordner als Graph-Adresse: ein Ordner per ID (Kanal) oder ein Pfad unter der OneDrive-Wurzel (Chat)
@@ -103,7 +103,7 @@ export async function channelFilesTarget(graph: GraphRequest, groupId: string, c
 }
 
 // Lädt die Datei hoch. Bei gleichem Namen legt OneDrive eine Kopie mit Nummer an.
-export async function uploadDriveFile(graph: GraphRequest, put: ChunkPut, target: UploadTarget, name: string, data: Uint8Array): Promise<DriveItem> {
+export async function uploadDriveFile(graph: GraphRequest, session: SessionRequest, target: UploadTarget, name: string, data: Uint8Array): Promise<DriveItem> {
   const url = itemAddress(target, driveFileName(name))
   let done: DriveItem
   if (data.byteLength <= SIMPLE_UPLOAD_MAX) {
@@ -113,15 +113,22 @@ export async function uploadDriveFile(graph: GraphRequest, put: ChunkPut, target
       headers: { 'content-type': 'application/octet-stream' }
     })) as DriveItem
   } else {
-    const session = (await graph(`${url}/createUploadSession`, {
+    const created = (await graph(`${url}/createUploadSession`, {
       method: 'POST',
       body: { item: { '@microsoft.graph.conflictBehavior': 'rename' } }
     })) as { uploadUrl?: string }
-    if (!session?.uploadUrl) throw new Error('OneDrive hat keine Upload-Adresse geliefert')
+    const uploadUrl = created?.uploadUrl
+    if (!uploadUrl) throw new Error('OneDrive hat keine Upload-Adresse geliefert')
     let last: any
-    for (let start = 0; start < data.byteLength; start += CHUNK_BYTES) {
-      const end = Math.min(start + CHUNK_BYTES, data.byteLength)
-      last = await put(session.uploadUrl, data.subarray(start, end), { 'content-range': `bytes ${start}-${end - 1}/${data.byteLength}` })
+    try {
+      for (let start = 0; start < data.byteLength; start += CHUNK_BYTES) {
+        const end = Math.min(start + CHUNK_BYTES, data.byteLength)
+        last = await session(uploadUrl, { method: 'PUT', body: data.subarray(start, end), headers: { 'content-range': `bytes ${start}-${end - 1}/${data.byteLength}` } })
+      }
+    } catch (e) {
+      // Sonst belegt ein leerer Platzhalter den Dateinamen
+      await session(uploadUrl, { method: 'DELETE' }).catch(() => undefined)
+      throw e
     }
     done = last as DriveItem
   }
@@ -167,14 +174,6 @@ export async function inviteMembers(graph: GraphRequest, item: DriveItem, recipi
   return { shareUrl: first?.link?.webUrl, shareId: first?.id }
 }
 
-function decoded(url: string): string {
-  try {
-    return decodeURI(url)
-  } catch {
-    return url
-  }
-}
-
 // Basis der Website (OneDrive oder Team-Site) mit Schrägstrich am Ende
 export function siteBase(item: DriveItem): string {
   const site = item.sharepointIds?.siteUrl
@@ -187,7 +186,8 @@ export function siteBase(item: DriveItem): string {
 export function filesEntry(item: DriveItem, opts: { shareUrl?: string; shareId?: string; channel?: boolean } = {}): Record<string, unknown> {
   const id = itemGuid(item)
   const type = fileExtension(item.name)
-  const objectUrl = decoded(item.webDavUrl || item.webUrl || '')
+  // Kodiert wie bei Teams (Leerzeichen als %20)
+  const objectUrl = item.webDavUrl || item.webUrl || ''
   const baseUrl = siteBase(item)
   return {
     '@type': 'http://schema.skype.com/File',

@@ -52,7 +52,11 @@ export class TeamsApi {
     return b
   }
 
-  async json<T = any>(family: Family, url: string, init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean } = {}): Promise<T> {
+  async json<T = any>(
+    family: Family,
+    url: string,
+    init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; omitCookies?: boolean } = {}
+  ): Promise<T> {
     let res = await this.engine.request(family, url, init)
     if (res.status === 401) {
       // Token evtl. gerade abgelaufen – kurz warten, die Web-App erneuert ihn.
@@ -165,9 +169,10 @@ export class TeamsApi {
     return this.json<T>('graph', url, init)
   }
 
-  // Teil einer Upload-Session: Die Adresse ist vorsigniert und bekommt keinen Token
-  uploadChunk(url: string, body: Uint8Array, headers: Record<string, string>): Promise<any> {
-    return this.json('other', url, { method: 'PUT', body, headers })
+  // Upload-Session (Teil hochladen, abbrechen): Die Adresse ist vorsigniert und bekommt keinen Token.
+  // Ohne Cookies, sie antwortet wie Graph mit Access-Control-Allow-Origin: *.
+  uploadSession(url: string, init: { method: string; body?: Uint8Array; headers?: Record<string, string> }): Promise<any> {
+    return this.json('other', url, { ...init, omitCookies: true })
   }
 
   // ---------- Chat-Service-Aggregator (Teams, Kanäle, Chats) ----------

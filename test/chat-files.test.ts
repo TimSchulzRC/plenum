@@ -120,10 +120,11 @@ test('Große Dateien laufen über eine Upload-Session in Teilen, im Kanal per Or
       if (url.endsWith('/createUploadSession')) return { uploadUrl: 'https://contoso.sharepoint.com/upload?tempauth=x' }
       return ITEM
     },
-    async (url, body, headers) => {
+    async (url, init) => {
       assert.equal(url, 'https://contoso.sharepoint.com/upload?tempauth=x')
-      ranges.push(headers['content-range'])
-      received += body.byteLength
+      assert.equal(init.method, 'PUT')
+      ranges.push(init.headers!['content-range'])
+      received += init.body!.byteLength
       return received === size ? { id: '01ABCDEF', parentReference: { driveId: 'b!team' } } : { nextExpectedRanges: [`${received}-`] }
     },
     { driveId: 'b!team', folderId: 'folder1' },
@@ -138,6 +139,25 @@ test('Große Dateien laufen über eine Upload-Session in Teilen, im Kanal per Or
   assert.deepEqual(requests[0].init.body, { item: { '@microsoft.graph.conflictBehavior': 'rename' } })
   assert.equal(requests[1].url, `${GRAPH}/drives/b!team/items/01ABCDEF?${SELECT}`)
   assert.equal(item, ITEM)
+})
+
+test('Scheitert ein Teil, wird die Upload-Session abgebrochen', async () => {
+  const calls: string[] = []
+  await assert.rejects(
+    uploadDriveFile(
+      async () => ({ uploadUrl: 'https://contoso.sharepoint.com/upload?tempauth=x' }),
+      async (_url, init) => {
+        calls.push(init.method)
+        if (init.method === 'PUT') throw new Error('net::ERR_FAILED')
+        return {}
+      },
+      { rootPath: 'Microsoft Teams-Chatdateien' },
+      'gross.zip',
+      new Uint8Array(SIMPLE_UPLOAD_MAX + 1)
+    ),
+    /ERR_FAILED/
+  )
+  assert.deepEqual(calls, ['PUT', 'DELETE'])
 })
 
 test('Freigabe geht an die Chatmitglieder: Mail, wenn bekannt, sonst Objekt-ID', async () => {
@@ -174,7 +194,7 @@ test('Freigabe geht an die Chatmitglieder: Mail, wenn bekannt, sonst Objekt-ID',
 
 test('properties.files-Eintrag wie von der Web-App', () => {
   const e = filesEntry(ITEM, { shareUrl: 'https://s', shareId: 'perm1' })
-  const objectUrl = `${SITE}Documents/Microsoft Teams-Chatdateien/Angebot Nord.pdf`
+  const objectUrl = `${SITE}Documents/Microsoft%20Teams-Chatdateien/Angebot%20Nord.pdf`
   assert.equal(e['@type'], 'http://schema.skype.com/File')
   assert.equal(e.version, 2)
   assert.equal(e.id, GUID)

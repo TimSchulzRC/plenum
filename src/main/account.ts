@@ -1122,7 +1122,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
     }
     const out: Record<string, unknown>[] = []
     for (const f of files) {
-      const item = await uploadDriveFile(graph, (url, body, headers) => this.api.uploadChunk(url, body, headers), target, f.name, f.data)
+      const item = await uploadDriveFile(graph, (url, init) => this.api.uploadSession(url, init), target, f.name, f.data)
       let share: { shareUrl?: string; shareId?: string } = {}
       try {
         share = await inviteMembers(graph, item, recipients)

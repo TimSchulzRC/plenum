@@ -408,7 +408,11 @@ export class Engine extends EventEmitter<EngineEvents> {
   }
 
   // HTTP-Aufruf mit den Auth-Headern der Web-App über den Netzwerk-Stack dieser Partition.
-  async request(family: Family, url: string, init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean } = {}): Promise<Response> {
+  async request(
+    family: Family,
+    url: string,
+    init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; omitCookies?: boolean } = {}
+  ): Promise<Response> {
     const headers: Record<string, string> = { ...this.tokens.headersFor(family), ...(init.headers ?? {}) }
     let body: string | Uint8Array | undefined
     if (init.body instanceof Uint8Array) {
@@ -425,7 +429,7 @@ export class Engine extends EventEmitter<EngineEvents> {
     headers[OWN_REQUEST_HEADER] = '1'
     // Graph und Outlook antworten mit Access-Control-Allow-Origin: *. Mit Cookies lehnt Chromium das
     // ab (net::ERR_FAILED), und sie brauchen nur den Bearer-Token.
-    const credentials = family === 'graph' || family === 'outlook' ? 'omit' : 'include'
+    const credentials = family === 'graph' || family === 'outlook' || init.omitCookies ? 'omit' : 'include'
     return this.ses.fetch(url, { method: init.method ?? 'GET', headers, body, credentials } as RequestInit)
   }
 
