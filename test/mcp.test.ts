@@ -589,3 +589,25 @@ test('list_mail: next_until überspringt keine Mail derselben Sekunde aus einem 
   assert.deepEqual(ids(second).sort(), ['m2', 'v1'])
   assert.equal(second.more, undefined)
 })
+
+test('Mail: Gastkonten mit demselben Heimatpostfach zählen einmal, ihr 404 verschwindet', async () => {
+  const folders: MailFolder[] = [{ id: 'f-inbox', name: 'Posteingang', kind: 'inbox', unread: 1, total: 2 }]
+  const mails = [mail('m1', 1, { subject: 'Angebot' }), mail('m2', 2, { subject: 'Angebot' })]
+  const home = fakeAccount({ id: 'a1', upn: 'tim@firma.de', chats: [], messages: {}, folders, mails })
+  const guest = fakeAccount({ id: 'a1-gast', upn: 'tim@firma.de', chats: [], messages: {}, folders, mails })
+  // Gastmandant ohne Postfach: Exchange antwortet 404
+  const broken = fakeAccount({ id: 'a1-gast2', upn: 'tim@firma.de', chats: [], messages: {}, mails: [] })
+  broken.mailFolders = async () => {
+    throw Object.assign(new Error('outlook 404'), { status: 404 })
+  }
+  broken.mailQuery = broken.mailFolders as never
+  const call = mailCall([home, guest, broken])
+  const f = await call('list_mail_folders', {})
+  assert.equal(f.folders.length, 1)
+  assert.equal(f.errors, undefined)
+  const l = await call('list_mail', {})
+  assert.deepEqual(ids(l), ['m1', 'm2'])
+  assert.equal(l.errors, undefined)
+  const s = await call('search_mail', { query: 'angebot', limit: 1 })
+  assert.deepEqual(ids(s), ['m1'])
+})

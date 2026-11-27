@@ -471,6 +471,37 @@ function formatMailSummary(m: MailSummary, a: McpAccount, folderName?: string): 
   }
 }
 
+// Ein Konto, das als Gast in weiteren Mandanten angemeldet ist, liest dort dasselbe Heimatpostfach (die
+// Mail-Tokens gehören zum Heimatmandanten). Ergebnisse zählen deshalb je Postfach nur einmal, und der
+// Fehler eines Mandanten ohne Postfach (404) fällt weg, sobald dasselbe Postfach über ein anderes Konto
+// antwortet.
+const mailbox = (a: McpAccount) => (a.info().upn || a.id).toLowerCase()
+
+class MailErrors {
+  private list: { box: string; text: string }[] = []
+  private ok = new Set<string>()
+  add(a: McpAccount, text: string): void {
+    this.list.push({ box: mailbox(a), text: `${label(a)}: ${text}` })
+  }
+  done(a: McpAccount): void {
+    this.ok.add(mailbox(a))
+  }
+  result(): string[] | undefined {
+    const out = [...new Set(this.list.filter((e) => !this.ok.has(e.box)).map((e) => e.text))]
+    return out.length ? out : undefined
+  }
+}
+
+function uniqueBy<T>(list: T[], key: (x: T) => string): T[] {
+  const seen = new Set<string>()
+  return list.filter((x) => {
+    const k = key(x)
+    if (seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
+}
+
 interface MailRun {
   query?: string
   folderArg?: string
@@ -491,7 +522,7 @@ const MAX_MAIL_PAGES = 5
 // Mal, keine fehlt). Die Suche sortiert Exchange nach Sendezeit, dort gibt es kein next_until.
 async function runMailQuery(deps: ToolDeps, accountArg: unknown, o: MailRun): Promise<Record<string, unknown>> {
   const { ready, warnings } = mailAccounts(deps, accountArg)
-  const errors: string[] = []
+  const errors = new MailErrors()
   const want = o.limit + 1
   const passes = (m: MailSummary) => (!o.since || m.received >= o.since) && (!o.until || m.received < o.until) && (!o.unreadOnly || m.isRead === false)
   const lists = await pool(ready, 2, async (a) => {
@@ -499,7 +530,7 @@ async function runMailQuery(deps: ToolDeps, accountArg: unknown, o: MailRun): Pr
       const folders = await a.mailFolders().catch(() => [] as MailFolder[])
       const folder = resolveFolder(o.folderArg, folders)
       if (typeof folder === 'string') {
-        errors.push(`${label(a)}: ${folder}`)
+        errors.add(a, folder)
         return { items: [] }
       }
       let q: MailQuery = { folder: folder.id, search: o.query, since: o.since, until: o.until, unreadOnly: o.unreadOnly, top: want }
@@ -518,17 +549,21 @@ async function runMailQuery(deps: ToolDeps, accountArg: unknown, o: MailRun): Pr
           page = await a.mailQuery(q, page.next)
         } catch (e) {
           // Was schon da ist, bleibt; der Rest gilt als nicht gelesen
-          errors.push(`${label(a)}: ${(e as Error).message}`)
+          errors.add(a, (e as Error).message)
           return { items: kept, unread: true }
         }
       }
+      errors.done(a)
       return { items: kept, unread: kept.length < want && !!page.next }
     } catch (e) {
-      errors.push(`${label(a)}: ${(e as Error).message}`)
+      errors.add(a, (e as Error).message)
       return { items: [] }
     }
   })
-  const all = lists.flatMap((l) => l.items).sort((x, y) => y.m.received - x.m.received)
+  const all = uniqueBy(
+    lists.flatMap((l) => l.items),
+    (x) => `${mailbox(x.a)}\n${x.m.id}`
+  ).sort((x, y) => y.m.received - x.m.received)
   const shown = all.slice(0, o.limit)
   const more = all.length > o.limit || lists.some((l) => l.unread)
   // Liegt die Grenze nicht vor until, käme dieselbe Abfrage noch einmal (mehr als limit Mails in einer Sekunde)
@@ -539,7 +574,7 @@ async function runMailQuery(deps: ToolDeps, accountArg: unknown, o: MailRun): Pr
     mails: shown.map(({ m, a, folder }) => formatMailSummary(m, a, folder)),
     more: more || undefined,
     next_until: next === undefined ? undefined : localIso(next),
-    errors: errors.length ? errors : undefined,
+    errors: errors.result(),
     warnings: warnings.length ? warnings : undefined
   }
 }
@@ -999,16 +1034,19 @@ export function createTools(deps: ToolDeps): ToolDef[] {
       inputSchema: schema({ account: ACCOUNT_PROP }),
       run: async (args) => {
         const { ready, warnings } = mailAccounts(deps, args.account)
-        const errors: string[] = []
+        const errors = new MailErrors()
         const lists = await pool(ready, 2, async (a) => {
           try {
-            return (await a.mailFolders()).map((f) => ({ account: label(a), folder_id: f.id, name: f.name, kind: f.kind, unread: f.unread, total: f.total }))
+            const folders = await a.mailFolders()
+            errors.done(a)
+            return folders.map((f) => ({ box: mailbox(a), account: label(a), folder_id: f.id, name: f.name, kind: f.kind, unread: f.unread, total: f.total }))
           } catch (e) {
-            errors.push(`${label(a)}: ${(e as Error).message}`)
+            errors.add(a, (e as Error).message)
             return []
           }
         })
-        return { folders: lists.flat(), errors: errors.length ? errors : undefined, warnings: warnings.length ? warnings : undefined }
+        const folders = uniqueBy(lists.flat(), (f) => `${f.box}\n${f.folder_id}`).map(({ box: _, ...f }) => f)
+        return { folders, errors: errors.result(), warnings: warnings.length ? warnings : undefined }
       }
     },
     {
