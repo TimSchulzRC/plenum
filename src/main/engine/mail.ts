@@ -188,16 +188,6 @@ export function mapAttachment(a: any): MailAttachment {
   return { id: String(a.id), name: a.name || 'Anhang', contentType: a.contentType || undefined, size: Number(a.size) || 0, isInline: !!a.isInline }
 }
 
-// fn für jedes Element, höchstens limit gleichzeitig. Exchange drosselt schon bei sieben
-// gleichzeitigen Anfragen je Postfach, nacheinander dauert es bei vielen Bildern Sekunden.
-export async function forEachLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  const queue = [...items]
-  const worker = async () => {
-    for (let x = queue.shift(); x !== undefined; x = queue.shift()) await fn(x)
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, queue.length) }, worker))
-}
-
 // Content-ID ohne spitze Klammern, so wie sie im HTML als cid:… steht
 export function contentId(raw: unknown): string | undefined {
   const s = typeof raw === 'string' ? raw.trim().replace(/^<|>$/g, '') : ''

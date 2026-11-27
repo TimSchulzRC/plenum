@@ -43,7 +43,7 @@ import { fmt, listTime, messageTime } from '../lib/format'
 import { accountTitle } from '@shared/accounts'
 import { accountColor, ipcErrorText } from '../lib/calendar'
 import { addressLabel, fileSize, mergeMail, withImages } from '../lib/mail'
-import { cachedImages, cachedMail, loadImages, loadMail, prefetchMail, prefetchTop } from '../lib/mail-load'
+import { cachedMail, loadImageIndex, loadMail, prefetchMail, prefetchTop } from '../lib/mail-load'
 import { HOVER_DELAY } from '../lib/prefetch'
 import { mailDocument, type ChatOptions } from '../lib/mail-html'
 import { modelRanges, modelRequest, type SigRange } from '../lib/mail-signature'
@@ -55,7 +55,8 @@ import { MailAvatar } from '../components/Avatars'
 
 type Sel = { kind: 'all' } | { kind: 'folder'; accountId: string; folderId: string; name: string; folderKind?: MailFolderKind }
 type Source = { accountId: string; folderId: string; items: MailSummary[]; next?: string; error?: string }
-type Open = { accountId: string; id: string }
+// draft: Entwurf, immer frisch laden
+type Open = { accountId: string; id: string; draft?: boolean }
 
 const ICONS: Record<MailFolderKind, JSX.Element> = {
   inbox: <MailInbox20Regular />,
@@ -156,7 +157,7 @@ export function MailView(): JSX.Element {
   // Die obersten Mails vorladen (ohne Bilder), dann öffnen sie sofort
   const topKey = items.slice(0, 3).map(key).join(',')
   useEffect(() => {
-    if (topKey) void prefetchTop(items.slice(0, 3).filter((x) => !x.isDraft))
+    if (topKey) void prefetchTop(items.slice(0, 3))
     // topKey fasst die drei obersten zusammen
   }, [topKey])
   // Beim Überfahren einer Mail in der Liste: nach kurzer Pause vorladen, beim Drücken sofort
@@ -165,13 +166,13 @@ export function MailView(): JSX.Element {
   const hoverProps = (x: MailSummary) => ({
     onMouseEnter: () => {
       clearTimeout(hoverTimer.current)
-      hoverTimer.current = setTimeout(() => prefetchMail(x.accountId, x.id), HOVER_DELAY)
+      hoverTimer.current = setTimeout(() => prefetchMail(x), HOVER_DELAY)
     },
     onMouseLeave: () => clearTimeout(hoverTimer.current),
     onMouseDown: (e: { button: number }) => {
       if (e.button !== 0) return
       clearTimeout(hoverTimer.current)
-      prefetchMail(x.accountId, x.id)
+      prefetchMail(x)
     }
   })
   const errors = (sources ?? []).filter((s) => s.error)
@@ -220,7 +221,7 @@ export function MailView(): JSX.Element {
 
   const openMail = (m: MailSummary) => {
     setCompose(null)
-    setOpen({ accountId: m.accountId, id: m.id })
+    setOpen({ accountId: m.accountId, id: m.id, draft: m.isDraft || undefined })
     if (!m.isRead && !m.isDraft) {
       patchItem(m, { isRead: true })
       bumpUnread(m.accountId, -1)
@@ -627,8 +628,9 @@ function MailReader({
   onDelete: (m: MailMessage) => Promise<void>
 }): JSX.Element {
   // Erst der Text, dann die eingebetteten Bilder. Eine schon geladene Mail steht sofort.
-  const [base, setBase] = useState<MailMessage | null>(() => cachedMail(target.accountId, target.id) ?? null)
-  const [images, setImages] = useState<MailImages | undefined>(() => (base ? cachedImages(base) : undefined))
+  const [base, setBase] = useState<MailMessage | null>(() => (target.draft ? null : (cachedMail(target.accountId, target.id) ?? null)))
+  // Welche Inline-Anhänge eingebettet sind: nur für die Anhangsliste, das Dokument lädt die Bilder selbst
+  const [images, setImages] = useState<MailImages | undefined>()
   const m = useMemo(() => (base ? withImages(base, images) : null), [base, images])
   const [error, setError] = useState<string>()
   const [remote, setRemote] = useState(false)
@@ -647,12 +649,12 @@ function MailReader({
 
   useEffect(() => {
     let alive = true
-    loadMail(target.accountId, target.id)
+    loadMail(target.accountId, target.id, { fresh: target.draft })
       .then((x) => {
         if (!alive) return
         setBase(x)
         // Fehlen Bilder, zeigt die Liste die Inline-Anhänge als Dateien
-        return loadImages(x).then(
+        return loadImageIndex(x).then(
           (i) => alive && setImages(i),
           () => alive && setImages({ images: {}, cids: {} })
         )
@@ -661,7 +663,7 @@ function MailReader({
     return () => {
       alive = false
     }
-  }, [target.accountId, target.id])
+  }, [target.accountId, target.id, target.draft])
 
   // Signaturen, die nur das Sprachmodell fand (Teile ohne Regel-Treffer). Die Zeilennummern gelten
   // nur für dieselbe Aufteilung: Mit externen Bildern kommen Zeilen dazu, deshalb je remote getrennt.
@@ -672,18 +674,18 @@ function MailReader({
   const modelSig = modelOn ? modelCache.get(modelKey) : undefined
   // Eigene Nachrichten erkennt die Chat-Ansicht an Adresse oder Name eines der Konten
   const chatOptions = useMemo((): ChatOptions | undefined => {
-    if (!m || !chat) return undefined
+    if (!base || !chat) return undefined
     const who = (a?: MailAddress) => (a ? addressLabel(a) + (a.name ? ` <${a.address}>` : '') : '(Unbekannt)')
     return {
       me: accounts.map((a) => ({ name: a.displayName, address: a.upn })),
-      topTime: messageTime(m.received),
+      topTime: messageTime(base.received),
       formatTime: messageTime,
       topHeader: [
-        `Von: ${who(m.from)}`,
-        ...(m.to.length ? [`An: ${m.to.map(who).join('; ')}`] : []),
-        ...(m.cc.length ? [`Cc: ${m.cc.map(who).join('; ')}`] : []),
-        `Gesendet: ${fmt(m.received, 'EEEE, d. MMMM yyyy HH:mm')}`,
-        `Betreff: ${m.subject}`
+        `Von: ${who(base.from)}`,
+        ...(base.to.length ? [`An: ${base.to.map(who).join('; ')}`] : []),
+        ...(base.cc.length ? [`Cc: ${base.cc.map(who).join('; ')}`] : []),
+        `Gesendet: ${fmt(base.received, 'EEEE, d. MMMM yyyy HH:mm')}`,
+        `Betreff: ${base.subject}`
       ],
       sent: sent.map((x) => {
         const from = accounts.find((a) => a.id === x.accountId)
@@ -704,8 +706,9 @@ function MailReader({
     }
   }, [m, chat, accounts, sent])
   const doc = useMemo(
-    () => (m ? mailDocument(m, remote, dark, { hide: hideSig, hideHeaders: hideHead, extra: modelSig, chat: chatOptions }) : null),
-    [m, remote, dark, hideSig, hideHead, modelSig, chatOptions]
+    // Mit der Mail ohne Bilder: Sie stehen als tmimg-Adressen im Dokument, die Anhangsliste ändert es nicht
+    () => (base ? mailDocument(base, remote, dark, { hide: hideSig, hideHeaders: hideHead, extra: modelSig, chat: chatOptions }) : null),
+    [base, remote, dark, hideSig, hideHead, modelSig, chatOptions]
   )
 
   useEffect(() => {

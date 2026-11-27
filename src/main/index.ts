@@ -351,8 +351,10 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     getMailFolders: (id) => get(id).getMailFolders(),
     getMailUnread: (id) => get(id).getMailUnread(),
     listMail: (id, folderId, next) => get(id).listMail(folderId, next),
-    getMail: (id, mid) => get(id).getMail(mid),
-    getMailImages: (id, mid, ids) => get(id).getMailImages(mid, ids),
+    getMail: (id, mid, background) => get(id).getMail(mid, background),
+    getMailImages: (id, mid) => get(id).getMailImages(mid),
+    getMailImageIndex: (id, mid) => get(id).getMailImageIndex(mid),
+    prefetchMailImages: (id, mid) => get(id).prefetchMailImages(mid),
     openMailAttachment: async (id, mid, aid, mode) => deliverAttachment(sender(), await get(id).getMailAttachment(mid, aid), mode),
     saveMailAttachments: async (id, mid, aids, target) => {
       const folder = target === 'choose' ? await chooseFolder(sender()) : downloadsDir()

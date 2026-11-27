@@ -32,12 +32,21 @@ function remember(key: string, e: CacheEntry): void {
 
 // tmimg://avatar/<accountId>/<mri>?name=..   tmimg://team/<accountId>/<groupId>?name=..&etag=..
 // tmimg://mailavatar/<accountId>/<mailadresse>?name=..   tmimg://proxy/<accountId>/x?u=<url>
+// tmimg://mailcid/<accountId>/<content-id>?m=<messageId>: eingebettetes Bild einer Mail
 export function handleMediaProtocol(getAccount: (id: string) => AccountService | undefined): void {
   protocol.handle(MEDIA_SCHEME, async (req) => {
     const u = new URL(req.url)
     const [, accountId, rawId] = u.pathname.split('/')
     const acct = getAccount(accountId)
     if (!acct) return new Response(null, { status: 404 })
+    // Bilder aus Mails hält der Bildspeicher des Kontos, hier nichts doppelt zwischenspeichern.
+    // Nur Bilder, sonst könnte ein Anhang als HTML ausgeliefert werden.
+    if (u.host === 'mailcid') {
+      const messageId = u.searchParams.get('m') ?? ''
+      const e = messageId ? await acct.mailImage(messageId, decodeURIComponent(rawId ?? '')).catch(() => undefined) : undefined
+      if (!e || !/^image\//i.test(e.type)) return new Response(null, { status: 404 })
+      return new Response(Buffer.from(e.data), { status: 200, headers: { 'content-type': e.type, 'cache-control': 'max-age=3600' } })
+    }
     const key = req.url
     const cached = cache.get(key)
     const maxAge = u.host === 'proxy' ? 24 * 3600_000 : 3600_000

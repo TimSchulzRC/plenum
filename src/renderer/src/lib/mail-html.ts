@@ -285,6 +285,9 @@ function popTrigger(cls: string, label: string, card: string): string {
 // Mail in Nachrichten zerschneiden und als Chat aufbauen. Jede Grenze bekommt eine Markierung, dann
 // wird zwischen je zwei Markierungen herausgelöst. Kopf und Signatur landen in Pop-ups.
 function chatBody(root: Element, lines: DomLine[], parts: ThreadPart[], chat: ChatOptions): string {
+  // Ankernamen je Dokument ab 1: Dieselbe Mail ergibt dasselbe HTML, sonst lüde das iframe bei jeder
+  // Neuberechnung neu und spränge an den Anfang
+  popSeq = 0
   const doc = root.ownerDocument
   // Der Signaturtrenner „--“ über dem Namen bleibt in der Blase sonst allein stehen
   for (const p of parts) {
@@ -386,7 +389,7 @@ const foldCss = (dark: boolean) => {
 
 // Bereinigtes DOM der Mail: Bilder aufgelöst oder blockiert, Links in neuem Fenster, Farben fürs dunkle
 // Theme umgerechnet. head: <style>-Blöcke der Mail.
-type MailInput = Pick<MailMessage, 'body' | 'bodyType' | 'inlineImages'> & Partial<Pick<MailMessage, 'from'>>
+type MailInput = Pick<MailMessage, 'body' | 'bodyType' | 'inlineImages'> & Partial<Pick<MailMessage, 'from' | 'accountId' | 'id'>>
 function mailRoot(m: MailInput, remote: boolean, dark: boolean): { root: HTMLElement; head: string; blocked: number } {
   let head = ''
   let root: HTMLElement
@@ -414,8 +417,11 @@ function mailRoot(m: MailInput, remote: boolean, dark: boolean): { root: HTMLEle
       const src = img.getAttribute('src') ?? ''
       const cid = /^cid:/i.test(src) ? src.slice(4).replace(/^<|>$/g, '') : undefined
       if (cid) {
+        // Schon geladen (eigene Signatur) als data:, sonst lädt das Dokument das Bild selbst nach,
+        // sobald es da ist: Das Dokument ändert sich dabei nicht, Scrollen und Pop-ups bleiben
         const data = m.inlineImages[cid]
         if (data) img.setAttribute('src', data)
+        else if (m.accountId && m.id) img.setAttribute('src', `tmimg://mailcid/${encodeURIComponent(m.accountId)}/${encodeURIComponent(cid)}?m=${encodeURIComponent(m.id)}`)
         else img.removeAttribute('src')
       } else if (/^https?:/i.test(src) && !remote) {
         // Statt kaputtem Bildsymbol nur der Alternativtext, Zählpixel ohne Text fallen weg
@@ -499,7 +505,8 @@ export function mailDocument(
     if (folds.length) wrapFolds(root, lines, folds)
     body = root.innerHTML
   }
-  const img = remote ? 'data: https: http:' : 'data:'
+  // tmimg: eingebettete Bilder der Mail aus dem Hauptprozess, kein Netz
+  const img = remote ? 'data: tmimg: https: http:' : 'data: tmimg:'
   const csp = `default-src 'none'; img-src ${img}; style-src 'unsafe-inline'${remote ? ' https:' : ''}; font-src data:${remote ? ' https:' : ''}`
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html{${dark ? 'background:#292929;color:#dbdbdb;color-scheme:dark' : 'background:#fff;color:#242424'}}${dark ? 'a{color:#8ab4f8}' : ''}body{margin:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:14px;line-height:1.45;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin:0 0 0 8px;padding-left:12px;border-left:2px solid ${dark ? '#4a4a4a' : '#d1d1d1'}}${sig.chat ? chatCss(dark) : foldCss(dark)}</style>${head}</head><body${sig.chat ? ' class="chat"' : ''}>${body}</body></html>`
   return { html, blocked, signatures: all.length, headers: headers.length, unresolved, messages: parts.length + (sig.chat?.sent?.length ?? 0) }

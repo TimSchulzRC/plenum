@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { Engine, enginePreloadPath } from './engine/engine'
 import { TeamsApi, ApiError, clientMessageId } from './engine/api'
 import { amsImageIds, replaceInlineImages } from './engine/ams'
-import { contentId, forEachLimit, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN, type MailQuery } from './engine/mail'
+import { inlineToLoad, Limiter, MailImageStore, type ImageEntry } from './engine/mail-images'
+import { contentId, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN, type MailQuery } from './engine/mail'
 import { MailDirectory, mailMatches } from './engine/mail-people'
 import {
   conversationKind,
@@ -1299,6 +1300,17 @@ export class AccountService extends EventEmitter<AccountEvents> {
   // Postfach (429, im Live-Test bei sieben). Was dabei scheitert, fragt der nächste Abruf erneut,
   // was es nicht gibt (404, z. B. kein Archiv), nicht mehr. Die Zuordnung ändert sich nicht.
   private mailKinds = new Map<string, MailFolderKind>()
+  // Alle Lesezugriffe auf das Postfach teilen sich vier Plätze, Geöffnetes vor Vorgeladenem
+  private mailLimit = new Limiter(4)
+  private mailImages = new MailImageStore({
+    list: (id, high) => this.mailLimit.run(() => listAttachments(this.api, id), high).then((att) => inlineToLoad(att.map(mapAttachment))),
+    fetch: async (id, attachmentId, high) => {
+      const full = await this.mailLimit.run(() => this.api.mailAttachment(id, attachmentId), high)
+      const cid = contentId(full?.contentId)
+      if (!cid || typeof full?.contentBytes !== 'string') return undefined
+      return { cid, type: String(full.contentType || 'application/octet-stream'), data: Buffer.from(full.contentBytes, 'base64') }
+    }
+  })
   private mailKindsDone = new Set<MailFolderKind>()
   // Gleichzeitige Abrufe (Neu laden während des Zwei-Minuten-Abrufs) teilen sich einen
   private mailFoldersRun?: Promise<MailFolder[]>
@@ -1348,29 +1360,39 @@ export class AccountService extends EventEmitter<AccountEvents> {
     return { items: items.map((m) => mapSummary(m, this.id)), next: res?.['@odata.nextLink'] || undefined }
   }
 
-  // Nachricht und Anhangsliste parallel, ohne die eingebetteten Bilder: Die lädt getMailImages
-  // danach, damit der Text sofort steht. Inline-Anhänge stehen mit isInline in der Liste.
-  async getMail(id: string): Promise<MailMessage> {
-    const [m, att] = await Promise.all([this.api.mailMessage(id), listAttachments(this.api, id)])
-    return mapMessage(m, this.id, att.map(mapAttachment), {})
+  // Nachricht und Anhangsliste parallel, ohne die eingebetteten Bilder, damit der Text sofort steht.
+  // Die Bilder holt der Leser über tmimg://mailcid (mailImage), Inline-Anhänge stehen mit isInline in
+  // der Liste. background: nur vorgeladen, die geöffnete Mail geht vor.
+  async getMail(id: string, background = false): Promise<MailMessage> {
+    const high = !background
+    const [m, att] = await Promise.all([this.mailLimit.run(() => this.api.mailMessage(id), high), this.mailLimit.run(() => listAttachments(this.api, id), high)])
+    const attachments = att.map(mapAttachment)
+    this.mailImages.remember(id, inlineToLoad(attachments))
+    return mapMessage(m, this.id, attachments, {})
   }
 
-  // Eingebettete Bilder (Logos, Screenshots) als data:-URL, höchstens 20, je bis zu vier gleichzeitig:
-  // Exchange drosselt schon bei sieben gleichzeitigen Anfragen je Postfach. Auswahl und Größenbudget
-  // trifft die Oberfläche, sie kennt die Anhangsliste.
-  async getMailImages(id: string, attachmentIds: string[]): Promise<MailImages> {
+  // Eingebettetes Bild nach Content-ID für tmimg://mailcid, sobald es geladen ist
+  mailImage(id: string, cid: string): Promise<ImageEntry | undefined> {
+    return this.mailImages.image(id, cid)
+  }
+
+  // Bilder einer Mail schon laden (beim Überfahren in der Liste), hinter geöffneten Mails
+  prefetchMailImages(id: string): void {
+    void this.mailImages.load(id, false).catch(() => undefined)
+  }
+
+  // Welcher Inline-Anhang welches Bild ist, damit die Liste eingebettete Anhänge weglässt
+  getMailImageIndex(id: string): Promise<Record<string, string>> {
+    return this.mailImages.index(id)
+  }
+
+  // Alle eingebetteten Bilder als data:-URL, für die eigene Signatur (Logo)
+  async getMailImages(id: string): Promise<MailImages> {
     const out: MailImages = { images: {}, cids: {} }
-    await forEachLimit([...new Set(attachmentIds)].slice(0, 20), 4, async (a) => {
-      try {
-        const full = await this.api.mailAttachment(id, a)
-        const cid = contentId(full?.contentId)
-        if (!cid || typeof full?.contentBytes !== 'string') return
-        out.images[cid] = `data:${full.contentType || 'application/octet-stream'};base64,${full.contentBytes}`
-        out.cids[a] = cid
-      } catch (e) {
-        log.warn('[mail] Eingebettetes Bild nicht geladen', (e as Error).message)
-      }
-    })
+    for (const [attachmentId, e] of await this.mailImages.all(id)) {
+      out.images[e.cid] = `data:${e.type};base64,${Buffer.from(e.data).toString('base64')}`
+      out.cids[attachmentId] = e.cid
+    }
     return out
   }
 

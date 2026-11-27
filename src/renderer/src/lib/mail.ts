@@ -1,4 +1,4 @@
-import type { MailAddress, MailAttachment, MailImages, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
+import type { MailAddress, MailImages, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
 
 // Empfänger und Betreff für Antworten und Weiterleitungen, wie Outlook sie vorschlägt.
 // me: eigene Adressen des Kontos, die bei „Allen antworten“ wegfallen.
@@ -43,20 +43,6 @@ export function fileSize(bytes: number): string {
 export function addressLabel(a?: MailAddress): string {
   if (!a) return ''
   return a.name || a.address
-}
-
-// Eingebettete Bilder, die die App nachlädt: Inline-Anhänge in ihrer Reihenfolge, höchstens 20 und
-// zusammen höchstens 8 MB
-export const INLINE_BUDGET = 8 * 1024 * 1024
-export function inlineToLoad(attachments: MailAttachment[]): string[] {
-  const out: string[] = []
-  let budget = INLINE_BUDGET
-  for (const a of attachments) {
-    if (!a.isInline || a.size > budget || out.length >= 20) continue
-    out.push(a.id)
-    budget -= a.size
-  }
-  return out
 }
 
 // Mail mit nachgeladenen Bildern: Bilder ins HTML, eingebettete Anhänge aus der Liste. Solange die

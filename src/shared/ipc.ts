@@ -81,9 +81,14 @@ export interface ApiMethods {
   getMailFolders(accountId: string): MailFolder[]
   getMailUnread(accountId: string): number | null
   listMail(accountId: string, folderId: string, next?: string): MailPage
-  getMail(accountId: string, messageId: string): MailMessage
-  // Eingebettete Bilder (Inline-Anhänge) einer Mail, höchstens 20, parallel geladen
-  getMailImages(accountId: string, messageId: string, attachmentIds: string[]): MailImages
+  // background: nur vorgeladen, geöffnete Mails gehen vor
+  getMail(accountId: string, messageId: string, background?: boolean): MailMessage
+  // Eingebettete Bilder einer Mail als data:-URL (für die eigene Signatur). Der Leser lädt sie über tmimg://mailcid.
+  getMailImages(accountId: string, messageId: string): MailImages
+  // Anhang-ID → Content-ID der eingebetteten Bilder, nach dem Laden
+  getMailImageIndex(accountId: string, messageId: string): Record<string, string>
+  // Eingebettete Bilder schon laden, hinter geöffneten Mails
+  prefetchMailImages(accountId: string, messageId: string): void
   // Öffnen, in den Download-Ordner laden oder „Speichern unter …“. Gibt den gespeicherten Pfad zurück.
   openMailAttachment(accountId: string, messageId: string, attachmentId: string, mode: 'open' | 'download' | 'saveAs'): string | null
   // Mehrere Anhänge in den Download-Ordner oder einen gewählten Ordner (null bei Abbruch)
