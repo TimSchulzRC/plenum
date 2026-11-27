@@ -384,7 +384,10 @@ button {
 .list-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 0 8px 12px;
+  /* Platz für die Scrollbar immer freihalten, sonst springt die Breite, sobald sie erscheint.
+     Die Rinne (9px) ersetzt rechts das Innenmaß. */
+  scrollbar-gutter: stable;
+  padding: 0 0 12px 8px;
 }
 .section-title {
   display: flex;
@@ -515,6 +518,17 @@ button {
 }
 .acct-head:not(:first-child) {
   margin-top: 6px;
+}
+/* Füllt den Abstand über dem Kopf, damit beim Kleben keine Chats durch die Lücke scheinen.
+   Fängt auch Klicks ab, sonst träfen sie die verdeckte Chatzeile. */
+.acct-head:not(:first-child)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 6px;
+  background: var(--pane);
 }
 .acct-head > svg {
   flex-shrink: 0;
