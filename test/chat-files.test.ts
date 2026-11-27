@@ -40,9 +40,20 @@ test('Chatordner: der vorhandene gewinnt, sonst der deutsche, andere Fehler gehe
   )
   assert.deepEqual(asked, [`${GRAPH}/me/drive/root:/Microsoft%20Teams-Chatdateien?$select=id`, `${GRAPH}/me/drive/root:/Microsoft%20Teams%20Chat%20Files?$select=id`])
   assert.deepEqual(await chatFilesTarget(async () => ({ id: 'x' })), { rootPath: 'Microsoft Teams-Chatdateien' })
+  // Keiner da: der deutsche wird angelegt, sonst scheitert eine Upload-Session am fehlenden Ordner
+  const created: any[] = []
   assert.deepEqual(
-    await chatFilesTarget(async () => {
+    await chatFilesTarget(async (url, init) => {
+      if (init?.method === 'POST') return created.push({ url, body: init.body })
       throw notFound()
+    }),
+    { rootPath: 'Microsoft Teams-Chatdateien' }
+  )
+  assert.deepEqual(created, [{ url: `${GRAPH}/me/drive/root/children`, body: { name: 'Microsoft Teams-Chatdateien', folder: {}, '@microsoft.graph.conflictBehavior': 'fail' } }])
+  // Gleichzeitig angelegt (409): kein Fehler
+  assert.deepEqual(
+    await chatFilesTarget(async (_url, init) => {
+      throw init?.method === 'POST' ? Object.assign(new Error('graph 409'), { status: 409 }) : notFound()
     }),
     { rootPath: 'Microsoft Teams-Chatdateien' }
   )
@@ -150,6 +161,12 @@ test('Freigabe geht an die Chatmitglieder: Mail, wenn bekannt, sonst Objekt-ID',
   assert.equal(call!.init.method, 'POST')
   assert.deepEqual(call!.init.body, { recipients, roles: ['write'], requireSignIn: true, sendInvitation: false })
   assert.deepEqual(share, { shareUrl: 'https://contoso-my.sharepoint.com/:b:/g/personal/x/abc', shareId: 'perm1' })
+
+  // Teilerfolg (207): ein Empfänger ohne Freigabe bricht ab
+  await assert.rejects(
+    inviteMembers(async () => ({ value: [{ id: 'perm1' }, { error: { code: 'notAllowed', message: 'Externe Freigabe ist gesperrt' } }] }), ITEM, recipients),
+    /Externe Freigabe ist gesperrt/
+  )
 
   // Notizen an mich selbst: niemand zum Freigeben, kein Aufruf
   assert.deepEqual(await inviteMembers(async () => assert.fail('kein Aufruf erwartet'), ITEM, []), {})

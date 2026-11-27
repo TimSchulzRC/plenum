@@ -10,7 +10,8 @@ export const GRAPH = 'https://graph.microsoft.com/v1.0'
 // Teams ihn zuerst angelegt hat. Ein vorhandener Ordner gewinnt, sonst der erste.
 export const CHAT_FILES_FOLDERS = ['Microsoft Teams-Chatdateien', 'Microsoft Teams Chat Files']
 
-// Bis hierhin ein einzelnes PUT (Graph-Grenze 4 MB), darüber eine Upload-Session
+// Bis hierhin ein einzelnes PUT, darüber eine Upload-Session in Teilen (eigene Wahl: kleine Anfragen
+// lassen sich bei schlechter Verbindung eher durchbringen)
 export const SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024
 // Teile einer Upload-Session müssen ein Vielfaches von 320 KiB sein
 export const CHUNK_BYTES = 320 * 1024 * 32
@@ -71,7 +72,8 @@ export function itemAddress(target: UploadTarget, name: string): string {
   return `${GRAPH}/drives/${encodeURIComponent(target.driveId)}/items/${encodeURIComponent(target.folderId)}:/${encodeDrivePath(name)}:`
 }
 
-// Chatordner im OneDrive: der vorhandene, sonst der erste (Graph legt ihn beim Hochladen an)
+// Chatordner im OneDrive: der vorhandene, sonst wird der erste angelegt (eine Upload-Session braucht
+// einen vorhandenen Ordner)
 export async function chatFilesTarget(graph: GraphRequest): Promise<UploadTarget> {
   for (const folder of CHAT_FILES_FOLDERS) {
     try {
@@ -80,6 +82,15 @@ export async function chatFilesTarget(graph: GraphRequest): Promise<UploadTarget
     } catch (e) {
       if ((e as { status?: number }).status !== 404) throw e
     }
+  }
+  try {
+    await graph(`${GRAPH}/me/drive/root/children`, {
+      method: 'POST',
+      body: { name: CHAT_FILES_FOLDERS[0], folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }
+    })
+  } catch (e) {
+    // Inzwischen angelegt (etwa von Teams selbst): auch gut
+    if ((e as { status?: number }).status !== 409) throw e
   }
   return { rootPath: CHAT_FILES_FOLDERS[0] }
 }
@@ -148,7 +159,11 @@ export async function inviteMembers(graph: GraphRequest, item: DriveItem, recipi
     method: 'POST',
     body: { recipients, roles: ['write'], requireSignIn: true, sendInvitation: false }
   })
-  const first = Array.isArray(res?.value) ? res.value[0] : undefined
+  // Bei Teilerfolg (207) steht der Fehler je Empfänger in value
+  const results: any[] = Array.isArray(res?.value) ? res.value : []
+  const failed = results.find((r) => r?.error)
+  if (failed) throw new Error(failed.error.message || failed.error.code || 'Freigabe fehlgeschlagen')
+  const first = results[0]
   return { shareUrl: first?.link?.webUrl, shareId: first?.id }
 }
 

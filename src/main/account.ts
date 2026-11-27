@@ -1117,7 +1117,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
         .catch(() => this.chats.get(conversationId)?.members ?? [])
       const others = members.filter((m) => m && m !== this.record.mri)
       recipients = inviteRecipients(others.map((mri) => ({ mri, email: this.people.get(mri)?.email })))
-      if (others.length && !recipients.length) throw new Error('Für die Mitglieder dieses Chats fehlen die Angaben zum Freigeben der Datei.')
+      // Ohne Empfänger käme die Datei an, ließe sich aber von niemandem öffnen
+      if (!recipients.length) throw new Error('Die Mitglieder dieses Chats ließen sich nicht ermitteln, die Datei wurde nicht gesendet.')
     }
     const out: Record<string, unknown>[] = []
     for (const f of files) {
