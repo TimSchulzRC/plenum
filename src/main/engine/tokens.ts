@@ -123,7 +123,9 @@ export class TokenStore {
   // Letzte erfasste Anfrage pro Familie (mit Auth-Header).
   templates = new Map<Family, CapturedRequest>()
   // Neuester Bearer-Token pro Audience.
-  bearers = new Map<string, { token: string; exp?: number; at: number }>()
+  // Neueste Bearer-Tokens je Audience und Mandant. Die Web-App holt Tokens auch für andere Mandanten
+  // (Mitteilungen von dort, Mandantenwechsel). Eigene Anfragen nehmen das des Mandanten der Sitzung.
+  bearers = new Map<string, { token: string; exp?: number; at: number; aud: string; tid?: string }>()
   skypeToken?: { token: string; at: number }
   me: JwtInfo = {}
   // Alle gesehenen Endpunkte für die Diagnose.
@@ -148,11 +150,14 @@ export class TokenStore {
       const tok = auth.replace(/^bearer\s+/i, '')
       const info = decodeJwt(tok)
       if (info?.aud) {
-        const prev = this.bearers.get(info.aud)
-        if (!prev || (info.exp ?? 0) >= (prev.exp ?? 0)) this.bearers.set(info.aud, { token: tok, exp: info.exp, at: Date.now() })
-        if (info.oid && (!this.me.oid || info.aud.includes('api.spaces.skype.com') || info.aud.includes('chatsvcagg'))) {
-          this.me = { ...this.me, ...info }
-        }
+        const key = `${info.aud}|${info.tid ?? ''}`
+        const prev = this.bearers.get(key)
+        if (!prev || (info.exp ?? 0) >= (prev.exp ?? 0)) this.bearers.set(key, { token: tok, exp: info.exp, at: Date.now(), aud: info.aud, tid: info.tid })
+        // Wer man in dieser Sitzung ist, sagt das Token des Chat-Dienstes (chatsvcagg): Das gilt nur für den
+        // Mandanten der Sitzung. Spaces-Tokens holt die Web-App auch für andere Mandanten, und übernähme die
+        // App eins davon, hielte sie sich für den Gast dort (falsche Namen, falscher Mandant, kein Postfach).
+        // Andere Tokens nur, solange noch keins da ist.
+        if (info.oid && (info.aud.includes('chatsvcagg') || !this.me.oid)) this.me = { ...info }
       }
     }
     const skype =
@@ -196,7 +201,7 @@ export class TokenStore {
     if (auth && /^bearer\s/i.test(auth)) {
       const info = decodeJwt(auth.replace(/^bearer\s+/i, ''))
       if (info?.aud) {
-        const newest = this.bearers.get(info.aud)
+        const newest = this.pick((a) => a === info.aud)
         if (newest) h['authorization'] = `Bearer ${newest.token}`
       }
     } else if (!auth) {
@@ -213,23 +218,26 @@ export class TokenStore {
     return h
   }
 
-  findBearer(audPart: string): string | undefined {
+  // Neuestes Token der passenden Audiences, bevorzugt aus dem Mandanten der Sitzung (me.tid)
+  private pick(match: (aud: string) => boolean): { token: string; exp?: number } | undefined {
     let best: { token: string; exp?: number } | undefined
-    for (const [aud, t] of this.bearers) {
-      if (!aud.includes(audPart)) continue
+    let own: { token: string; exp?: number } | undefined
+    const tid = this.me.tid?.toLowerCase()
+    for (const t of this.bearers.values()) {
+      if (!match(t.aud)) continue
       if (!best || (t.exp ?? 0) > (best.exp ?? 0)) best = t
+      if (tid && t.tid?.toLowerCase() === tid && (!own || (t.exp ?? 0) > (own.exp ?? 0))) own = t
     }
-    return best?.token
+    return own ?? best
+  }
+
+  findBearer(audPart: string): string | undefined {
+    return this.pick((a) => a.includes(audPart))?.token
   }
 
   // Neuester Token für genau diese Audiences (ohne Teilstring-Treffer wie bei findBearer)
   bearerFor(auds: string[]): string | undefined {
-    let best: { token: string; exp?: number } | undefined
-    for (const aud of auds) {
-      const t = this.bearers.get(aud)
-      if (t && (!best || (t.exp ?? 0) > (best.exp ?? 0))) best = t
-    }
-    return best?.token
+    return this.pick((a) => auds.includes(a))?.token
   }
 
   expiry(family: Family): number | undefined {

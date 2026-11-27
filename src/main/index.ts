@@ -324,7 +324,7 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
       return {
         accountId: id,
         endpoints,
-        tokens: [...a.engine.tokens.bearers.entries()].map(([aud, t]) => ({ family: aud, audience: aud, expires: t.exp })),
+        tokens: [...a.engine.tokens.bearers.values()].map((t) => ({ family: t.aud, audience: t.aud, expires: t.exp })),
         url: a.engine.currentUrl,
         seen: [...[...a.engine.lastBodies.entries()].map(([k, v]) => ['BODY ' + k + ' ' + v, { at: Date.now(), count: 0, method: '' }] as const), ...a.engine.tokens.seen.entries()].sort((x, y) => y[1].at - x[1].at).slice(0, 200).map(([k, v]) => `${k} (${v.count})`)
       }
