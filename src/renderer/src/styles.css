@@ -2283,13 +2283,13 @@ button {
 }
 /* Dunkles Theme: Hintergrund und Grundfarben wie der Lesebereich, die Farben der Signatur rechnet
    darkSignature() um */
-[data-theme='dark'] .sig-edit,
+.sig-edit.dark,
 .signature-preview.dark {
   background: #292929;
   color: #dbdbdb;
   color-scheme: dark;
 }
-[data-theme='dark'] .sig-edit a {
+.sig-edit.dark a {
   color: #8ab4f8;
 }
 .signature-preview {

@@ -1,6 +1,6 @@
 import { Button, Menu, MenuButton, MenuDivider, MenuItemRadio, MenuList, MenuPopover, MenuTrigger, Spinner, Tooltip } from '@fluentui/react-components'
 import { Dismiss16Regular } from '@fluentui/react-icons'
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { MailSignatures } from '@shared/types'
 import { cleanSignature, darkSignature, lightSignature } from '../lib/mail-html'
 import { useDarkMode } from '../theme'
@@ -128,27 +128,56 @@ export function ComposeSignature({
 function SignatureEditor({ html, onInput }: { html: string; onInput: (html: string) => void }): JSX.Element {
   const dark = useDarkMode()
   const ref = useRef<HTMLDivElement>(null)
+  // Was das Feld gerade zeigt: helle Fassung und in welchem Theme
   const shown = useRef<{ html: string; dark: boolean }>(undefined)
+  const [blurs, setBlurs] = useState(0)
+  // Hintergrund passend zu den Farben im Feld, auch solange ein Theme-Wechsel noch wartet
+  const [painted, setPainted] = useState(dark)
   useLayoutEffect(() => {
     const el = ref.current
-    if (!el || (html === shown.current?.html && dark === shown.current.dark)) return
+    const cur = shown.current
+    if (!el || (html === cur?.html && dark === cur.dark)) return
+    // Nur das Theme wechselt, während man tippt: erst beim Verlassen umstellen, sonst springt der Cursor
+    if (cur && html === cur.html && document.activeElement === el) return
     el.innerHTML = dark ? darkSignature(html) : html
     shown.current = { html, dark }
-  }, [html, dark])
+    setPainted(dark)
+  }, [html, dark, blurs])
+  // Nur reiner Text: Formatierter Text aus der Zwischenablage hätte eigene Farben, die das Umrechnen
+  // zwischen dunkel und hell verdreht. So übernimmt er die Formatierung der Zeile.
+  const insertText = (text: string) => {
+    if (text) document.execCommand('insertText', false, text)
+  }
   return (
     <div
       ref={ref}
-      className="sig-edit"
+      className={`sig-edit${painted ? ' dark' : ''}`}
       role="textbox"
       aria-multiline="true"
       aria-label="Signatur dieser Mail"
       title="Für diese Mail ändern"
       contentEditable
       suppressContentEditableWarning
+      onBlur={() => setBlurs((n) => n + 1)}
+      onPaste={(e) => {
+        e.preventDefault()
+        insertText(e.clipboardData.getData('text/plain'))
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        const range = document.caretRangeFromPoint(e.clientX, e.clientY)
+        if (range) {
+          getSelection()?.removeAllRanges()
+          getSelection()?.addRange(range)
+        }
+        insertText(e.dataTransfer.getData('text/plain'))
+      }}
       onInput={() => {
         const raw = ref.current?.innerHTML ?? ''
-        const now = dark ? lightSignature(raw) : raw
-        shown.current = { html: now, dark }
+        // Zurückrechnen nach dem Theme, in dem das Feld gerade zu sehen ist
+        const wasDark = shown.current?.dark ?? dark
+        const now = wasDark ? lightSignature(raw) : raw
+        shown.current = { html: now, dark: wasDark }
         onInput(now)
       }}
     />

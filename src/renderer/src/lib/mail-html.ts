@@ -543,6 +543,8 @@ export function cleanSignature(sig: { html: string; text: string }): string {
     else el.removeAttribute('style')
   }
   for (const el of div.querySelectorAll('[background]')) if (!allowed(el.getAttribute('background') ?? '')) el.removeAttribute('background')
+  // Markierungen des dunklen Entwurfs (darkSignature) gehen nie mit raus
+  for (const el of div.querySelectorAll('*')) for (const a of [...el.attributes]) if (a.name.startsWith('data-te-')) el.removeAttribute(a.name)
   trimBlank(div)
   return div.innerHTML.trim()
 }
