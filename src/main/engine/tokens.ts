@@ -31,6 +31,8 @@ interface JwtInfo {
   name?: string
   upn?: string
   scp?: string
+  // Aussteller des Heimatmandanten, nur bei Gästen (siehe homeTenantOf)
+  idp?: string
 }
 
 const SKIP_HEADERS = new Set([
@@ -77,7 +79,9 @@ export function decodeJwt(token: string): JwtInfo | null {
       tid: c.tid,
       name: c.name,
       upn: c.upn || c.unique_name || c.preferred_username || c.email,
-      scp: c.scp
+      scp: c.scp,
+      // Immer gesetzt (auch undefined), sonst bliebe beim Zusammenführen in me ein alter Wert stehen
+      idp: typeof c.idp === 'string' ? c.idp : undefined
     }
   } catch {
     return null

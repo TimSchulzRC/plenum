@@ -67,6 +67,11 @@ export class CallManager {
   popouts = new Set<BrowserWindow>()
   private activeAccountId?: string
   private compact = false
+
+  // Läuft oder startet gerade ein Anruf in diesem Konto? Dann darf seine Web-App nicht neu laden.
+  busy(accountId: string): boolean {
+    return !!this.state && this.activeAccountId === accountId
+  }
   private normalBounds?: Electron.Rectangle
   private closeTimer?: NodeJS.Timeout
   private pendingDisplay?: { cb: (s: any) => void; sources: DesktopCapturerSource[] }

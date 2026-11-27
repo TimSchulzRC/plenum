@@ -54,7 +54,7 @@ import { analytics } from './analytics'
 import { errorSummary } from '@shared/analytics'
 import { parseRealtimeFrame } from './engine/realtime'
 import { OlderCursors } from './older-cursors'
-import { parseTenants } from './tenants'
+import { foreignHome, parseTenants } from './tenants'
 
 export interface AccountRecord {
   id: string
@@ -95,6 +95,7 @@ interface AccountEvents {
 
 const SYNC_INTERVAL = 12_000
 const FULL_SYNC_INTERVAL = 15 * 60_000
+const DUPLICATE_TEXT = 'Das ist der Mandant des Hauptkontos. In den Einstellungen entfernen.'
 const PRESENCE_INTERVAL = 60_000
 
 export class AccountService extends EventEmitter<AccountEvents> {
@@ -141,17 +142,28 @@ export class AccountService extends EventEmitter<AccountEvents> {
   private csaRetries = 0
   // Gastmandant, dessen Web-App im falschen Mandanten läuft: keine Daten übernehmen
   private wrongTenant = false
+  // Hauptkonto, dessen Web-App als Gast in einem fremden Mandanten läuft: ebenso
+  private foreign = false
+  // Gastmandant, der in Wahrheit der Mandant des Hauptkontos ist (zeigte dessen Chats doppelt)
+  private duplicate = false
+  private homeReloadAt = 0
+  // Abfragen, die in Folge mit 401 gescheitert sind, und wann die App deshalb zuletzt neu geladen hat
+  private authFailures = 0
+  private sessionReloadAt = 0
+  private inCall: () => boolean
 
   constructor(
     public record: AccountRecord,
-    opts: { autoShowLogin: boolean }
+    opts: { autoShowLogin: boolean; inCall?: () => boolean }
   ) {
     super()
+    this.inCall = opts.inCall ?? (() => false)
     this.engine = new Engine(record.id, enginePreloadPath(), {
       autoShowLogin: opts.autoShowLogin,
       title: [record.displayName || record.upn || 'Microsoft Teams', record.parentId && record.tenantName].filter(Boolean).join(' – '),
-      // Nur Gastmandanten bekommen den Mandanten fest vorgegeben, das Hauptkonto startet wie in Teams
-      tenantId: record.parentId ? record.tenantId : undefined,
+      // Fest im Mandanten des Kontos starten. Ohne Vorgabe öffnet Teams den zuletzt benutzten, beim
+      // Hauptkonto auch einen Gastmandanten (siehe leaveForeignTenant).
+      tenantId: record.tenantId,
       loginHint: record.parentId ? record.upn : undefined
     })
     this.api = new TeamsApi(this.engine)
@@ -222,6 +234,16 @@ export class AccountService extends EventEmitter<AccountEvents> {
       this.engine.setStatus('error', `Teams hat ${this.record.tenantName ?? 'den Mandanten'} nicht geöffnet.`)
       return
     }
+    if (this.duplicate) {
+      this.engine.setStatus('error', DUPLICATE_TEXT)
+      return
+    }
+    // Hauptkonto im fremden Mandanten: nichts übernehmen, sonst hielte die App die Gastidentität für das
+    // Konto (falscher Name, falsche Chats, kein Postfach)
+    if (!this.record.parentId) {
+      if (this.leaveForeignTenant()) return
+      if (me.tid) this.engine.setStartTenant(me.tid)
+    }
     if (me.oid) {
       const mri = `8:orgid:${me.oid}`
       const changed = this.record.mri !== mri || this.record.displayName !== me.name || this.record.upn !== me.upn
@@ -234,6 +256,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
     void this.fullSync()
     clearInterval(this.intervalTimer)
     this.intervalTimer = setInterval(() => {
+      // Auch im Lauf: Eine Besprechung oder ein Link aus einem anderen Mandanten kann die Web-App dorthin bringen
+      if (!this.record.parentId && this.leaveForeignTenant()) return
       if (Date.now() - this.fullSyncAt > FULL_SYNC_INTERVAL) void this.fullSync()
       else void this.deltaSync()
     }, SYNC_INTERVAL)
@@ -241,8 +265,72 @@ export class AccountService extends EventEmitter<AccountEvents> {
     this.presenceTimer = setInterval(() => void this.refreshPresence(), PRESENCE_INTERVAL)
   }
 
+  // Läuft die Web-App des Hauptkontos als Gast in einem fremden Mandanten? Dann den gespeicherten Mandanten
+  // auf den Heimatmandanten setzen und dort neu laden: nicht während eines Anrufs (Neuladen beendete ihn),
+  // höchstens alle 5 Minuten. true, solange sie fremd läuft.
+  private leaveForeignTenant(): boolean {
+    const home = foreignHome(this.engine.tokens.me)
+    if (!home) {
+      this.foreign = false
+      return false
+    }
+    if (!this.foreign) {
+      log.warn(`[${this.id}] Hauptkonto läuft als Gast in einem fremden Mandanten, zurück in den eigenen`)
+      // Was bis eben aus dem fremden Mandanten kam, gehört nicht zum Konto. Nach der Rückkehr füllt
+      // fullSync die Listen neu.
+      this.chats.clear()
+      this.teams = []
+      this.fullSyncAt = 0
+      this.syncStateUrl = undefined
+      this.scheduleSnapshot()
+    }
+    this.foreign = true
+    if (this.record.tenantId?.toLowerCase() !== home) {
+      this.record = { ...this.record, tenantId: home }
+      this.emit('record-updated', this.record)
+    }
+    this.engine.setStartTenant(home)
+    if (!this.inCall() && Date.now() - this.homeReloadAt > 5 * 60_000) {
+      this.homeReloadAt = Date.now()
+      this.engine.reload()
+    }
+    return true
+  }
+
+  // Gastmandant mit dem Mandanten des eigenen Hauptkontos: nicht abgleichen, in den Einstellungen entfernen
+  setDuplicate(on: boolean): void {
+    if (on === this.duplicate) return
+    this.duplicate = on
+    if (on) {
+      log.warn(`[${this.id}] Gastmandant ist der Mandant des Hauptkontos`)
+      this.engine.setStatus('error', DUPLICATE_TEXT)
+    } else this.engine.reload()
+    this.emit('changed')
+  }
+
+  // Scheitert jede Abfrage mit 401, hat die Web-App ihre Sitzung verloren (gemessen: eine Nacht lang,
+  // der Status blieb „verbunden“, Mail und Chats luden nicht). Nach 10 Fehlschlägen in Folge (etwa
+  // 2 Minuten) lädt die App sie neu, höchstens alle 15 Minuten und nie während eines Anrufs.
+  private noteSync(e?: unknown): void {
+    if (!(e instanceof ApiError && e.status === 401)) {
+      this.authFailures = 0
+      return
+    }
+    if (++this.authFailures < 10 || this.inCall() || Date.now() - this.sessionReloadAt < 15 * 60_000) return
+    log.warn(`[${this.id}] Abfragen scheitern mit 401, Web-App wird neu geladen`)
+    this.authFailures = 0
+    this.sessionReloadAt = Date.now()
+    this.engine.reload()
+  }
+
+  // Nicht abgleichen: Gastmandant im falschen Mandanten, doppelt angelegt, oder das Hauptkonto läuft gerade
+  // in einem fremden Mandanten (auch zwischen zwei Prüfungen im Intervall bemerkt)
+  private outOfTenant(): boolean {
+    return this.wrongTenant || this.duplicate || this.foreign || (!this.record.parentId && !!foreignHome(this.engine.tokens.me))
+  }
+
   async fullSync(): Promise<void> {
-    if (this.syncing || !this.started || this.wrongTenant) return
+    if (this.syncing || !this.started || this.outOfTenant()) return
     this.syncing = true
     try {
       if (this.engine.tokens.has('csa')) {
@@ -265,6 +353,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
     } catch (e) {
       log.warn(`[${this.id}] fullSync failed`, (e as Error).message)
       this.trackSyncFailure('full', e)
+      this.noteSync(e)
     } finally {
       this.syncing = false
       if (this.started) {
@@ -514,7 +603,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
 
   private async runDeltaSync(initial: boolean): Promise<void> {
     // Nach stop() (Konto entfernt) keine Abfragen und Benachrichtigungen mehr
-    if (!this.started || this.wrongTenant || !this.engine.tokens.has('chatsvc')) return
+    if (!this.started || this.outOfTenant() || !this.engine.tokens.has('chatsvc')) return
     const touched = [...this.realtimeConvs]
     this.realtimeConvs.clear()
     let data: any
@@ -529,11 +618,13 @@ export class AccountService extends EventEmitter<AccountEvents> {
       if (e instanceof ApiError && (e.status === 400 || e.status === 404)) this.syncStateUrl = undefined
       log.warn(`[${this.id}] deltaSync failed`, (e as Error).message)
       this.trackSyncFailure('delta', e)
+      this.noteSync(e)
       if (this.started && touched.length > 0) this.emit('conversation-updated', touched)
       return
     }
     // Konto während der Abfrage entfernt
     if (!this.started) return
+    this.noteSync()
     this.lastDeltaAt = Date.now()
     if (data?._metadata?.syncState) this.syncStateUrl = data._metadata.syncState
     const changed: string[] = []

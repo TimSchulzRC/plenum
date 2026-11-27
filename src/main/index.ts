@@ -119,14 +119,24 @@ function saveRecords(): void {
   store.saveAccounts([...accounts.values()].map((a) => a.record))
 }
 
+// Gastmandanten mit dem Mandanten ihres Hauptkontos: Sie entstanden, solange das Hauptkonto fälschlich
+// einen Gastmandanten als eigenen gespeichert hatte, und zeigten dessen Chats doppelt
+function markDuplicates(): void {
+  for (const a of accounts.values()) {
+    const parent = a.record.parentId ? accounts.get(a.record.parentId) : undefined
+    a.setDuplicate(!!parent?.record.tenantId && a.record.tenantId?.toLowerCase() === parent.record.tenantId.toLowerCase())
+  }
+}
+
 function addAccountService(rec: AccountRecord, autoShowLogin: boolean): AccountService {
-  const acct = new AccountService(rec, { autoShowLogin })
+  const acct = new AccountService(rec, { autoShowLogin, inCall: () => !!calls?.busy(rec.id) })
   accounts.set(rec.id, acct)
   calls?.setupSession(acct)
   watchAccount(acct)
   acct.on('changed', emitAccounts)
   acct.on('record-updated', () => {
     saveRecords()
+    markDuplicates()
     emitAccounts()
   })
   acct.on('snapshot', (s) => broadcast('snapshot', s))
@@ -273,6 +283,7 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     addTenant: async (id, tenantId, tenantName) => {
       const parent = get(id)
       if (parent.record.parentId) throw new Error('Mandanten gehören zum Hauptkonto')
+      if (tenantId.toLowerCase() === parent.record.tenantId?.toLowerCase()) throw new Error('Das ist der eigene Mandant des Kontos')
       const existing = [...accounts.values()].find((a) => a.record.parentId === id && a.record.tenantId === tenantId)
       if (existing) return existing.id
       const rec: AccountRecord = {
@@ -678,6 +689,7 @@ void app.whenReady().then(() => {
     const isActive = r.id === settings.activeAccountId || records.length === 1
     addAccountService(r, isActive)
   }
+  markDuplicates()
   startMcp()
   showMain()
 

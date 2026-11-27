@@ -85,7 +85,12 @@ export class Engine extends EventEmitter<EngineEvents> {
     }
   }
 
-  // Gastmandanten öffnen die Web-App direkt im Mandanten
+  // Mandant, in dem die Web-App startet (auch beim Neuladen)
+  setStartTenant(tenantId: string): void {
+    this.opts.tenantId = tenantId
+  }
+
+  // Gastmandanten und Hauptkonto öffnen die Web-App direkt im Mandanten
   get startUrl(): string {
     return teamsStartUrl(TEAMS_START_URL, this.opts.tenantId, this.opts.loginHint)
   }

@@ -25,3 +25,18 @@ export function parseTenants(raw: unknown, currentTenantId?: string): TenantInfo
   // Aktueller Mandant zuerst, dann nach Name
   return out.sort((a, b) => Number(b.current) - Number(a.current) || (a.tenantName ?? '').localeCompare(b.tenantName ?? '', 'de'))
 }
+
+// Heimatmandant der angemeldeten Person nach dem Token der Web-App. Als Gast trägt das Token den
+// Aussteller des Heimatmandanten im idp-Claim, als Mitglied fehlt er, dann ist es der Mandant selbst.
+// Ein anderer Anbieter (z. B. live.com): unbekannt.
+export function homeTenantOf(me: { tid?: string; idp?: string }): string | undefined {
+  if (!me.idp) return me.tid?.toLowerCase()
+  const m = /^https:\/\/(?:sts\.windows\.net|login\.microsoftonline\.com)\/([0-9a-f-]{36})(?:\/|$)/i.exec(me.idp)
+  return m?.[1].toLowerCase()
+}
+
+// Die Web-App eines Hauptkontos läuft als Gast in einem fremden Mandanten: Heimatmandant, sonst undefined
+export function foreignHome(me: { tid?: string; idp?: string }): string | undefined {
+  const home = homeTenantOf(me)
+  return home && me.tid && home !== me.tid.toLowerCase() ? home : undefined
+}
