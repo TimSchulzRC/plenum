@@ -277,8 +277,10 @@ export class AccountService extends EventEmitter<AccountEvents> {
     } else if (me.tid && this.record.tenantId && me.tid.toLowerCase() !== this.record.tenantId.toLowerCase()) return
     if (me.oid) {
       const mri = `8:orgid:${me.oid}`
-      const changed = this.record.mri !== mri || this.record.displayName !== me.name || this.record.upn !== me.upn || (!!me.tid && this.record.tenantId !== me.tid)
-      this.record = { ...this.record, mri, displayName: me.name || this.record.displayName, upn: me.upn || this.record.upn, tenantId: me.tid || this.record.tenantId }
+      const next = { mri, displayName: me.name || this.record.displayName, upn: me.upn || this.record.upn, tenantId: me.tid || this.record.tenantId }
+      // Nur echte Änderungen melden: Jede Meldung speichert die Konten (der Takt ruft das alle 12 s auf)
+      const changed = (Object.keys(next) as (keyof typeof next)[]).some((k) => this.record[k] !== next[k])
+      this.record = { ...this.record, ...next }
       this.me = { mri, displayName: me.name || '', upn: me.upn, email: me.upn, objectId: me.oid }
       this.people.set(mri, { ...(this.people.get(mri) ?? {}), ...this.me })
       if (changed) this.emit('record-updated', this.record)
