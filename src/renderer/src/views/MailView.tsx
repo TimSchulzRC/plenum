@@ -44,7 +44,7 @@ import { accountTitle } from '@shared/accounts'
 import { accountColor, ipcErrorText } from '../lib/calendar'
 import { addressLabel, fileSize, mergeMail, withImages } from '../lib/mail'
 import { cachedMail, loadImageIndex, loadMail, prefetchMail, prefetchTop } from '../lib/mail-load'
-import { cachedFolders, cachedList, loadFolders as loadFolderList, loadList, noteMailChange, noteUnreadBump, prefetchList, staleFolder } from '../lib/mail-lists'
+import { cachedFolders, cachedList, foldersAfterWrite, loadFolders as loadFolderList, loadList, noteMailChange, noteUnreadBump, prefetchList, staleFolder } from '../lib/mail-lists'
 import { HOVER_DELAY } from '../lib/prefetch'
 import { mailDocument, type ChatOptions } from '../lib/mail-html'
 import { modelRanges, modelRequest, type SigRange } from '../lib/mail-signature'
@@ -373,7 +373,8 @@ export function MailView(): JSX.Element {
         })
         .finally(() => {
           done.forEach((f) => f())
-          // Jetzt kennt der Server die Änderung: Zahlen der Ordner frisch holen
+          // Jetzt kennt der Server die Änderung: Zahlen der Ordner frisch holen, nicht aus einer Abfrage von vorher
+          foldersAfterWrite(m.accountId)
           loadFolders(true)
         })
     }

@@ -128,6 +128,12 @@ export function noteUnreadBump(accountId: string, folderId: string, delta: numbe
   }
 }
 
+// Nach dem Abschluss eines Schreibens: Eine Ordnerabfrage, die schon läuft, begann davor. Sie zählt nicht
+// mehr, die nächste startet neu und liefert den Stand danach.
+export function foldersAfterWrite(accountId: string): void {
+  folders.markStale(accountId)
+}
+
 // Nach Senden oder Löschen: Gesendete bzw. Gelöschte beim nächsten Öffnen neu laden
 export function staleFolder(accountId: string, kind: MailFolderKind): string | undefined {
   const f = folders.peek(accountId)?.find((x) => x.kind === kind)
