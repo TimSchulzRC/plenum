@@ -6,7 +6,7 @@ import { copyLoginCookies, engineSession } from './engine/engine'
 import { CallManager } from './calls'
 import { handleMediaProtocol, registerMediaScheme } from './media-protocol'
 import { imageAction } from './image-actions'
-import { deliverAttachment } from './mail-files'
+import { chooseFolder, deliverAttachment, downloadsDir, saveAttachmentsTo, showSavedFile, type AttachmentFile } from './mail-files'
 import { store } from './store'
 import { createMainWindow, uiWindows } from './windows'
 import { Updater } from './updater'
@@ -333,10 +333,27 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     getMailUnread: (id) => get(id).getMailUnread(),
     listMail: (id, folderId, next) => get(id).listMail(folderId, next),
     getMail: (id, mid) => get(id).getMail(mid),
-    openMailAttachment: async (id, mid, aid, mode) => {
-      const { name, data } = await get(id).getMailAttachment(mid, aid)
-      await deliverAttachment(sender(), name, data, mode)
+    openMailAttachment: async (id, mid, aid, mode) => deliverAttachment(sender(), await get(id).getMailAttachment(mid, aid), mode),
+    saveMailAttachments: async (id, mid, aids, target) => {
+      const folder = target === 'choose' ? await chooseFolder(sender()) : downloadsDir()
+      if (!folder) return null
+      // Was keine Datei ist (angehängte Mail, Link), überspringen statt alles abzubrechen
+      const files: AttachmentFile[] = []
+      let skipped = 0
+      let firstError: unknown
+      for (const aid of aids) {
+        try {
+          files.push(await get(id).getMailAttachment(mid, aid))
+        } catch (e) {
+          skipped++
+          firstError ??= e
+        }
+      }
+      if (!files.length) throw firstError ?? new Error('Keine Anhänge zum Speichern')
+      const paths = await saveAttachmentsTo(folder, files)
+      return { folder, inDownloads: folder === downloadsDir(), paths, skipped }
     },
+    showSavedFile: (path) => showSavedFile(path),
     setMailRead: (id, mid, isRead) => get(id).setMailRead(mid, isRead),
     deleteMail: (id, mid) => get(id).deleteMail(mid),
     sendMail: (id, draft, reply) => get(id).sendMail(draft, reply),

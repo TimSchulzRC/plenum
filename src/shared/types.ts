@@ -240,6 +240,14 @@ export interface MailAttachment {
   isInline: boolean
 }
 
+export interface MailAttachmentsSaved {
+  folder: string
+  inDownloads: boolean
+  paths: string[]
+  // Anhänge, die keine Datei sind (z. B. angehängte Mails) oder nicht geladen werden konnten
+  skipped: number
+}
+
 export interface MailMessage extends MailSummary {
   cc: MailAddress[]
   // Antwortadresse, wenn der Absender eine andere als From angibt

@@ -82,7 +82,8 @@ Aktionen aus der Oberfläche tragen zusätzlich `duration_ms`, die Dauer des Auf
 | `mail_sent` | Mail gesendet, beantwortet oder weitergeleitet | `kind` (`new`, `reply`, `replyAll`, `forward`), `recipients` (Anzahl), `attachments` (Anzahl) |
 | `mail_marked` | als gelesen oder ungelesen markiert | `read` |
 | `mail_deleted` | Mail gelöscht (nach „Gelöschte Elemente“) | |
-| `mail_attachment_opened` | Anhang geöffnet oder gespeichert | `mode` (`open`, `save`) |
+| `mail_attachment_opened` | Anhang geöffnet oder gespeichert | `mode` (`open`, `download`, `saveAs`; ältere Versionen `save`) |
+| `mail_attachments_saved` | „Alle herunterladen“ oder „Alle speichern unter …“ | `count`, `target` (`downloads`, `choose`) |
 
 ### Anrufe und Besprechungen
 
