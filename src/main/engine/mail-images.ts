@@ -113,16 +113,20 @@ export class MailImageStore {
         this.bytes -= e.data.byteLength
       }
     }
-    this.trimRefs(messageId)
+    this.trimRefs()
   }
 
-  // Höchstens 200 Anhangslisten, älteste zuerst. Nicht die gerade gemerkte und keine Mail, die gerade
-  // lädt: Ihre Bilder gälten sonst als entfernt. Überhang räumt das Ende eines Ladevorgangs ab.
-  private trimRefs(keep?: string): void {
-    while (this.refs.size > 200) {
-      const old = [...this.refs.keys()].find((id) => id !== keep && !this.running.has(id))
-      if (old === undefined) break
-      this.refs.delete(old)
+  // Höchstens 200 Anhangslisten, älteste zuerst. Nie eine der 20 zuletzt gemerkten (die Mail, die
+  // gleich geöffnet wird) und keine, die gerade lädt: Ihre Bilder gälten sonst als entfernt.
+  // Überhang räumt das Ende eines Ladevorgangs ab.
+  private trimRefs(): void {
+    if (this.refs.size <= 200) return
+    const keys = [...this.refs.keys()]
+    const recent = new Set(keys.slice(-20))
+    for (const id of keys) {
+      if (this.refs.size <= 200) break
+      if (recent.has(id) || this.running.has(id)) continue
+      this.refs.delete(id)
     }
   }
 
@@ -174,7 +178,7 @@ export class MailImageStore {
     })().finally(() => {
       this.running.delete(messageId)
       this.urgent.delete(messageId)
-      this.trimRefs(messageId)
+      this.trimRefs()
       this.notify(messageId)
     })
     this.running.set(messageId, p)

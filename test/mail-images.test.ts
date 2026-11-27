@@ -248,3 +248,27 @@ test('Bildspeicher: gerade gemerkte Liste bleibt, auch wenn 200 andere Mails lad
   assert.equal(lists, 0)
   await Promise.all(busy)
 })
+
+test('Bildspeicher: gemerkte Liste bleibt, auch wenn vor dem Öffnen ein anderer Ladevorgang endet', async () => {
+  let lists = 0
+  const store = new MailImageStore({
+    list: async () => {
+      lists++
+      return []
+    },
+    fetch: async (m, id) => {
+      if (m !== 'busy0' && m.startsWith('busy')) await wait(30)
+      return entry(`${id}@x`)
+    }
+  })
+  const busy = Array.from({ length: 200 }, (_, i) => {
+    store.remember(`busy${i}`, [{ id: 'a', size: 1 }])
+    return store.load(`busy${i}`, false)
+  })
+  store.remember('neu', [{ id: 'n', size: 1 }])
+  // busy0 ist schnell fertig und räumt auf, bevor der Leser fragt
+  await busy[0]
+  assert.equal((await store.image('neu', 'n@x'))?.cid, 'n@x')
+  assert.equal(lists, 0)
+  await Promise.all(busy)
+})
