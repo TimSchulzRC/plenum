@@ -1335,14 +1335,17 @@ export class AccountService extends EventEmitter<AccountEvents> {
 
   // background: vorgeladen, Geöffnetes geht vor
   getMailFolders(background = false): Promise<MailFolder[]> {
-    this.mailFoldersRun ??= (async () => {
+    if (this.mailFoldersRun) return this.mailFoldersRun
+    const run = (async () => {
       const [list] = await Promise.all([this.mailLimit.run(() => this.api.mailFolders(), !background), this.resolveMailKinds()])
       const items: any[] = list?.value ?? []
       return sortFolders(items.map((f) => mapFolder(f, this.mailKinds.get(String(f.id)))))
     })().finally(() => {
-      this.mailFoldersRun = undefined
+      // Nur die eigene: Nach einem Schreiben kann schon eine neue laufen
+      if (this.mailFoldersRun === run) this.mailFoldersRun = undefined
     })
-    return this.mailFoldersRun
+    this.mailFoldersRun = run
+    return run
   }
 
   // null, solange die Web-App noch keinen Token für Mail angefordert hat (kein Fehler, nur noch nichts da)
@@ -1413,10 +1416,13 @@ export class AccountService extends EventEmitter<AccountEvents> {
 
   async setMailRead(id: string, isRead: boolean): Promise<void> {
     await this.api.setMailRead(id, isRead)
+    // Eine Ordnerabfrage, die schon läuft, begann davor: Die nächste startet neu
+    this.mailFoldersRun = undefined
   }
 
   async deleteMail(id: string): Promise<void> {
     await this.api.moveMail(id, 'deleteditems')
+    this.mailFoldersRun = undefined
   }
 
   async sendMail(draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): Promise<void> {
