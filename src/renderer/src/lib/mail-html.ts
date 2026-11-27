@@ -601,6 +601,15 @@ export function pastedSignatureHtml(html: string): string {
   const div = document.implementation.createHTMLDocument('').createElement('div')
   div.innerHTML = cleanSignature({ html, text: '' })
   for (const el of div.querySelectorAll('*')) for (const a of ['style', 'class', 'color', 'bgcolor', 'background']) el.removeAttribute(a)
+  // Zeilen als <br>: Blöcke (div, p …) mitten in einem Absatz verschachtelte der Browser falsch, beim
+  // nächsten Einlesen rutschte der Rest der Zeile aus ihrem Absatz. Innerste zuerst.
+  for (const el of [...div.querySelectorAll('*')].reverse()) {
+    if (!BLOCK.has(el.tagName)) continue
+    el.replaceWith(...el.childNodes, el.ownerDocument.createElement('br'))
+  }
+  // Umbrüche und Leerraum am Ende weg
+  const trailing = (n: ChildNode | null) => !!n && (n.nodeName === 'BR' || (n.nodeType === Node.TEXT_NODE && !n.textContent?.trim()))
+  while (trailing(div.lastChild)) div.lastChild!.remove()
   return div.innerHTML
 }
 

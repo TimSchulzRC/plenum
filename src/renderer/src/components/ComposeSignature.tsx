@@ -158,7 +158,8 @@ function SignatureEditor({ html, onInput }: { html: string; onInput: (html: stri
   const insert = async (data: DataTransfer) => {
     const html = data.getData('text/html')
     const image = [...data.files].find((f) => /^image\//.test(f.type) && f.size <= MAX_IMAGE)
-    const clean = html ? pastedSignatureHtml(html) : image ? `<img src="${await dataUrl(image)}">` : ''
+    // Bleibt vom HTML nichts (etwa ein Bild mit blob:-Adresse), die Bilddatei
+    const clean = (html && pastedSignatureHtml(html)) || (image ? `<img src="${await dataUrl(image)}">` : '')
     if (clean) insertHtml(clean)
     else document.execCommand('insertText', false, data.getData('text/plain'))
   }
