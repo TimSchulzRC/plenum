@@ -24,6 +24,7 @@ import { createTools, SERVER_INSTRUCTIONS } from './mcp/tools'
 import { mcpAccount } from './mcp/source'
 import { installMcp } from './mcp/install'
 import { saveMcpFile } from './mcp/files'
+import { openPermissionSettings, permissions, requestPermission } from './permissions'
 import { settingsChanges, updateEvents } from '@shared/analytics'
 import type { ApiMethods } from '@shared/ipc'
 import type { AppSettings, DebugInfo, NavigateRequest, UpdateState } from '@shared/types'
@@ -435,6 +436,9 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
       const id = variant === 'dev' ? `${BUNDLE_ID}.dev` : BUNDLE_ID
       void shell.openExternal(`x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=${id}`)
     },
+    getPermissions: () => permissions(),
+    requestPermission: (kind) => requestPermission(kind),
+    openPermissionSettings: (kind) => openPermissionSettings(kind),
     closeWindow: () => sender()?.close(),
     setAlwaysOnTop: (on) => {
       sender()?.setAlwaysOnTop(on, 'floating')
@@ -537,7 +541,7 @@ function buildMenu(): void {
           label: 'Nach Updates suchen …',
           click: () => {
             showMain()
-            broadcast('navigate', { accountId: settings.activeAccountId ?? '', view: 'settings' })
+            broadcast('navigate', { accountId: settings.activeAccountId ?? '', view: 'settings', settingsPage: 'updates' })
             void updater.check()
           }
         },

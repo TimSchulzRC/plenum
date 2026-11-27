@@ -34,7 +34,7 @@ Aktionen aus der Oberfläche tragen zusätzlich `duration_ms`, die Dauer des Auf
 | `app_started` | Start | `launch_ms`, `first_launch`, `updated_from`, `notifications` |
 | `app_updated` | erster Start nach einem Update | `from_version` |
 | `app_focused` | ein Fenster der App bekommt den Fokus, höchstens alle 30 Minuten | `route` |
-| `$screen` | Ansicht gewechselt | `$screen_name`: `welcome`, `chat`, `teams`, `activity`, `mail`, `calendar`, `calls`, `settings` |
+| `$screen` | Ansicht gewechselt | `$screen_name`: `welcome`, `chat`, `teams`, `activity`, `mail`, `calendar`, `calls`, `settings`; bei `settings` zusätzlich `settings_page` (`accounts`, `appearance`, `notifications`, `devices`, `permissions`, `updates`, `mcp`, `privacy`, `feedback`, `diagnostics`) |
 | `keyboard_shortcut` | Tastenkürzel im Hauptfenster | `shortcut` |
 | `setting_changed` | Einstellung geändert | `setting`, `value` |
 | `feedback_sent` | Feedback abgeschickt | `kind`, `message`, `message_length` |
@@ -103,6 +103,8 @@ Aktionen aus der Oberfläche tragen zusätzlich `duration_ms`, die Dauer des Auf
 | `screen_share_source_picked` | Freigabe gewählt | `kind` (`screen`, `window`, `cancelled`) |
 | `screen_share_failed` | Teilen gescheitert | `reason`: `permission` (keine Quellen, macOS-Berechtigung fehlt), `sources` (keine Quellen trotz Berechtigung), `disabled` (Teams sperrt Teilen, Anruf noch nicht verbunden), `no_tray` (Teams öffnet sein Teilen-Menü nicht), `no_request` (Teams fragt keine Quelle an), `source` (Electron lehnt die gewählte Quelle ab) |
 | `screen_capture_settings_opened` | Systemeinstellungen für Bildschirmaufnahme aus der Quellenauswahl geöffnet | |
+| `permission_requested` | Freigabe unter Einstellungen › Berechtigungen vorab angefragt | `kind` (`microphone`, `camera`, `screen`), `state` (Zustand danach: `granted`, `denied`, `not-determined`, `restricted`, `unsupported`) |
+| `permission_settings_opened` | Systemeinstellungen für eine Freigabe aus Einstellungen › Berechtigungen geöffnet | `kind` |
 | `call_background_changed`, `call_background_uploaded`, `call_device_changed` | Hintergrund und Geräte | `kind` |
 | `call_video_popped_out`, `call_compact_view`, `call_opened_in_web_view`, `call_window_close_prompt` | Fenster des Anrufs | `on`, `choice` |
 

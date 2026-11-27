@@ -18,6 +18,8 @@ import type {
   CallState,
   ChannelThread,
   DebugInfo,
+  MediaPermission,
+  PermissionsInfo,
   IncomingCall,
   Message,
   NavigateRequest,
@@ -125,6 +127,10 @@ export interface ApiMethods {
   getNotificationStatus(): { supported: boolean; error?: string }
   testNotification(): { ok: boolean; error?: string }
   openNotificationSettings(): void
+  // Mikrofon, Kamera, Bildschirmaufnahme: Zustand lesen, vorab anfragen, Systemeinstellungen öffnen
+  getPermissions(): PermissionsInfo
+  requestPermission(kind: MediaPermission): PermissionsInfo
+  openPermissionSettings(kind: MediaPermission): void
   closeWindow(): void
   setAlwaysOnTop(on: boolean): void
 

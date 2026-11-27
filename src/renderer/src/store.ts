@@ -1,10 +1,10 @@
 import { createContext, useContext } from 'react'
 import { create } from 'zustand'
-import type { AccountInfo, AccountSnapshot, AppSettings, CallState, Presence, UpdateState } from '@shared/types'
+import type { AccountInfo, AccountSnapshot, AppSettings, CallState, Presence, SettingsPage, UpdateState } from '@shared/types'
 import { api, onEvent } from './api'
 import { track } from './analytics'
 
-export type View = 'activity' | 'chat' | 'teams' | 'mail' | 'calendar' | 'calls' | 'settings'
+export type View = 'activity' | 'chat' | 'teams' | 'mail' | 'calendar' | 'calls'
 
 export interface Selection {
   chatId?: string
@@ -29,6 +29,8 @@ interface MainState {
   selection: Record<string, Selection>
   callState: CallState | null
   settings?: AppSettings
+  // Offener Bereich des Einstellungsfensters, null: Fenster zu
+  settingsPage: SettingsPage | null
   update: UpdateState | null
   typing: Record<string, { name: string; until: number }>
   back: NavEntry[]
@@ -40,7 +42,12 @@ interface MainState {
   setActiveAccount(id: string): void
   goBack(): void
   goForward(): void
+  // Ohne Bereich öffnet der zuletzt gezeigte
+  openSettings(page?: SettingsPage): void
+  closeSettings(): void
 }
+
+let lastSettingsPage: SettingsPage = 'accounts'
 
 function current(s: MainState): NavEntry {
   return { accountId: s.activeAccountId, view: s.view, sel: s.activeAccountId ? s.selection[s.activeAccountId] ?? {} : {} }
@@ -52,14 +59,17 @@ export const useStore = create<MainState>((set, get) => ({
   view: 'chat',
   selection: {},
   callState: null,
+  settingsPage: null,
   update: null,
   typing: {},
   back: [],
   forward: [],
+  // Ansicht wechseln schließt das Einstellungsfenster. select und open nicht: Die Chatliste
+  // wählt beim Laden selbst einen Chat aus, das soll offene Einstellungen nicht zuklappen.
   setView: (v) => {
     const s = get()
-    if (s.view === v) return
-    set({ view: v, back: [...s.back.slice(-50), current(s)], forward: [] })
+    if (s.view === v) return set({ settingsPage: null })
+    set({ view: v, settingsPage: null, back: [...s.back.slice(-50), current(s)], forward: [] })
   },
   select: (sel, view) => {
     const s = get()
@@ -99,6 +109,7 @@ export const useStore = create<MainState>((set, get) => ({
       back: s.back.slice(0, -1),
       forward: [...s.forward, current(s)],
       view: prev.view,
+      settingsPage: null,
       activeAccountId: prev.accountId ?? s.activeAccountId,
       selection: prev.accountId ? { ...s.selection, [prev.accountId]: prev.sel } : s.selection
     })
@@ -111,10 +122,16 @@ export const useStore = create<MainState>((set, get) => ({
       forward: s.forward.slice(0, -1),
       back: [...s.back, current(s)],
       view: next.view,
+      settingsPage: null,
       activeAccountId: next.accountId ?? s.activeAccountId,
       selection: next.accountId ? { ...s.selection, [next.accountId]: next.sel } : s.selection
     })
-  }
+  },
+  openSettings: (page) => {
+    lastSettingsPage = page ?? lastSettingsPage
+    set({ settingsPage: lastSettingsPage })
+  },
+  closeSettings: () => set({ settingsPage: null })
 }))
 
 export function useActive(): { account?: AccountInfo; snapshot?: AccountSnapshot; selection: Selection } {
@@ -149,10 +166,10 @@ function trackNavigation(): void {
   let lastConversation: string | undefined
   useStore.subscribe((s, prev) => {
     if (!s.settings) return
-    const screen = s.accounts.length === 0 ? 'welcome' : s.view
+    const screen = s.settingsPage ? `settings:${s.settingsPage}` : s.accounts.length === 0 ? 'welcome' : s.view
     if (screen !== lastScreen) {
       lastScreen = screen
-      track('$screen', { $screen_name: screen })
+      track('$screen', s.settingsPage ? { $screen_name: 'settings', settings_page: s.settingsPage } : { $screen_name: screen })
     }
     const id = s.activeAccountId
     const sel = id ? s.selection[id] : undefined
@@ -205,8 +222,10 @@ export function initStore(): void {
   })
   onEvent('navigate', (n) => {
     const s = useStore.getState()
+    // Klick auf eine Mitteilung: die Unterhaltung zeigen, nicht das Einstellungsfenster davor
+    if (n.view !== 'settings') s.closeSettings()
     if (n.accountId && n.accountId !== s.activeAccountId && s.accounts.some((a) => a.id === n.accountId)) s.setActiveAccount(n.accountId)
-    if (n.view === 'settings') return s.setView('settings')
+    if (n.view === 'settings') return s.openSettings(n.settingsPage)
     if (n.view === 'teams' && n.conversationId) {
       const snap = useStore.getState().snapshots[n.accountId]
       const team = snap?.teams.find((t) => t.channels.some((c) => c.id === n.conversationId))

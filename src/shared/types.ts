@@ -466,9 +466,20 @@ export interface AppSettings {
   callVideoFit?: 'contain' | 'cover'
 }
 
+// Bereiche im Einstellungsfenster
+export type SettingsPage = 'accounts' | 'appearance' | 'notifications' | 'devices' | 'permissions' | 'updates' | 'mcp' | 'privacy' | 'feedback' | 'diagnostics'
+
+// Freigaben des Systems, die Anrufe brauchen (macOS: Datenschutz & Sicherheit)
+export type MediaPermission = 'microphone' | 'camera' | 'screen'
+// not-determined: noch nie gefragt. unsupported: das System kennt diese Freigabe nicht (Linux).
+export type PermissionState = 'not-determined' | 'granted' | 'denied' | 'restricted' | 'unsupported'
+export type PermissionsInfo = Record<MediaPermission, PermissionState>
+
 export interface NavigateRequest {
   accountId: string
   view: 'chat' | 'teams' | 'activity' | 'calendar' | 'calls' | 'settings'
+  // Mit view 'settings': welcher Bereich aufgeht
+  settingsPage?: SettingsPage
   conversationId?: string
   teamId?: string
   messageId?: string

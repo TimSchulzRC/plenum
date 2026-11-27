@@ -122,6 +122,13 @@ const MAPPERS: { [K in ApiName]?: Mapper<K> } = {
   resetMcpToken: () => ({ event: 'mcp_token_reset' }),
   imageAction: ([, action]) => (action === 'menu' ? null : { event: 'image_action', props: { action } }),
   openNotificationSettings: () => ({ event: 'notification_settings_opened' }),
+  // Ergebnis: Zustand der angefragten Freigabe danach (granted, denied …)
+  requestPermission: ([kind]) => ({
+    event: 'permission_requested',
+    props: { kind },
+    resultProps: (r) => ({ state: (r as Partial<Record<string, string>> | undefined)?.[kind] })
+  }),
+  openPermissionSettings: ([kind]) => ({ event: 'permission_settings_opened', props: { kind } }),
   checkForUpdates: () => ({ event: 'update_check_clicked' }),
   downloadUpdate: () => ({ event: 'update_download_clicked' }),
   installUpdate: () => ({ event: 'update_install_clicked' })
