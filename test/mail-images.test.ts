@@ -141,3 +141,54 @@ test('Bildspeicher: geänderter Entwurf liefert kein altes Bild', async () => {
   store.remember('d1', [])
   assert.equal(await store.image('d1', 'logo@x'), undefined)
 })
+
+test('Bildspeicher: geöffnet, während das Vorladen noch auf die Liste wartet, Bilder mit Vorrang', async () => {
+  const prios: boolean[] = []
+  const store = new MailImageStore({
+    list: async () => {
+      await wait(10)
+      return [{ id: 'a', size: 1 }]
+    },
+    fetch: async (_m, _id, high) => {
+      prios.push(high)
+      return entry('a@x')
+    }
+  })
+  void store.load('m1', false)
+  await wait(2)
+  assert.equal((await store.image('m1', 'a@x'))?.cid, 'a@x')
+  assert.deepEqual(prios, [true])
+})
+
+test('Bildspeicher: Bild eines entfernten Anhangs, das noch unterwegs war, kommt nicht an', async () => {
+  const store = new MailImageStore({
+    list: async () => [],
+    fetch: async (_m, id) => {
+      if (id === 'old') await wait(30)
+      return entry(id === 'old' ? 'alt@x' : 'neu@x')
+    }
+  })
+  store.remember('d1', [{ id: 'old', size: 1 }])
+  const first = store.load('d1', true)
+  await wait(5)
+  // Entwurf geändert, bevor das alte Bild da ist
+  store.remember('d1', [{ id: 'new', size: 1 }])
+  await first
+  assert.equal(await store.image('d1', 'alt@x'), undefined)
+  assert.deepEqual(await store.index('d1'), { new: 'neu@x' })
+})
+
+test('Bildspeicher: zwischen zwei Durchgängen meldet der Leser kein fehlendes Bild', async () => {
+  const store = new MailImageStore({
+    list: async () => [],
+    fetch: async (_m, id) => {
+      await wait(10)
+      return entry(`${id}@x`)
+    }
+  })
+  store.remember('d1', [{ id: 'a', size: 1 }])
+  void store.load('d1', false)
+  // neue Anhangsliste mit b, der Leser fragt nach b, während der erste Durchgang noch a holt
+  store.remember('d1', [{ id: 'a', size: 1 }, { id: 'b', size: 1 }])
+  assert.equal((await store.image('d1', 'b@x'))?.cid, 'b@x')
+})

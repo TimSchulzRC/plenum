@@ -87,6 +87,8 @@ export class MailImageStore {
   // Anhänge ohne Bilddaten (kein Bild, verlinkter Anhang): nicht noch einmal holen
   private empty = new Map<string, Set<string>>()
   private running = new Map<string, Promise<void>>()
+  // Mails, die der Nutzer geöffnet hat, während ihr Vorladen lief: alles Weitere mit Vorrang
+  private urgent = new Set<string>()
   private waiters = new Map<string, Set<() => void>>()
   private bytes = 0
   private source: MailImageSource
@@ -118,8 +120,12 @@ export class MailImageStore {
   load(messageId: string, high: boolean): Promise<void> {
     const cur = this.running.get(messageId)
     if (cur) {
-      // Vorgeladen und jetzt geöffnet: nicht mehr hinter anderen Mails warten
-      if (high) this.source.promote?.(messageId)
+      // Vorgeladen und jetzt geöffnet: nicht mehr hinter anderen Mails warten, auch nicht mit den
+      // Anfragen, die der laufende Vorgang erst noch stellt
+      if (high) {
+        this.urgent.add(messageId)
+        this.source.promote?.(messageId)
+      }
       // Hat sich die Anhangsliste inzwischen geändert (Entwurf) oder ist etwas fehlgeschlagen,
       // folgt noch ein Durchgang
       return cur.then(() => (this.missing(messageId) ? this.load(messageId, high) : undefined))
@@ -132,12 +138,15 @@ export class MailImageStore {
       }
       const got = this.got.get(messageId) ?? new Map<string, ImageEntry>()
       this.got.set(messageId, got)
+      const prio = high || this.urgent.has(messageId)
       await Promise.all(
         refs
           .filter((r) => !got.has(r.id) && !this.empty.get(messageId)?.has(r.id))
           .map((r) =>
-            this.source.fetch(messageId, r.id, high).then(
+            this.source.fetch(messageId, r.id, prio).then(
               (e) => {
+                // Inzwischen nicht mehr in der Mail (Entwurf geändert): verwerfen
+                if (!this.refs.get(messageId)?.some((x) => x.id === r.id)) return
                 if (!e?.cid) {
                   const set = this.empty.get(messageId) ?? new Set<string>()
                   this.empty.set(messageId, set.add(r.id))
@@ -154,6 +163,7 @@ export class MailImageStore {
       this.evict(messageId)
     })().finally(() => {
       this.running.delete(messageId)
+      this.urgent.delete(messageId)
       this.notify(messageId)
     })
     this.running.set(messageId, p)
@@ -184,16 +194,20 @@ export class MailImageStore {
     return new Promise<ImageEntry | undefined>((resolve) => {
       const set = this.waiters.get(messageId) ?? new Set()
       this.waiters.set(messageId, set)
+      // Gefunden: sofort. Nicht gefunden erst, wenn der ganze Ladevorgang durch ist, auch ein
+      // zweiter Durchgang nach einer geänderten Anhangsliste
+      const finish = (e: ImageEntry | undefined) => {
+        set.delete(check)
+        if (!set.size) this.waiters.delete(messageId)
+        resolve(e)
+      }
       const check = () => {
         const e = this.find(messageId, cid)
-        if (e || !this.running.has(messageId)) {
-          set.delete(check)
-          if (!set.size) this.waiters.delete(messageId)
-          resolve(e)
-        }
+        if (e) finish(e)
       }
       set.add(check)
-      void done.then(check, check)
+      const end = () => finish(this.find(messageId, cid))
+      void done.then(end, end)
     })
   }
 
