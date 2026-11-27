@@ -302,3 +302,9 @@ test('Bildspeicher: unter Speicherdruck holt ein wartender Leser fehlgeschlagene
   assert.equal((await img)?.cid, 'a@x')
   await Promise.all(others)
 })
+
+test('Limiter: wirft die Aufgabe sofort, wird der Platz wieder frei', async () => {
+  const l = new Limiter(1)
+  await assert.rejects(l.run(() => { throw new Error('kaputt') }), /kaputt/)
+  assert.equal(await l.run(async () => 7), 7)
+})

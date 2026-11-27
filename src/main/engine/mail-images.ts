@@ -28,7 +28,9 @@ export class Limiter {
     return new Promise<T>((resolve, reject) => {
       const start = () => {
         this.active++
-        fn()
+        // Wirft fn sofort, wird daraus ein Fehlschlag, und der Platz wird wieder frei
+        Promise.resolve()
+          .then(fn)
           .then(resolve, reject)
           .finally(() => {
             this.active--

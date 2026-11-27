@@ -1318,11 +1318,12 @@ export class AccountService extends EventEmitter<AccountEvents> {
   private mailFoldersRun?: Promise<MailFolder[]>
 
   // Gleichzeitig, über das Limit des Postfachs: nacheinander kostete das beim ersten Laden ein Vielfaches
+  // Hinter geöffneten Mails und Listen: Die Liste ist wichtiger als die Symbole der Ordner.
   private async resolveMailKinds(): Promise<void> {
     await Promise.all(
       WELL_KNOWN.filter((k) => !this.mailKindsDone.has(k)).map(async (k) => {
         try {
-          const f = await this.mailLimit.run(() => this.api.mailWellKnown(k), true)
+          const f = await this.mailLimit.run(() => this.api.mailWellKnown(k), false)
           this.mailKinds.set(String(f.id), k)
           this.mailKindsDone.add(k)
         } catch (e) {
@@ -1332,9 +1333,10 @@ export class AccountService extends EventEmitter<AccountEvents> {
     )
   }
 
-  getMailFolders(): Promise<MailFolder[]> {
+  // background: vorgeladen, Geöffnetes geht vor
+  getMailFolders(background = false): Promise<MailFolder[]> {
     this.mailFoldersRun ??= (async () => {
-      const [list] = await Promise.all([this.mailLimit.run(() => this.api.mailFolders(), true), this.resolveMailKinds()])
+      const [list] = await Promise.all([this.mailLimit.run(() => this.api.mailFolders(), !background), this.resolveMailKinds()])
       const items: any[] = list?.value ?? []
       return sortFolders(items.map((f) => mapFolder(f, this.mailKinds.get(String(f.id)))))
     })().finally(() => {
@@ -1350,8 +1352,9 @@ export class AccountService extends EventEmitter<AccountEvents> {
     return Number(f?.unreadItemCount) || 0
   }
 
-  async listMail(folderId: string, next?: string): Promise<MailPage> {
-    const res = await this.mailLimit.run(() => this.api.mailMessages(folderId, next), true)
+  // background: vorgeladen (Überfahren, nach dem Start). promoteMailList holt sie nach vorn, sobald man den Ordner öffnet.
+  async listMail(folderId: string, next?: string, background = false): Promise<MailPage> {
+    const res = await this.mailLimit.run(async () => this.api.mailMessages(folderId, next), !background, `list:${folderId}`)
     const items: any[] = res?.value ?? []
     return { items: items.map((m) => mapSummary(m, this.id)), next: res?.['@odata.nextLink'] || undefined }
   }
@@ -1372,6 +1375,10 @@ export class AccountService extends EventEmitter<AccountEvents> {
     const attachments = att.map(mapAttachment)
     this.mailImages.remember(id, inlineToLoad(attachments))
     return mapMessage(m, this.id, attachments, {})
+  }
+
+  promoteMailList(folderId: string): void {
+    this.mailLimit.promote(`list:${folderId}`)
   }
 
   // Eingebettetes Bild nach Content-ID für tmimg://mailcid, sobald es geladen ist

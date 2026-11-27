@@ -78,9 +78,12 @@ export interface ApiMethods {
   getCalendar(accountId: string, start: number, end: number): CalendarEvent[]
   createEvent(accountId: string, event: NewCalendarEvent): void
   // E-Mail über Graph. Gastmandanten haben kein Postfach.
-  getMailFolders(accountId: string): MailFolder[]
+  // background: vorgeladen, Geöffnetes geht vor
+  getMailFolders(accountId: string, background?: boolean): MailFolder[]
   getMailUnread(accountId: string): number | null
-  listMail(accountId: string, folderId: string, next?: string): MailPage
+  listMail(accountId: string, folderId: string, next?: string, background?: boolean): MailPage
+  // Vorgeladene Liste nach vorn holen, weil man den Ordner jetzt öffnet
+  promoteMailList(accountId: string, folderId: string): void
   // background: nur vorgeladen, geöffnete Mails gehen vor
   getMail(accountId: string, messageId: string, background?: boolean): MailMessage
   // Anhang-ID → Content-ID der eingebetteten Bilder, nach dem Laden

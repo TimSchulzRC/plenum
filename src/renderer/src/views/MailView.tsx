@@ -44,7 +44,7 @@ import { accountTitle } from '@shared/accounts'
 import { accountColor, ipcErrorText } from '../lib/calendar'
 import { addressLabel, fileSize, mergeMail, withImages } from '../lib/mail'
 import { cachedMail, loadImageIndex, loadMail, prefetchMail, prefetchTop } from '../lib/mail-load'
-import { cachedFolders, cachedList, loadFolders as loadFolderList, loadList, prefetchList, updateCachedMail } from '../lib/mail-lists'
+import { cachedFolders, cachedList, loadFolders as loadFolderList, loadList, noteMailChange, prefetchList, staleFolder, updateCachedFolders } from '../lib/mail-lists'
 import { HOVER_DELAY } from '../lib/prefetch'
 import { mailDocument, type ChatOptions } from '../lib/mail-html'
 import { modelRanges, modelRequest, type SigRange } from '../lib/mail-signature'
@@ -107,43 +107,48 @@ export function MailView(): JSX.Element {
 
   // Ordner aller Konten, beim Öffnen (ein frischer gespeicherter Stand reicht) und alle zwei Minuten.
   // Fehlgeschlagene alle 5 s noch einmal, eine Minute lang (Mail-Token kommt nach dem Start oft später).
-  const folderRetry = useRef(new Map<string, { n: number; timer?: ReturnType<typeof setTimeout> }>())
-  const loadFolders = useCallback(
-    (force = false, only?: string) => {
-      for (const id of only ? [only] : readyKey.split(',').filter(Boolean)) {
-        loadFolderList(id, force)
-          .then((list) => {
-            folderRetry.current.delete(id)
-            setFolders((f) => ({ ...f, [id]: { list } }))
-            const inbox = list.find((x) => x.kind === 'inbox')
-            if (inbox) setMailUnread(id, inbox.unread)
-          })
-          .catch((e) => {
-            setFolders((f) => ({ ...f, [id]: { ...f[id], error: ipcErrorText(e) } }))
-            const r = folderRetry.current.get(id) ?? { n: 0 }
-            if (r.n >= 12 || r.timer) return
-            r.n++
-            r.timer = setTimeout(() => {
-              r.timer = undefined
-              loadFolders(true, id)
-            }, 5000)
-            folderRetry.current.set(id, r)
-          })
-      }
-    },
-    [readyKey]
-  )
-
+  const folderLoads = useRef<(force: boolean) => void>(() => undefined)
   useEffect(() => {
-    loadFolders()
-    const t = setInterval(() => loadFolders(true), 120_000)
-    const retries = folderRetry.current
-    return () => {
-      clearInterval(t)
-      for (const r of retries.values()) clearTimeout(r.timer)
-      retries.clear()
+    let alive = true
+    const timers = new Map<string, ReturnType<typeof setTimeout>>()
+    const tries = new Map<string, number>()
+    const loadOne = (id: string, force: boolean) => {
+      loadFolderList(id, force)
+        .then((list) => {
+          if (!alive) return
+          clearTimeout(timers.get(id))
+          timers.delete(id)
+          tries.delete(id)
+          setFolders((f) => ({ ...f, [id]: { list } }))
+          const inbox = list.find((x) => x.kind === 'inbox')
+          if (inbox) setMailUnread(id, inbox.unread)
+        })
+        .catch((e) => {
+          if (!alive) return
+          setFolders((f) => ({ ...f, [id]: { ...f[id], error: ipcErrorText(e) } }))
+          const n = tries.get(id) ?? 0
+          if (timers.has(id) || n >= 12) return
+          tries.set(id, n + 1)
+          timers.set(
+            id,
+            setTimeout(() => {
+              timers.delete(id)
+              loadOne(id, true)
+            }, 5000)
+          )
+        })
     }
-  }, [loadFolders])
+    const all = (force: boolean) => readyKey.split(',').filter(Boolean).forEach((id) => loadOne(id, force))
+    folderLoads.current = all
+    all(false)
+    const t = setInterval(() => all(true), 120_000)
+    return () => {
+      alive = false
+      clearInterval(t)
+      timers.forEach(clearTimeout)
+    }
+  }, [readyKey])
+  const loadFolders = (force = false) => folderLoads.current(force)
 
   const wanted = useMemo<{ accountId: string; folderId: string }[]>(() => {
     if (sel.kind === 'all') return inboxKey.split(',').filter(Boolean).map((accountId) => ({ accountId, folderId: 'inbox' }))
@@ -166,39 +171,52 @@ export function MailView(): JSX.Element {
       const p = cachedList(w.accountId, w.folderId)
       return p ? [{ ...w, items: p.items, next: p.next }] : []
     })
-    setSources(stored.length ? stored : null)
+    // Ohne Konto gibt es nichts zu laden: gleich „Kein Konto verbunden“ statt Ladekreis
+    setSources(stored.length || !wanted.length ? stored : null)
     const put = (f: Source) =>
       setSources((prev) => {
         const list = prev ?? []
         const old = list.find((x) => same(x, f))
         let merged = f
         if (old && f.error) merged = old.items.length ? old : f
-        else if (old) {
+        // Ohne Folgeseite ist das der ganze Ordner: nichts Älteres behalten (auch nicht nach dem Leeren)
+        else if (old && f.next) {
           const oldest = Math.min(...f.items.map((i) => i.received))
           const rest = old.items.filter((i) => i.received < oldest && !f.items.some((x) => x.id === i.id))
           merged = { ...f, items: [...f.items, ...rest], next: rest.length ? old.next : f.next }
         }
         return old ? list.map((x) => (x === old ? merged : x)) : [...list, merged]
       })
-    // Jede Quelle für sich: Eine fehlgeschlagene kommt nach 5 s wieder dran, ohne auf langsame zu warten
+    // Jede Quelle für sich: Eine fehlgeschlagene kommt nach 5 s wieder dran, ohne auf langsame zu warten.
+    // Ein Timer je Quelle, nach Erfolg zählt sie wieder von vorn.
     const retries = new Map<string, number>()
-    const timers: ReturnType<typeof setTimeout>[] = []
+    const timers = new Map<string, ReturnType<typeof setTimeout>>()
     const loadOne = async (w: (typeof wanted)[number], force: boolean, initial: boolean) => {
       if (!ready.has(w.accountId)) {
         if (!stored.some((x) => same(x, w))) put({ ...w, items: [], error: 'Nicht verbunden' })
         return
       }
+      const k = `${w.accountId}|${w.folderId}`
       try {
         const p = await loadList(w.accountId, w.folderId, force)
-        if (alive) put({ ...w, items: p.items, next: p.next })
+        if (!alive) return
+        put({ ...w, items: p.items, next: p.next })
+        retries.delete(k)
+        clearTimeout(timers.get(k))
+        timers.delete(k)
       } catch (e) {
         if (!alive) return
         put({ ...w, items: [], error: ipcErrorText(e) })
-        const k = `${w.accountId}|${w.folderId}`
         const n = retries.get(k) ?? 0
-        if (n < 12) {
+        if (!timers.has(k) && n < 12) {
           retries.set(k, n + 1)
-          timers.push(setTimeout(() => void loadOne(w, true, false), 5000))
+          timers.set(
+            k,
+            setTimeout(() => {
+              timers.delete(k)
+              void loadOne(w, true, false)
+            }, 5000)
+          )
         }
       } finally {
         if (alive && initial) setPending((n) => Math.max(0, n - 1))
@@ -286,25 +304,35 @@ export function MailView(): JSX.Element {
     setLoadingMore(false)
   }
 
+  // Auch im Speicher und gegen Antworten, die noch unterwegs sind (noteMailChange)
   const patchItem = (m: Open, patch: Partial<MailSummary>) => {
+    noteMailChange(m.accountId, m.id, { patch })
     const fn = (items: MailSummary[]) => items.map((i) => (i.id === m.id ? { ...i, ...patch } : i))
-    updateCachedMail(m.accountId, fn)
     setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items) })))
   }
 
   const removeItem = (m: Open) => {
+    noteMailChange(m.accountId, m.id, { deleted: true })
     const fn = (items: MailSummary[]) => items.filter((i) => i.id !== m.id)
-    updateCachedMail(m.accountId, fn)
     setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items) })))
+  }
+
+  // Nach Senden oder Löschen: Gesendete bzw. Gelöschte neu laden, gleich, wenn der Ordner offen ist
+  const refreshFolder = (accountId: string, kind: MailFolderKind) => {
+    const id = staleFolder(accountId, kind)
+    if (sel.kind === 'folder' && sel.accountId === accountId && sel.folderId === id) setReload((n) => n + 1)
+    setTimeout(() => loadFolders(true), 1500)
   }
 
   // Ungelesen-Zahl im Ordner und an der Seitenleiste sofort anpassen, der nächste Abruf bestätigt sie
   const bumpUnread = (accountId: string, delta: number) => {
+    const folderId = sel.kind === 'folder' ? sel.folderId : 'inbox'
+    const bump = (cur: MailFolder[]) => cur.map((x) => (x.id === folderId || (folderId === 'inbox' && x.kind === 'inbox') ? { ...x, unread: Math.max(0, x.unread + delta) } : x))
+    updateCachedFolders(accountId, bump)
     setFolders((f) => {
       const cur = f[accountId]?.list
       if (!cur) return f
-      const folderId = sel.kind === 'folder' ? sel.folderId : 'inbox'
-      const list = cur.map((x) => (x.id === folderId || (folderId === 'inbox' && x.kind === 'inbox') ? { ...x, unread: Math.max(0, x.unread + delta) } : x))
+      const list = bump(cur)
       const inbox = list.find((x) => x.kind === 'inbox')
       if (inbox) setMailUnread(accountId, inbox.unread)
       return { ...f, [accountId]: { list } }
@@ -488,9 +516,9 @@ export function MailView(): JSX.Element {
             accounts={accounts}
             color={color}
             onClose={() => setCompose(null)}
-            onSent={() => {
+            onSent={(x) => {
               setCompose(null)
-              setTimeout(loadFolders, 1500)
+              refreshFolder(x.accountId, 'sentitems')
             }}
           />
         ) : open ? (
@@ -501,7 +529,7 @@ export function MailView(): JSX.Element {
             multi={multi}
             color={color}
             accounts={accounts}
-            onSent={() => setTimeout(loadFolders, 1500)}
+            onSent={() => refreshFolder(open.accountId, 'sentitems')}
             onUnread={async (m) => {
               await api.setMailRead(m.accountId, m.id, false)
               patchItem(m, { isRead: false })
@@ -512,6 +540,7 @@ export function MailView(): JSX.Element {
               await api.deleteMail(m.accountId, m.id)
               removeItem(m)
               if (!m.isRead) bumpUnread(m.accountId, -1)
+              refreshFolder(m.accountId, 'deleteditems')
               setOpen(null)
             }}
           />
