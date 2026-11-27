@@ -463,7 +463,7 @@ function MailAttachments({ m, onError }: { m: MailMessage; onError: (e?: string)
       const n = r.paths.length
       const where = r.inDownloads ? 'Downloads' : `„${fileName(r.folder)}“`
       let text = `${n === 1 ? '1 Anhang' : `${n} Anhänge`} in ${where} gespeichert`
-      if (r.skipped) text += `, ${r.skipped} übersprungen (keine Datei)`
+      if (r.skipped) text += `, ${r.skipped} nicht gespeichert`
       return { text, path: r.paths[0] }
     })
 
