@@ -230,6 +230,8 @@ export interface MailSummary {
   hasAttachments: boolean
   importance: 'low' | 'normal' | 'high'
   flagged: boolean
+  // Nur gesetzt, wenn die Abfrage parentFolderId mitliefert (MCP-Suche über das ganze Postfach)
+  folderId?: string
 }
 
 export interface MailAttachment {

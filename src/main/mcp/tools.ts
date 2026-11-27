@@ -7,10 +7,16 @@ import type {
   CalendarEvent,
   CallLogEntry,
   ChatSummary,
+  MailAddress,
+  MailFolder,
+  MailFolderKind,
+  MailMessage,
+  MailSummary,
   Message,
   Person,
   Team
 } from '@shared/types'
+import type { MailQuery } from '../engine/mail'
 import type { ToolDef, ToolResult } from './protocol'
 
 export interface Page<T> {
@@ -38,7 +44,17 @@ export interface McpAccount {
   calendar(start: number, end: number): Promise<CalendarEvent[]>
   searchPeople(query: string): Promise<Person[]>
   download(url: string): Promise<Download>
+  // E-Mail über Graph oder Outlook REST (engine/mail.ts). hasMail ist false, solange die Web-App
+  // noch keinen Token dafür angefordert hat.
+  hasMail(): boolean
+  mailFolders(): Promise<MailFolder[]>
+  mailQuery(q: MailQuery): Promise<MailSummary[]>
+  mail(id: string): Promise<McpMail>
+  mailAttachment(messageId: string, attachmentId: string): Promise<{ name: string; contentType?: string; data: Uint8Array }>
 }
+
+// Eine Mail für den Agenten: der Text schon als Klartext (HTML umgewandelt in source.ts)
+export type McpMail = Omit<MailMessage, 'bodyType' | 'body' | 'inlineImages'> & { text: string }
 
 export interface ToolDeps {
   accounts(): McpAccount[]
@@ -56,6 +72,7 @@ const DAY = 86_400_000
 const MAX_TEXT = 4000
 const MAX_INLINE_IMAGE = 4 * 1024 * 1024
 const MAX_INLINE_TEXT = 200_000
+const MAX_MAIL_TEXT = 20_000
 
 // ---------- Hilfen ----------
 
@@ -366,6 +383,155 @@ function extFor(type: string): string {
   return m[type.split(';')[0].trim().toLowerCase()] ?? ''
 }
 
+// Datei lokal ablegen und so zurückgeben, wie der Agent sie am besten liest: Text direkt, Bilder als
+// Bild, alles andere als Pfad.
+async function fileResult(deps: ToolDeps, rawName: string, contentType: string, data: Uint8Array, extra: Record<string, unknown> = {}): Promise<ToolResult> {
+  const type = contentType.split(';')[0].trim().toLowerCase() || 'application/octet-stream'
+  let name = rawName.replace(/[/\\:]/g, '_')
+  if (!/\.[a-z0-9]{1,6}$/i.test(name)) name += extFor(type)
+  const path = await deps.saveFile(name, data)
+  const info = { ...extra, name, type, size: data.byteLength, saved_to: path }
+  if (type.startsWith('image/') && type !== 'image/svg+xml' && data.byteLength <= MAX_INLINE_IMAGE) {
+    return {
+      content: [
+        { type: 'text', text: JSON.stringify(info) },
+        { type: 'image', data: Buffer.from(data).toString('base64'), mimeType: type }
+      ]
+    }
+  }
+  if (isText(type, name)) {
+    const text = new TextDecoder('utf-8').decode(data)
+    return { content: [{ type: 'text', text: JSON.stringify({ ...info, text: clip(text, MAX_INLINE_TEXT) }) }] }
+  }
+  return { content: [{ type: 'text', text: JSON.stringify({ ...info, note: 'Binärdatei. Den Inhalt unter saved_to mit einem passenden Werkzeug lesen.' }) }] }
+}
+
+// ---------- E-Mail ----------
+
+const MAIL_ALL = ['all', 'alle', '*']
+// Standardordner, wie sie Graph in der Adresse versteht (engine/mail.ts übersetzt für Outlook)
+const MAIL_KINDS: MailFolderKind[] = ['inbox', 'drafts', 'sentitems', 'archive', 'deleteditems', 'junkemail']
+
+function addr(a: MailAddress | undefined): string | undefined {
+  if (!a) return undefined
+  if (!a.address) return a.name
+  return a.name && a.name.toLowerCase() !== a.address.toLowerCase() ? `${a.name} <${a.address}>` : a.address
+}
+
+function addrs(list: MailAddress[], max = 20): string[] | undefined {
+  if (!list.length) return undefined
+  const out = list.slice(0, max).map(addr).filter((x): x is string => !!x)
+  if (list.length > max) out.push(`… ${list.length - max} weitere`)
+  return out
+}
+
+// Konten, deren Postfach erreichbar ist. Ohne Mail-Token gibt es nur einen Hinweis.
+function mailAccounts(deps: ToolDeps, arg: unknown): { ready: McpAccount[]; warnings: string[] } {
+  const r = readyAccounts(deps, arg)
+  const ready = r.ready.filter((a) => a.hasMail())
+  const warnings = [
+    ...r.warnings,
+    ...r.ready.filter((a) => !a.hasMail()).map((a) => `${label(a)}: Die Teams-Web-App hat für dieses Konto noch keinen Zugriff auf E-Mails angefordert`)
+  ]
+  if (ready.length === 0) throw new ToolError(`Kein passendes Konto hat Zugriff auf E-Mails. ${warnings.join('; ')}. In ein paar Minuten erneut versuchen.`)
+  return { ready, warnings }
+}
+
+// Ordner als Standardname (inbox, sentitems …), id oder Anzeigename. undefined heißt ganzes Postfach.
+function resolveFolder(arg: string | undefined, folders: MailFolder[]): { id?: string; name?: string } | string {
+  if (!arg || MAIL_ALL.includes(arg.toLowerCase())) return {}
+  const q = arg.toLowerCase()
+  const kind = MAIL_KINDS.find((k) => k === q)
+  if (kind) return { id: kind, name: folders.find((f) => f.kind === kind)?.name ?? kind }
+  const byId = folders.find((f) => f.id === arg)
+  if (byId) return { id: byId.id, name: byId.name }
+  const exact = folders.filter((f) => f.name.toLowerCase() === q)
+  const loose = exact.length ? exact : folders.filter((f) => f.name.toLowerCase().includes(q))
+  if (loose.length === 1) return { id: loose[0].id, name: loose[0].name }
+  if (loose.length > 1) return `„${arg}“ passt auf mehrere Ordner: ${loose.map((f) => f.name).join(', ')}`
+  return `Kein Ordner „${arg}“. Vorhanden: ${folders.map((f) => f.name).join(', ')}`
+}
+
+function formatMailSummary(m: MailSummary, a: McpAccount, folderName?: string): Record<string, unknown> {
+  return {
+    message_id: m.id,
+    account: label(a),
+    folder: folderName,
+    received: localIso(m.received),
+    from: addr(m.from),
+    to: addrs(m.to, 10),
+    subject: m.subject,
+    preview: m.preview ? clip(m.preview, 300) : undefined,
+    unread: !m.isRead || undefined,
+    attachments: m.hasAttachments || undefined,
+    importance: m.importance !== 'normal' ? m.importance : undefined,
+    flagged: m.flagged || undefined,
+    draft: m.isDraft || undefined
+  }
+}
+
+interface MailRun {
+  query?: string
+  folderArg?: string
+  since?: number
+  until?: number
+  unreadOnly: boolean
+  limit: number
+}
+
+// Fragt die Konten nacheinander je Postfach (Exchange drosselt bei vielen gleichzeitigen Anfragen)
+// und führt die Treffer zusammen, neueste zuerst.
+async function runMailQuery(deps: ToolDeps, accountArg: unknown, o: MailRun): Promise<Record<string, unknown>> {
+  const { ready, warnings } = mailAccounts(deps, accountArg)
+  const errors: string[] = []
+  let full = false
+  const lists = await pool(ready, 2, async (a) => {
+    try {
+      const folders = await a.mailFolders().catch(() => [] as MailFolder[])
+      const folder = resolveFolder(o.folderArg, folders)
+      if (typeof folder === 'string') {
+        errors.push(`${label(a)}: ${folder}`)
+        return []
+      }
+      const items = await a.mailQuery({ folder: folder.id, search: o.query, since: o.since, until: o.until, unreadOnly: o.unreadOnly, top: o.limit })
+      if (items.length >= o.limit) full = true
+      const names = new Map(folders.map((f) => [f.id, f.name]))
+      return items
+        .filter((m) => (!o.since || m.received >= o.since) && (!o.until || m.received < o.until) && (!o.unreadOnly || !m.isRead))
+        .map((m) => ({ m, a, folder: folder.name ?? (m.folderId ? names.get(m.folderId) : undefined) }))
+    } catch (e) {
+      errors.push(`${label(a)}: ${(e as Error).message}`)
+      return []
+    }
+  })
+  const all = lists.flat().sort((x, y) => y.m.received - x.m.received)
+  const shown = all.slice(0, o.limit)
+  const more = full || all.length > o.limit
+  return {
+    mails: shown.map(({ m, a, folder }) => formatMailSummary(m, a, folder)),
+    more: more || undefined,
+    next_until: more && shown.length ? localIso(shown[shown.length - 1].m.received) : undefined,
+    errors: errors.length ? errors : undefined,
+    warnings: warnings.length ? warnings : undefined
+  }
+}
+
+// Mail-IDs gelten nur im eigenen Postfach. Ohne account der Reihe nach probieren.
+async function findMail<T>(deps: ToolDeps, accountArg: unknown, fn: (a: McpAccount) => Promise<T>): Promise<{ a: McpAccount; value: T }> {
+  const { ready } = mailAccounts(deps, accountArg)
+  let last: unknown
+  for (const a of ready) {
+    try {
+      return { a, value: await fn(a) }
+    } catch (e) {
+      last = e
+      const status = (e as { status?: number }).status
+      if (ready.length === 1 || (status !== 400 && status !== 404)) throw e
+    }
+  }
+  throw new ToolError(`Die Mail ist in keinem Konto zu finden (${(last as Error)?.message ?? 'unbekannt'}). Gib account aus list_mail an.`)
+}
+
 // ---------- Schemas ----------
 
 const ACCOUNT_PROP = {
@@ -626,24 +792,7 @@ export function createTools(deps: ToolDeps): ToolDef[] {
         const conv = str(args.conversation_id)
         const a = conv ? accountFor(deps, conv, args.account) : readyAccounts(deps, args.account).ready[0]
         const file = await a.download(url)
-        const type = file.contentType.split(';')[0].trim().toLowerCase() || 'application/octet-stream'
-        let name = (str(args.name) ?? fileNameFrom(url)).replace(/[/\\:]/g, '_')
-        if (!/\.[a-z0-9]{1,6}$/i.test(name)) name += extFor(type)
-        const path = await deps.saveFile(name, file.data)
-        const info = { name, type, size: file.data.byteLength, saved_to: path }
-        if (type.startsWith('image/') && type !== 'image/svg+xml' && file.data.byteLength <= MAX_INLINE_IMAGE) {
-          return {
-            content: [
-              { type: 'text', text: JSON.stringify(info) },
-              { type: 'image', data: Buffer.from(file.data).toString('base64'), mimeType: type }
-            ]
-          }
-        }
-        if (isText(type, name)) {
-          const text = new TextDecoder('utf-8').decode(file.data)
-          return { content: [{ type: 'text', text: JSON.stringify({ ...info, text: clip(text, MAX_INLINE_TEXT) }) }] }
-        }
-        return { content: [{ type: 'text', text: JSON.stringify({ ...info, note: 'Binärdatei. Den Inhalt unter saved_to mit einem passenden Werkzeug lesen.' }) }] }
+        return fileResult(deps, str(args.name) ?? fileNameFrom(url), file.contentType, file.data)
       }
     },
     {
@@ -814,16 +963,147 @@ export function createTools(deps: ToolDeps): ToolDef[] {
         })
         return { people: lists.flat(), errors: errors.length ? errors : undefined, warnings: warnings.length ? warnings : undefined }
       }
+    },
+    {
+      name: 'list_mail_folders',
+      title: 'E-Mail-Ordner',
+      description: 'Listet die E-Mail-Ordner der Postfächer (oberste Ebene) mit Zahl ungelesener und aller Mails. folder_id oder Name gehen an list_mail und search_mail.',
+      inputSchema: schema({ account: ACCOUNT_PROP }),
+      run: async (args) => {
+        const { ready, warnings } = mailAccounts(deps, args.account)
+        const errors: string[] = []
+        const lists = await pool(ready, 2, async (a) => {
+          try {
+            return (await a.mailFolders()).map((f) => ({ account: label(a), folder_id: f.id, name: f.name, kind: f.kind, unread: f.unread, total: f.total }))
+          } catch (e) {
+            errors.push(`${label(a)}: ${(e as Error).message}`)
+            return []
+          }
+        })
+        return { folders: lists.flat(), errors: errors.length ? errors : undefined, warnings: warnings.length ? warnings : undefined }
+      }
+    },
+    {
+      name: 'list_mail',
+      title: 'E-Mails',
+      description:
+        'Listet die E-Mails eines Ordners, die neuesten zuerst, mit Absender, Betreff und Vorschau. Standard: Posteingang aller Konten. Den vollen Text liefert get_mail mit message_id. Für ältere Mails next_until als until übergeben.',
+      inputSchema: schema({
+        account: ACCOUNT_PROP,
+        folder: { type: 'string', description: 'inbox, sentitems, drafts, archive, deleteditems, junkemail, all (alle Ordner), ein Ordnername oder folder_id. Standard: inbox' },
+        unread_only: { type: 'boolean', description: 'Nur ungelesene' },
+        since: { type: 'string', description: 'Nur Mails ab diesem Zeitpunkt (ISO 8601)' },
+        until: { type: 'string', description: 'Nur Mails vor diesem Zeitpunkt (ISO 8601), z. B. next_until der vorigen Antwort' },
+        limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Standard 25' }
+      }),
+      run: async (args) =>
+        runMailQuery(deps, args.account, {
+          folderArg: str(args.folder) ?? 'inbox',
+          since: parseTime(args.since, 'since'),
+          until: parseTime(args.until, 'until'),
+          unreadOnly: args.unread_only === true,
+          limit: int(args.limit, 25, 1, 100)
+        })
+    },
+    {
+      name: 'search_mail',
+      title: 'E-Mails durchsuchen',
+      description:
+        'Durchsucht die Postfächer serverseitig (Exchange-Suche über Betreff, Text, Absender, Empfänger und Anhangsnamen), Standard alle Ordner, die neuesten Treffer zuerst. query versteht Wörter und KQL, z. B. "Angebot Nord", from:anna@firma.de, to:kunde.de, subject:Rechnung, hasattachments:true. Den vollen Text liefert get_mail.',
+      inputSchema: schema(
+        {
+          query: { type: 'string', description: 'Suchwörter oder KQL' },
+          account: ACCOUNT_PROP,
+          folder: { type: 'string', description: 'Nur in diesem Ordner (Name, folder_id oder inbox, sentitems …). Standard: alle Ordner' },
+          unread_only: { type: 'boolean', description: 'Nur ungelesene' },
+          since: { type: 'string', description: 'Ab diesem Zeitpunkt (ISO 8601)' },
+          until: { type: 'string', description: 'Vor diesem Zeitpunkt (ISO 8601)' },
+          limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Standard 25' }
+        },
+        ['query']
+      ),
+      run: async (args) => {
+        const query = str(args.query)
+        if (!query) throw new ToolError('query fehlt')
+        return runMailQuery(deps, args.account, {
+          query,
+          folderArg: str(args.folder),
+          since: parseTime(args.since, 'since'),
+          until: parseTime(args.until, 'until'),
+          unreadOnly: args.unread_only === true,
+          limit: int(args.limit, 25, 1, 100)
+        })
+      }
+    },
+    {
+      name: 'get_mail',
+      title: 'E-Mail lesen',
+      description:
+        'Liest eine E-Mail vollständig: Absender, alle Empfänger, Datum und den Text (HTML als lesbarer Text, Links mit Ziel in Klammern, zitierte Vorgänger bleiben drin). Anhänge stehen unter attachments, ihren Inhalt liefert read_mail_attachment. Markiert nichts als gelesen.',
+      inputSchema: schema(
+        {
+          message_id: { type: 'string', description: 'Aus list_mail oder search_mail' },
+          account: { type: 'string', description: 'Konto aus list_mail. Ohne Angabe werden alle Konten probiert.' },
+          max_chars: { type: 'integer', minimum: 1000, maximum: 200000, description: 'Höchstlänge des Texts, Standard 20000' }
+        },
+        ['message_id']
+      ),
+      run: async (args) => {
+        const id = str(args.message_id)
+        if (!id) throw new ToolError('message_id fehlt')
+        const { a, value: m } = await findMail(deps, args.account, (x) => x.mail(id))
+        return {
+          message_id: m.id,
+          account: label(a),
+          thread_id: m.conversationId,
+          received: localIso(m.received),
+          from: addr(m.from),
+          to: addrs(m.to, 100),
+          cc: addrs(m.cc, 100),
+          reply_to: addrs(m.replyTo),
+          subject: m.subject,
+          unread: !m.isRead || undefined,
+          importance: m.importance !== 'normal' ? m.importance : undefined,
+          flagged: m.flagged || undefined,
+          draft: m.isDraft || undefined,
+          text: clip(m.text, int(args.max_chars, MAX_MAIL_TEXT, 1000, 200_000)),
+          attachments: m.attachments.length
+            ? m.attachments.map((x) => ({ attachment_id: x.id, name: x.name, type: x.contentType, size: x.size, inline: x.isInline || undefined }))
+            : undefined
+        }
+      }
+    },
+    {
+      name: 'read_mail_attachment',
+      title: 'E-Mail-Anhang lesen',
+      description:
+        'Lädt einen Anhang einer E-Mail (attachment_id aus get_mail). Text kommt direkt zurück, Bilder als Bild. Jeder Anhang landet zusätzlich in einem lokalen Ordner, der Pfad steht in saved_to, z. B. für PDFs und Office-Dateien.',
+      inputSchema: schema(
+        {
+          message_id: { type: 'string' },
+          attachment_id: { type: 'string' },
+          account: { type: 'string', description: 'Konto aus get_mail. Ohne Angabe werden alle Konten probiert.' }
+        },
+        ['message_id', 'attachment_id']
+      ),
+      run: async (args): Promise<ToolResult> => {
+        const id = str(args.message_id)
+        const att = str(args.attachment_id)
+        if (!id || !att) throw new ToolError('message_id und attachment_id angeben')
+        const { value: f } = await findMail(deps, args.account, (x) => x.mailAttachment(id, att))
+        return fileResult(deps, f.name, f.contentType ?? 'application/octet-stream', f.data)
+      }
     }
   ]
   return tools
 }
 
 export const SERVER_INSTRUCTIONS = [
-  'Lesender Zugriff auf Microsoft Teams über die App Plenum, für alle dort angemeldeten Konten.',
+  'Lesender Zugriff auf Microsoft Teams und die zugehörigen Postfächer über die App Plenum, für alle dort angemeldeten Konten.',
   'Nichts davon sendet, ändert oder markiert etwas als gelesen.',
   'Ablauf: list_conversations (oder list_teams für Kanäle) liefert conversation_id, get_messages liest einen Chat, search_messages sucht über viele Chats.',
   'Dateien: list_files oder die files/images einer Nachricht, Inhalt über read_file.',
   'Anrufe: get_call_history. Erwähnungen und Antworten: get_activity. Termine: get_calendar.',
+  'E-Mail: list_mail (Ordner, Standard Posteingang) oder search_mail (Exchange-Suche im ganzen Postfach) liefern message_id, get_mail den vollen Text, read_mail_attachment einen Anhang.',
   'Ohne account gelten die Werkzeuge für alle Konten. Zeiten sind Ortszeit mit Versatz (ISO 8601).'
 ].join(' ')

@@ -50,7 +50,7 @@ export function McpSettings(): JSX.Element {
         <div className="grow">
           MCP-Server
           <div className="hint">
-            Claude Code, Codex und andere MCP-Clients auf diesem Gerät lesen darüber Chats, Kanäle, geteilte Dateien, Anrufverlauf, Aktivität und Kalender aller Konten. Sie
+            Claude Code, Codex und andere MCP-Clients auf diesem Gerät lesen darüber Chats, Kanäle, geteilte Dateien, Anrufverlauf, Aktivität, Kalender und E-Mails aller Konten. Sie
             können nichts senden oder ändern.
           </div>
         </div>

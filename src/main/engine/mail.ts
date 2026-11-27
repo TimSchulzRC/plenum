@@ -37,6 +37,45 @@ export function messagesUrl(api: MailApi, folderId: string, top = 40): string {
   return `${MAIL_BASE[api]}/${folders(api)}/${folderRef(api, folderId)}/messages?$top=${top}&$select=${select(api, SUMMARY)}&$orderby=${api === 'graph' ? 'receivedDateTime' : 'ReceivedDateTime'} desc`
 }
 
+// Abfrage für den MCP-Server: ein Ordner oder (ohne folder) das ganze Postfach, neueste zuerst.
+// Mit search sucht Exchange selbst (KQL, z. B. from:anna subject:Angebot). $search lässt sich nicht
+// mit $filter oder $orderby kombinieren, Exchange sortiert die Treffer aber nach Datum. Den Zeitraum
+// grenzt dort KQL nach Tagen ein, genau schneidet der Aufrufer danach zu.
+export interface MailQuery {
+  folder?: string
+  search?: string
+  since?: number
+  until?: number
+  unreadOnly?: boolean
+  top: number
+}
+
+const isoUtc = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
+const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+
+export function mailQueryUrl(api: MailApi, q: MailQuery): string {
+  const p = (k: string) => (api === 'graph' ? k : pascal(k))
+  const base = q.folder ? `${MAIL_BASE[api]}/${folders(api)}/${folderRef(api, q.folder)}/messages` : `${MAIL_BASE[api]}/messages`
+  const parts = [`$top=${q.top}`, `$select=${select(api, [...SUMMARY, 'parentFolderId'])}`]
+  const search = q.search?.replace(/["\\]/g, ' ').replace(/\s+/g, ' ').trim()
+  if (search) {
+    // Einen Tag Puffer je Seite: KQL rechnet in ganzen Tagen, Ortszeit kann daneben liegen.
+    // Die Suchwörter in Klammern, damit ein OR darin den Zeitraum nicht aushebelt.
+    const range: string[] = []
+    if (q.since) range.push(`received>=${isoDay(q.since - 86_400_000)}`)
+    if (q.until) range.push(`received<=${isoDay(q.until + 86_400_000)}`)
+    const kql = range.length ? [`(${search})`, ...range].join(' AND ') : search
+    parts.push(`$search=${encodeURIComponent(`"${kql}"`)}`)
+  } else {
+    // Exchange verlangt die Spalte aus $orderby als erste Bedingung im Filter
+    const f = [`${p('receivedDateTime')} ge ${isoUtc(q.since ?? Date.UTC(1900, 0, 1))}`]
+    if (q.until) f.push(`${p('receivedDateTime')} lt ${isoUtc(q.until)}`)
+    if (q.unreadOnly) f.push(`${p('isRead')} eq false`)
+    parts.push(`$filter=${encodeURIComponent(f.join(' and '))}`, `$orderby=${p('receivedDateTime')} desc`)
+  }
+  return `${base}?${parts.join('&')}`
+}
+
 export function messageUrl(api: MailApi, id: string): string {
   return `${MAIL_BASE[api]}/messages/${encodeURIComponent(id)}?$select=${select(api, [...SUMMARY, 'ccRecipients', 'replyTo', 'body'])}`
 }
@@ -124,7 +163,8 @@ export function mapSummary(m: any, accountId: string): MailSummary {
     isDraft: !!m.isDraft,
     hasAttachments: !!m.hasAttachments,
     importance: imp === 'high' || imp === 'low' ? imp : 'normal',
-    flagged: String(m.flag?.flagStatus ?? '').toLowerCase() === 'flagged'
+    flagged: String(m.flag?.flagStatus ?? '').toLowerCase() === 'flagged',
+    folderId: m.parentFolderId || undefined
   }
 }
 
@@ -201,3 +241,128 @@ export function textToHtml(text: string): string {
 
 // Jeder Anhang geht in einer eigenen Anfrage an Graph, direkt nur unter 3 MB (größere bräuchten eine Upload-Sitzung)
 export const MAX_ATTACHMENT_BYTES = 3_000_000
+
+// ---------- Mail als Text (für den MCP-Server) ----------
+
+const TEXT_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+  shy: '',
+  zwnj: '',
+  zwj: '',
+  euro: '€',
+  copy: '©',
+  reg: '®',
+  trade: '™',
+  ndash: '–',
+  mdash: '—',
+  hellip: '…',
+  bull: '•',
+  middot: '·',
+  laquo: '«',
+  raquo: '»',
+  bdquo: '„',
+  ldquo: '“',
+  rdquo: '”',
+  sbquo: '‚',
+  lsquo: '‘',
+  rsquo: '’',
+  auml: 'ä',
+  ouml: 'ö',
+  uuml: 'ü',
+  Auml: 'Ä',
+  Ouml: 'Ö',
+  Uuml: 'Ü',
+  szlig: 'ß',
+  eacute: 'é',
+  egrave: 'è',
+  agrave: 'à',
+  deg: '°',
+  sect: '§',
+  times: '×'
+}
+
+function decodeEntities(s: string): string {
+  return s.replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, e: string) => {
+    if (e[0] === '#') {
+      const n = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)
+      return Number.isNaN(n) || n > 0x10ffff ? m : String.fromCodePoint(n)
+    }
+    return TEXT_ENTITIES[e] ?? TEXT_ENTITIES[e.toLowerCase()] ?? m
+  })
+}
+
+// Outlook schreibt Links in Safe Links um, die eigentliche Adresse steht im Parameter url
+export function unwrapSafeLink(href: string): string {
+  try {
+    const u = new URL(href)
+    if (/(^|\.)safelinks\.protection\.outlook\.com$/i.test(u.hostname)) return u.searchParams.get('url') || href
+  } catch {
+    /* keine absolute Adresse */
+  }
+  return href
+}
+
+function linkText(attrs: string, inner: string): string {
+  const raw = attrs.match(/\bhref\s*=\s*("([^"]*)"|'([^']*)')/i)
+  const text = inner.trim()
+  if (!raw) return inner
+  const href = unwrapSafeLink(decodeEntities(raw[2] ?? raw[3] ?? '').trim())
+  if (!/^(https?|mailto):/i.test(href)) return inner
+  const target = href.replace(/^mailto:/i, '')
+  const plain = decodeEntities(text.replace(/<[^>]+>/g, '')).trim()
+  if (!plain) return ` ${target} `
+  // Steht die Adresse schon im Text (oder der Text ist die Adresse), nicht doppelt
+  const same = plain.includes(target) || (plain.length >= 8 && target.includes(plain))
+  return same ? inner : `${inner} (${target})`
+}
+
+// Mail-HTML als lesbarer Text: ohne Kopf, Styles und Kommentare, Absätze und Tabellenzeilen auf
+// eigenen Zeilen, Zellen mit „ | “ getrennt, Links mit Ziel in Klammern. Ein Blockwechsel ist genau
+// ein Zeilenumbruch: Outlook schreibt Leerzeilen als eigene Absätze (<p>&nbsp;</p>).
+export function mailHtmlToText(html: string): string {
+  if (!html) return ''
+  let s = html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(head|style|script|title|xml)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi, (_, attrs: string, inner: string) => linkText(attrs, inner))
+  // Zeilenumbrüche im Quelltext sind nur Leerraum, außer in <pre>
+  s = s.replace(/(<pre\b[^>]*>)([\s\S]*?)(<\/pre\s*>)/gi, (_, a: string, body: string, b: string) => a + body.replace(/\n/g, '<br>') + b)
+  s = s
+    .replace(/\s*\n\s*/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/<img\b[^>]*\balt\s*=\s*"([^"]+)"[^>]*>/gi, ' $1 ')
+    .replace(/<\/t[dh]\s*>/gi, ' | ')
+    .replace(/<li\b[^>]*>/gi, '\u0001- ')
+    .replace(/<hr\b[^>]*>/gi, '\u0001---\u0001')
+    .replace(/<br\b[^>]*>/gi, '\n')
+    .replace(/<\/?(p|div|tr|table|tbody|thead|ul|ol|li|h[1-6]|pre|blockquote|section|article|header|footer|center)\b[^>]*>/gi, '\u0001')
+    .replace(/<[^>]+>/g, '')
+  // Wie im Browser: Ein Blockwechsel bricht nur um, wenn die Zeile schon Text hat, <br> immer.
+  // So bleibt <div><br></div> eine Leerzeile, und <div>Text<br></div> wird keine zusätzliche.
+  let out = ''
+  let hasText = false
+  for (const part of s.split(/(\u0001|\n)/)) {
+    if (part === '\u0001') {
+      if (hasText) out += '\n'
+      hasText = false
+    } else if (part === '\n') {
+      out += '\n'
+      hasText = false
+    } else {
+      out += part
+      // &nbsp; und das Zeichen selbst zählen als Text: Outlook schreibt Leerzeilen als <p>&nbsp;</p>
+      if (/[^ \t\r]/.test(part)) hasText = true
+    }
+  }
+  return decodeEntities(out)
+    .split('\n')
+    .map((l) => l.replace(/[ \t\u00a0]+/g, ' ').replace(/^\s*\|\s*|\s*\|\s*$/g, '').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}

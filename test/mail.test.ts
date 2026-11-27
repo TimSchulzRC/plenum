@@ -5,7 +5,9 @@ import {
   camelize,
   contentId,
   folderName,
+  mailHtmlToText,
   mailPageApi,
+  mailQueryUrl,
   mapFolder,
   mapSummary,
   messagesUrl,
@@ -15,6 +17,7 @@ import {
   replyDraftBody,
   sortFolders,
   textToHtml,
+  unwrapSafeLink,
   wellKnownUrl
 } from '../src/main/engine/mail.ts'
 
@@ -177,4 +180,64 @@ test('Outlook-Antworten in camelCase, Anfragen in PascalCase', () => {
     ContentType: 'text/plain',
     ContentBytes: 'QQ=='
   })
+})
+
+test('MCP-Abfrage: Ordner mit Filter und Sortierung, ungelesen immer nach dem Datum', () => {
+  const g = new URL(mailQueryUrl('graph', { folder: 'inbox', unreadOnly: true, since: Date.parse('2026-11-01T00:00:00Z'), top: 25 }))
+  assert.equal(g.pathname, '/v1.0/me/mailFolders/inbox/messages')
+  assert.equal(g.searchParams.get('$filter'), 'receivedDateTime ge 2026-11-01T00:00:00Z and isRead eq false')
+  assert.equal(g.searchParams.get('$orderby'), 'receivedDateTime desc')
+  assert.match(g.searchParams.get('$select')!, /parentFolderId/)
+  // Ohne since trotzdem zuerst das Datum, sonst lehnt Exchange Filter mit $orderby ab
+  const o = new URL(mailQueryUrl('outlook', { folder: 'sentitems', until: Date.parse('2026-11-20T10:00:00Z'), top: 5 }))
+  assert.equal(o.pathname, '/api/v2.0/me/MailFolders/SentItems/messages')
+  assert.equal(o.searchParams.get('$filter'), 'ReceivedDateTime ge 1900-01-01T00:00:00Z and ReceivedDateTime lt 2026-11-20T10:00:00Z')
+  assert.equal(o.searchParams.get('$top'), '5')
+})
+
+test('MCP-Suche: ganzes Postfach, KQL mit Zeitraum, ohne $filter und $orderby', () => {
+  const g = new URL(mailQueryUrl('graph', { search: 'from:anna "Angebot\\ Nord"', since: Date.parse('2026-11-10T12:00:00Z'), top: 25 }))
+  assert.equal(g.pathname, '/v1.0/me/messages')
+  assert.equal(g.searchParams.get('$search'), '"(from:anna Angebot Nord) AND received>=2026-11-09"')
+  assert.equal(g.searchParams.get('$filter'), null)
+  assert.equal(g.searchParams.get('$orderby'), null)
+  const o = new URL(mailQueryUrl('outlook', { search: 'x', folder: 'AAMkFolder=', top: 10 }))
+  assert.equal(o.pathname, '/api/v2.0/me/MailFolders/AAMkFolder%3D/messages')
+  assert.equal(o.searchParams.get('$search'), '"x"')
+})
+
+test('Mail-HTML als Text: ohne Kopf und Styles, Tabellen, Listen, Links mit Ziel', () => {
+  const html = `<html><head><meta charset="utf-8"><style>p { margin: 0 }</style><title>x</title></head>
+<body><!-- Kommentar --><div class="WordSection1"><p>Hallo   Tim,<br>
+anbei die    Bestellung.</p>
+<table><tr><th>Pos</th><th>Artikel</th></tr>
+<tr><td>1</td><td>Schrauben&nbsp;M4</td></tr></table>
+<ul><li>Lieferung bis 3.12.</li><li>Preis 12,50&nbsp;&euro;</li></ul>
+<p><a href="https://eur01.safelinks.protection.outlook.com/?url=https%3A%2F%2Ffirma.de%2Fb%3Fid%3D4711&amp;data=abc">Bestellung ansehen</a>
+<a href="mailto:einkauf@firma.de">einkauf@firma.de</a> <a href="https://firma.de">https://firma.de</a> <a href="#top">nach oben</a></p>
+<pre>Zeile 1
+Zeile 2</pre></div></body></html>`
+  assert.equal(
+    mailHtmlToText(html),
+    [
+      'Hallo Tim,',
+      'anbei die Bestellung.',
+      'Pos | Artikel',
+      '1 | Schrauben M4',
+      '- Lieferung bis 3.12.',
+      '- Preis 12,50 €',
+      'Bestellung ansehen (https://firma.de/b?id=4711) einkauf@firma.de https://firma.de nach oben',
+      'Zeile 1',
+      'Zeile 2'
+    ].join('\n')
+  )
+  assert.equal(mailHtmlToText(''), '')
+  // Outlook: Leerzeile als eigener Absatz, Umlaute als Entity
+  assert.equal(
+    mailHtmlToText('<p class=MsoNormal>Gr&uuml;&szlig;e<o:p></o:p></p><p class=MsoNormal><o:p>&nbsp;</o:p></p><p class=MsoNormal>Kim<o:p></o:p></p>'),
+    'Grüße\n\nKim'
+  )
+  // Gmail und neues Outlook: Leerzeile als <div><br></div>, <br> am Blockende zählt nicht doppelt
+  assert.equal(mailHtmlToText('<div>Hallo<br></div><div><br></div><div>Text</div><div>Ende</div>'), 'Hallo\n\nText\nEnde')
+  assert.equal(unwrapSafeLink('https://example.com/a'), 'https://example.com/a')
 })

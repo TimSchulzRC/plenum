@@ -49,7 +49,7 @@ Das Update braucht Schreibrechte auf die App und ihren Ordner und klappt nicht, 
 
 ## Claude Code und Codex (MCP)
 
-Plenum bringt einen lokalen MCP-Server mit. Claude Code, Codex und andere MCP-Clients auf demselben Gerät können darüber deine Teams-Daten lesen, in allen angemeldeten Konten: Chats, Kanäle, Nachrichten, geteilte Dateien und Bilder, Anrufverlauf, Aktivität, Kalender und das Personenverzeichnis. Senden, ändern oder als gelesen markieren kann der Server nichts.
+Plenum bringt einen lokalen MCP-Server mit. Claude Code, Codex und andere MCP-Clients auf demselben Gerät können darüber deine Teams-Daten lesen, in allen angemeldeten Konten: Chats, Kanäle, Nachrichten, geteilte Dateien und Bilder, Anrufverlauf, Aktivität, Kalender, E-Mails mit Anhängen und das Personenverzeichnis. Senden, ändern oder als gelesen markieren kann der Server nichts.
 
 1. Einstellungen → Claude Code und Codex → MCP-Server einschalten.
 2. Bei Claude Code oder Codex auf „Eintragen“ klicken. Die App ruft dann `claude mcp add` bzw. `codex mcp add` auf und trägt den Server für alle Projekte ein. Alternativ den angezeigten Befehl kopieren und im Terminal ausführen. Für andere Clients stehen dort auch der JSON-Eintrag und der Abschnitt für `~/.codex/config.toml`.
@@ -57,11 +57,13 @@ Plenum bringt einen lokalen MCP-Server mit. Claude Code, Codex und andere MCP-Cl
 
 Aus der Zeit als Teams Everywhere eingetragene Server (`teams-everywhere`) funktionieren weiter. „Eintragen“ ersetzt sie durch `plenum`.
 
-Danach reicht eine Frage wie „Was gab es heute Neues in Teams?“ oder „Welche Anrufe habe ich verpasst?“.
+Danach reicht eine Frage wie „Was gab es heute Neues in Teams?“, „Welche Anrufe habe ich verpasst?“ oder „Welcher Liefertermin steht in der letzten Mail von Fabrikam?“.
 
 Der Server lauscht nur auf `127.0.0.1`, Port 47311 (Dev: 47312), und läuft, solange die App offen ist. Die Adresse enthält einen geheimen Schlüssel. „Neuer Schlüssel“ in den Einstellungen macht alte Einträge ungültig, danach den Server neu eintragen. Ist der Port belegt, nimmt die App einen freien Port und zeigt die neue Adresse an.
 
-Werkzeuge: `list_accounts`, `list_conversations`, `list_teams`, `get_messages`, `search_messages`, `list_files`, `read_file`, `get_call_history`, `get_activity`, `get_calendar`, `search_people`. `search_messages` und `list_files` lesen die zuletzt aktiven Unterhaltungen ab einem Datum (Standard: 30 Tage) und durchsuchen sie lokal, eine Volltextsuche über das ganze Archiv ist das nicht. `read_file` legt jede Datei zusätzlich im Temp-Ordner unter „Plenum MCP“ ab, damit der Agent auch PDFs und Office-Dateien lesen kann. Dateien aus SharePoint und OneDrive holt die App über Microsoft Graph mit dem Token der Teams-Web-App.
+Werkzeuge: `list_accounts`, `list_conversations`, `list_teams`, `get_messages`, `search_messages`, `list_files`, `read_file`, `get_call_history`, `get_activity`, `get_calendar`, `search_people`, `list_mail_folders`, `list_mail`, `search_mail`, `get_mail`, `read_mail_attachment`. `search_messages` und `list_files` lesen die zuletzt aktiven Unterhaltungen ab einem Datum (Standard: 30 Tage) und durchsuchen sie lokal, eine Volltextsuche über das ganze Archiv ist das nicht. `read_file` legt jede Datei zusätzlich im Temp-Ordner unter „Plenum MCP“ ab, damit der Agent auch PDFs und Office-Dateien lesen kann. Dateien aus SharePoint und OneDrive holt die App über Microsoft Graph mit dem Token der Teams-Web-App.
+
+Bei E-Mail sucht dagegen Exchange selbst: `search_mail` durchsucht das ganze Postfach mit Wörtern oder KQL (`from:`, `subject:`, `hasattachments:true`). `get_mail` gibt HTML-Mails als lesbaren Text zurück, Tabellenzellen mit „|“ getrennt und Links mit ihrem Ziel. `read_mail_attachment` legt Anhänge wie `read_file` im Temp-Ordner ab. Die Mail-Werkzeuge gehen wie die E-Mail-Ansicht über Graph oder Outlook REST. Solange die Teams-Web-App für ein Konto noch keinen Mail-Token angefordert hat, melden sie das als Hinweis.
 
 ## Datenschutz
 

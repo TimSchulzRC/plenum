@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { Engine, enginePreloadPath } from './engine/engine'
 import { TeamsApi, ApiError, clientMessageId } from './engine/api'
 import { amsImageIds, replaceInlineImages } from './engine/ams'
-import { contentId, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN } from './engine/mail'
+import { contentId, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN, type MailQuery } from './engine/mail'
 import { MailDirectory, mailMatches } from './engine/mail-people'
 import {
   conversationKind,
@@ -32,6 +32,7 @@ import type {
   MailFolderKind,
   MailMessage,
   MailPage,
+  MailSummary,
   MailReplyKind,
   CallLogEntry,
   Channel,
@@ -1339,9 +1340,18 @@ export class AccountService extends EventEmitter<AccountEvents> {
     return { items: items.map((m) => mapSummary(m, this.id)), next: res?.['@odata.nextLink'] || undefined }
   }
 
-  async getMail(id: string): Promise<MailMessage> {
+  // Für den MCP-Server: Ordner oder ganzes Postfach, neueste zuerst
+  async queryMail(q: MailQuery): Promise<MailSummary[]> {
+    const res = await this.api.mailQuery(q)
+    const items: any[] = res?.value ?? []
+    return items.map((m) => mapSummary(m, this.id))
+  }
+
+  // inlineImages: false lädt keine eingebetteten Bilder (der MCP-Server braucht nur den Text)
+  async getMail(id: string, opts: { inlineImages?: boolean } = {}): Promise<MailMessage> {
     const [m, att] = await Promise.all([this.api.mailMessage(id), listAttachments(this.api, id)])
     const attachments = att.map(mapAttachment)
+    if (opts.inlineImages === false) return mapMessage(m, this.id, attachments, {})
     const body = String(m?.body?.content ?? '')
     // Eingebettete Bilder (cid:…) als data:-URL, zusammen höchstens 8 MB. Was das HTML nicht
     // einbettet, bleibt in der Anhangsliste.
@@ -1364,10 +1374,10 @@ export class AccountService extends EventEmitter<AccountEvents> {
     return mapMessage(m, this.id, attachments.filter((a) => !embedded.has(a.id)), inlineImages)
   }
 
-  async getMailAttachment(id: string, attachmentId: string): Promise<{ name: string; data: Uint8Array }> {
+  async getMailAttachment(id: string, attachmentId: string): Promise<{ name: string; contentType?: string; data: Uint8Array }> {
     const a = await this.api.mailAttachment(id, attachmentId)
     if (typeof a?.contentBytes !== 'string') throw new Error('Diesen Anhang kann die App nicht öffnen (keine Datei, z. B. eine angehängte Mail oder ein Link)')
-    return { name: a.name || 'Anhang', data: Buffer.from(a.contentBytes, 'base64') }
+    return { name: a.name || 'Anhang', contentType: a.contentType || undefined, data: Buffer.from(a.contentBytes, 'base64') }
   }
 
   async setMailRead(id: string, isRead: boolean): Promise<void> {

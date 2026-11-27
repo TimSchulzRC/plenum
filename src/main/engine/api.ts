@@ -15,6 +15,7 @@ import {
   MAIL_BASE,
   MAIL_TEXTS,
   mailPageApi,
+  mailQueryUrl,
   messageActionUrl,
   messageUrl,
   messagesUrl,
@@ -24,7 +25,8 @@ import {
   recipientsPatch,
   replyDraftBody,
   wellKnownUrl,
-  type MailApi
+  type MailApi,
+  type MailQuery
 } from './mail'
 import type { MailDraft, MailFile, MailFolderKind, MailReplyKind, NewCalendarEvent } from '@shared/types'
 
@@ -362,6 +364,11 @@ export class TeamsApi {
     const api = mailPageApi(next)
     if (!api) throw new ApiError(0, 'Ungültige Folgeseite')
     return this.mailRequest(api, next)
+  }
+
+  // Für den MCP-Server: Ordner oder ganzes Postfach, mit Filter oder Suche (siehe mailQueryUrl)
+  mailQuery(q: MailQuery): Promise<any> {
+    return this.mail((api) => [mailQueryUrl(api, q)])
   }
 
   mailMessage(id: string): Promise<any> {
