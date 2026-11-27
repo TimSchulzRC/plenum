@@ -105,23 +105,44 @@ export function MailView(): JSX.Element {
   const [compose, setCompose] = useState<ComposeState | null>(null)
   const [reload, setReload] = useState(0)
 
-  // Ordner aller Konten, beim Öffnen (ein frischer gespeicherter Stand reicht) und alle zwei Minuten
-  const loadFolders = useCallback((force = false) => {
-    for (const id of readyKey.split(',').filter(Boolean)) {
-      loadFolderList(id, force)
-        .then((list) => {
-          setFolders((f) => ({ ...f, [id]: { list } }))
-          const inbox = list.find((x) => x.kind === 'inbox')
-          if (inbox) setMailUnread(id, inbox.unread)
-        })
-        .catch((e) => setFolders((f) => ({ ...f, [id]: { ...f[id], error: ipcErrorText(e) } })))
-    }
-  }, [readyKey])
+  // Ordner aller Konten, beim Öffnen (ein frischer gespeicherter Stand reicht) und alle zwei Minuten.
+  // Fehlgeschlagene alle 5 s noch einmal, eine Minute lang (Mail-Token kommt nach dem Start oft später).
+  const folderRetry = useRef(new Map<string, { n: number; timer?: ReturnType<typeof setTimeout> }>())
+  const loadFolders = useCallback(
+    (force = false, only?: string) => {
+      for (const id of only ? [only] : readyKey.split(',').filter(Boolean)) {
+        loadFolderList(id, force)
+          .then((list) => {
+            folderRetry.current.delete(id)
+            setFolders((f) => ({ ...f, [id]: { list } }))
+            const inbox = list.find((x) => x.kind === 'inbox')
+            if (inbox) setMailUnread(id, inbox.unread)
+          })
+          .catch((e) => {
+            setFolders((f) => ({ ...f, [id]: { ...f[id], error: ipcErrorText(e) } }))
+            const r = folderRetry.current.get(id) ?? { n: 0 }
+            if (r.n >= 12 || r.timer) return
+            r.n++
+            r.timer = setTimeout(() => {
+              r.timer = undefined
+              loadFolders(true, id)
+            }, 5000)
+            folderRetry.current.set(id, r)
+          })
+      }
+    },
+    [readyKey]
+  )
 
   useEffect(() => {
     loadFolders()
     const t = setInterval(() => loadFolders(true), 120_000)
-    return () => clearInterval(t)
+    const retries = folderRetry.current
+    return () => {
+      clearInterval(t)
+      for (const r of retries.values()) clearTimeout(r.timer)
+      retries.clear()
+    }
   }, [loadFolders])
 
   const wanted = useMemo<{ accountId: string; folderId: string }[]>(() => {
@@ -131,46 +152,70 @@ export function MailView(): JSX.Element {
   const wantedKey = wanted.map((w) => `${w.accountId}:${w.folderId}`).join(',')
 
   // Liste laden. Gespeicherte Listen stehen sofort da, dann der aktuelle Stand (ein frischer gespeicherter
-  // reicht). Alle 60 Sekunden die erste Seite neu, schon nachgeladene ältere Mails bleiben. Nicht
-  // verbundene Konten zeigen nur ihren gespeicherten Stand.
+  // reicht). Jedes Konto erscheint, sobald es da ist, ein langsames hält die anderen nicht auf. Alle 60
+  // Sekunden die erste Seite neu, schon nachgeladene ältere Mails bleiben. Nicht verbundene Konten zeigen
+  // nur ihren gespeicherten Stand. Fehlgeschlagene alle 5 s noch einmal, eine Minute lang: Nach dem Start
+  // fehlt oft noch der Mail-Token der Web-App.
   const lastReload = useRef(reload)
+  const [pending, setPending] = useState(0)
   useEffect(() => {
     let alive = true
     const ready = new Set(readyKey.split(',').filter(Boolean))
+    const same = (a: { accountId: string; folderId: string }, b: { accountId: string; folderId: string }) => a.accountId === b.accountId && a.folderId === b.folderId
     const stored = wanted.flatMap((w): Source[] => {
       const p = cachedList(w.accountId, w.folderId)
       return p ? [{ ...w, items: p.items, next: p.next }] : []
     })
     setSources(stored.length ? stored : null)
-    const load = (force: boolean) =>
-      Promise.all(
-        wanted.map((w) =>
-          !ready.has(w.accountId)
-            ? Promise.resolve(stored.find((x) => x.accountId === w.accountId && x.folderId === w.folderId) ?? { ...w, items: [], error: 'Nicht verbunden' })
-            : loadList(w.accountId, w.folderId, force)
-                .then((p): Source => ({ ...w, items: p.items, next: p.next }))
-                .catch((e): Source => ({ ...w, items: [], error: ipcErrorText(e) }))
-        )
-      ).then((fresh) => {
-        if (!alive) return
-        setSources((prev) => {
-          if (!prev) return fresh
-          return fresh.map((f) => {
-            const old = prev.find((p) => p.accountId === f.accountId && p.folderId === f.folderId)
-            if (!old || f.error) return old ?? f
-            const oldest = Math.min(...f.items.map((i) => i.received))
-            const rest = old.items.filter((i) => i.received < oldest && !f.items.some((x) => x.id === i.id))
-            return { ...f, items: [...f.items, ...rest], next: rest.length ? old.next : f.next }
-          })
-        })
+    const put = (f: Source) =>
+      setSources((prev) => {
+        const list = prev ?? []
+        const old = list.find((x) => same(x, f))
+        let merged = f
+        if (old && f.error) merged = old.items.length ? old : f
+        else if (old) {
+          const oldest = Math.min(...f.items.map((i) => i.received))
+          const rest = old.items.filter((i) => i.received < oldest && !f.items.some((x) => x.id === i.id))
+          merged = { ...f, items: [...f.items, ...rest], next: rest.length ? old.next : f.next }
+        }
+        return old ? list.map((x) => (x === old ? merged : x)) : [...list, merged]
       })
+    // Jede Quelle für sich: Eine fehlgeschlagene kommt nach 5 s wieder dran, ohne auf langsame zu warten
+    const retries = new Map<string, number>()
+    const timers: ReturnType<typeof setTimeout>[] = []
+    const loadOne = async (w: (typeof wanted)[number], force: boolean, initial: boolean) => {
+      if (!ready.has(w.accountId)) {
+        if (!stored.some((x) => same(x, w))) put({ ...w, items: [], error: 'Nicht verbunden' })
+        return
+      }
+      try {
+        const p = await loadList(w.accountId, w.folderId, force)
+        if (alive) put({ ...w, items: p.items, next: p.next })
+      } catch (e) {
+        if (!alive) return
+        put({ ...w, items: [], error: ipcErrorText(e) })
+        const k = `${w.accountId}|${w.folderId}`
+        const n = retries.get(k) ?? 0
+        if (n < 12) {
+          retries.set(k, n + 1)
+          timers.push(setTimeout(() => void loadOne(w, true, false), 5000))
+        }
+      } finally {
+        if (alive && initial) setPending((n) => Math.max(0, n - 1))
+      }
+    }
+    const load = (force: boolean, initial = false) => {
+      if (initial) setPending(wanted.filter((w) => ready.has(w.accountId)).length)
+      for (const w of wanted) void loadOne(w, force, initial)
+    }
     // Neu laden (Knopf) holt immer den aktuellen Stand
-    void load(reload !== lastReload.current)
+    load(reload !== lastReload.current, true)
     lastReload.current = reload
-    const t = setInterval(() => void load(true), 60_000)
+    const t = setInterval(() => load(true), 60_000)
     return () => {
       alive = false
       clearInterval(t)
+      timers.forEach(clearTimeout)
     }
     // wantedKey fasst wanted zusammen, wanted selbst ändert sich bei jedem Render
   }, [wantedKey, reload, readyKey])
@@ -396,12 +441,12 @@ export function MailView(): JSX.Element {
             if (hasMore && !loadingMore && el.scrollTop + el.clientHeight > el.scrollHeight - 300) void loadMore()
           }}
         >
-          {!sources && (
+          {(!sources || (!items.length && pending > 0)) && (
             <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
               <Spinner size="small" />
             </div>
           )}
-          {sources && !items.length && !errors.length && (
+          {sources && !items.length && !errors.length && !pending && (
             <div className="folder-note" style={{ padding: 24, textAlign: 'center' }}>
               {wanted.length ? 'Keine Mails' : 'Kein Konto verbunden'}
             </div>

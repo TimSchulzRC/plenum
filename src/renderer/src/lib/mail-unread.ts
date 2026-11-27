@@ -20,12 +20,13 @@ export function useMailUnreadPolling(): void {
       for (const id of ids) void api.getMailUnread(id).then((n) => n !== null && setMailUnread(id, n)).catch(() => {})
     }
     poll()
-    // Ordner und Posteingänge schon laden, dann zeigt der Mail-Tab beim ersten Öffnen gleich etwas
-    const warm = setTimeout(() => warmMail(ids), 3000)
+    // Ordner und Posteingänge schon laden, dann zeigt der Mail-Tab beim ersten Öffnen gleich etwas. Noch
+    // zweimal später: Den Mail-Token fordert die Web-App nach dem Start oft erst nach einer Minute an.
+    const warm = [3000, 30_000, 75_000].map((ms) => setTimeout(() => warmMail(ids), ms))
     const t = setInterval(poll, 120_000)
     return () => {
       clearInterval(t)
-      clearTimeout(warm)
+      warm.forEach(clearTimeout)
     }
   }, [key])
 }
