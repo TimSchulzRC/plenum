@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
-import { legacyAppRunning, migrateLegacyUserData } from '../src/main/legacy-data.ts'
+import { legacyAppRunning, migrateLegacyUserData, renamedBundlePath } from '../src/main/legacy-data.ts'
 
 let root: string
 let legacy: string
@@ -11,8 +11,8 @@ let target: string
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'legacy-data-test-'))
-  legacy = join(root, 'Teams Mac')
-  target = join(root, 'Teams Everywhere')
+  legacy = join(root, 'Teams Everywhere')
+  target = join(root, 'Plenum')
   mkdirSync(legacy)
   writeFileSync(join(legacy, 'accounts.json'), '[]')
 })
@@ -46,4 +46,18 @@ test('gibt es den neuen Ordner schon, passiert nichts', () => {
   mkdirSync(target)
   assert.equal(migrateLegacyUserData(legacy, target), 'none')
   assert.ok(existsSync(join(legacy, 'accounts.json')))
+})
+
+test('ein Bundle unter altem Namen bekommt den neuen, je Kanal', () => {
+  assert.equal(renamedBundlePath(join(root, 'Teams Everywhere.app'), 'Plenum'), join(root, 'Plenum.app'))
+  assert.equal(renamedBundlePath(join(root, 'Teams Everywhere (nightly).app'), 'Plenum (nightly)'), join(root, 'Plenum (nightly).app'))
+  // Nach einem Wechsel von Nightly auf Stable heißt die App wie Stable
+  assert.equal(renamedBundlePath(join(root, 'Teams Everywhere (nightly).app'), 'Plenum'), join(root, 'Plenum.app'))
+})
+
+test('neue und von Hand umbenannte Bundles bleiben, ein belegter Zielpfad auch', () => {
+  assert.equal(renamedBundlePath(join(root, 'Plenum.app'), 'Plenum'), null)
+  assert.equal(renamedBundlePath(join(root, 'Teams.app'), 'Plenum'), null)
+  mkdirSync(join(root, 'Plenum.app'))
+  assert.equal(renamedBundlePath(join(root, 'Teams Everywhere.app'), 'Plenum'), null)
 })

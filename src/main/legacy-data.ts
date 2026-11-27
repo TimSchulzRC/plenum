@@ -1,7 +1,8 @@
-// Übernahme des Datenordners aus der Zeit, als die App „Teams Mac“ hieß.
+// Übernahme von Datenordner und App-Bundle aus der Zeit vor der Umbenennung in Plenum
+// (vorher „Teams Everywhere“, davor „Teams Mac“).
 // Ohne Electron-Abhängigkeiten, damit `pnpm test` die Logik prüfen kann.
 import { existsSync, readlinkSync, renameSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 export type LegacyMigration = 'none' | 'migrated' | 'legacy-running' | 'failed'
 
@@ -35,4 +36,16 @@ export function migrateLegacyUserData(legacyDir: string, targetDir: string): Leg
   } catch {
     return 'failed'
   }
+}
+
+// Das erste Update auf Plenum installiert noch der Updater von Teams Everywhere. Er legt die
+// neue Version unter den alten Pfad, etwa /Applications/Teams Everywhere.app. Liefert für so ein
+// Bundle den Pfad mit dem neuen Namen, falls dort noch nichts liegt. Andere Namen, etwa von Hand
+// umbenannte Apps, bleiben, wie sie sind.
+const LEGACY_BUNDLES = ['Teams Everywhere.app', 'Teams Everywhere (nightly).app']
+
+export function renamedBundlePath(bundle: string, name: string): string | null {
+  if (!LEGACY_BUNDLES.includes(basename(bundle))) return null
+  const target = join(dirname(bundle), `${name}.app`)
+  return existsSync(target) ? null : target
 }

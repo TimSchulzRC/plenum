@@ -1,6 +1,6 @@
 name: PR-Build
 
-# Baut zu jedem Pull Request „Teams Everywhere (dev)“ für Apple Silicon und schreibt den
+# Baut zu jedem Pull Request „Plenum (dev)“ für Apple Silicon und schreibt den
 # Download-Link als Kommentar in den Pull Request. Der Build ist die Dev-Ausgabe: eigene
 # Bundle-ID, Dev-Icon, Datenordner von `pnpm run dev`, keine Updates. Er stört Stable und
 # Nightly also nicht, und Anmeldungen aus Dev bleiben über neue Builds hinweg erhalten.
@@ -48,11 +48,11 @@ jobs:
           set -euo pipefail
           version="$(node -p 'require("./package.json").version')-dev.pr$PR.$GITHUB_RUN_NUMBER"
           pnpm pkg set version="$version" \
-            build.productName="Teams Everywhere (dev)" \
+            build.productName="Plenum (dev)" \
             build.appId="io.github.timschulzrc.teamseverywhere.dev" \
             build.mac.icon="build/icon-dev.icns"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "file=Teams-Everywhere-$version-mac-arm64.zip" >> "$GITHUB_OUTPUT"
+          echo "file=Plenum-$version-mac-arm64.zip" >> "$GITHUB_OUTPUT"
 
       - name: App bauen (arm64)
         env:
@@ -69,7 +69,7 @@ jobs:
           FILE: ${{ steps.meta.outputs.file }}
         run: |
           set -euo pipefail
-          app="release/mac-arm64/Teams Everywhere (dev).app"
+          app="release/mac-arm64/Plenum (dev).app"
           id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
           [[ "$id" == "io.github.timschulzrc.teamseverywhere.dev" ]] || { echo "::error::Falsche Bundle-ID: $id"; exit 1; }
           codesign --verify --deep --strict --verbose=2 "$app"
@@ -106,16 +106,16 @@ jobs:
       - run: |
           set -euo pipefail
           marker='<!-- pr-build -->'
-          app='/Applications/Teams Everywhere (dev).app'
+          app='/Applications/Plenum (dev).app'
           {
             echo "$marker"
             echo "### Dev-Build zum Testen"
             echo
             echo "**[$FILE herunterladen]($URL)** (Apple Silicon, Stand \`${SHA:0:12}\`, Version \`$VERSION\`)"
             echo
-            echo "Der Build läuft als „Teams Everywhere (dev)“ mit Dev-Icon, eigener Bundle-ID und den Daten aus \`~/Library/Application Support/Teams Everywhere (dev)\`. Stable und Nightly bleiben unberührt, Anmeldungen aus Dev bleiben erhalten. Er sucht keine Updates, jeder neue Push an diesem Pull Request ersetzt den Link hier."
+            echo "Der Build läuft als „Plenum (dev)“ mit Dev-Icon, eigener Bundle-ID und den Daten aus \`~/Library/Application Support/Plenum (dev)\`. Stable und Nightly bleiben unberührt, Anmeldungen aus Dev bleiben erhalten. Er sucht keine Updates, jeder neue Push an diesem Pull Request ersetzt den Link hier."
             echo
-            echo "1. „Teams Everywhere (dev)“ beenden, falls sie läuft (auch \`pnpm run dev\`)."
+            echo "1. „Plenum (dev)“ beenden, falls sie läuft (auch \`pnpm run dev\`). Eine alte „Teams Everywhere (dev)“ beenden und löschen, sie heißt jetzt „Plenum (dev)“."
             echo "2. ZIP laden, entpacken und die App in den Ordner Programme ziehen, die alte ersetzen."
             echo "3. Die App ist nicht notarisiert. Vor dem Start einmal im Terminal ausführen:"
             echo

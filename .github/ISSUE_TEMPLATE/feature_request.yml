@@ -1,5 +1,5 @@
 name: Funktion vorschlagen
-description: Eine Idee für Teams Everywhere.
+description: Eine Idee für Plenum.
 labels: [enhancement]
 body:
   - type: textarea

@@ -155,7 +155,7 @@ function label(a: McpAccount): string {
 
 function resolveAccounts(deps: ToolDeps, arg: unknown): McpAccount[] {
   const all = deps.accounts()
-  if (all.length === 0) throw new ToolError('In Teams Everywhere ist kein Konto angemeldet.')
+  if (all.length === 0) throw new ToolError('In Plenum ist kein Konto angemeldet.')
   const q = str(arg)?.toLowerCase()
   if (!q) return all
   const exact = all.filter((a) => {
@@ -386,7 +386,7 @@ export function createTools(deps: ToolDeps): ToolDef[] {
     {
       name: 'list_accounts',
       title: 'Konten',
-      description: 'Listet alle in Teams Everywhere angemeldeten Teams-Konten mit Name, E-Mail, Organisation, Verbindungsstatus und Zahl ungelesener Chats.',
+      description: 'Listet alle in Plenum angemeldeten Teams-Konten mit Name, E-Mail, Organisation, Verbindungsstatus und Zahl ungelesener Chats.',
       inputSchema: schema({}),
       run: async () => ({
         accounts: deps.accounts().map((a) => {
@@ -820,7 +820,7 @@ export function createTools(deps: ToolDeps): ToolDef[] {
 }
 
 export const SERVER_INSTRUCTIONS = [
-  'Lesender Zugriff auf Microsoft Teams über die App Teams Everywhere, für alle dort angemeldeten Konten.',
+  'Lesender Zugriff auf Microsoft Teams über die App Plenum, für alle dort angemeldeten Konten.',
   'Nichts davon sendet, ändert oder markiert etwas als gelesen.',
   'Ablauf: list_conversations (oder list_teams für Kanäle) liefert conversation_id, get_messages liest einen Chat, search_messages sucht über viele Chats.',
   'Dateien: list_files oder die files/images einer Nachricht, Inhalt über read_file.',

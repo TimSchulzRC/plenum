@@ -13,18 +13,18 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web'
 import { promisify } from 'node:util'
 import type { UpdateState } from '@shared/types'
 import { log } from './log'
-import { appVariant } from './variant'
+import { appVariant, BASE_NAME } from './variant'
 import { checksumFor, pickUpdate, type GithubAsset, type GithubRelease, type UpdateCandidate } from './update/releases'
 
 const execFileAsync = promisify(execFile)
 
-const REPOSITORY = 'TimSchulzRC/teams-everywhere'
-const WORKDIR_PREFIX = 'teams-everywhere-update-'
+const REPOSITORY = 'TimSchulzRC/plenum'
+const WORKDIR_PREFIX = 'plenum-update-'
 const FIRST_CHECK_DELAY = 15_000
 const CHECK_INTERVAL = 30 * 60 * 1000
 const CHECK_TIMEOUT = 30_000
 const DOWNLOAD_IDLE_TIMEOUT = 60_000
-const HEADERS = { Accept: 'application/vnd.github+json', 'User-Agent': 'teams-everywhere-updater' }
+const HEADERS = { Accept: 'application/vnd.github+json', 'User-Agent': 'plenum-updater' }
 
 // Wartet, bis die App beendet ist, ersetzt das Bundle und startet die neue Version.
 // Lässt sich die neue Version nicht verschieben oder nicht starten, kommt die alte zurück.
@@ -73,6 +73,50 @@ else
 fi
 rm -rf "$workdir"
 `
+
+// Wartet, bis die App beendet ist, benennt das Bundle um und startet es unter dem neuen Pfad.
+// Klappt das Umbenennen nicht, startet die App unter dem alten Pfad und versucht es in diesem
+// Lauf nicht erneut.
+const RENAME_SCRIPT = `
+pid="$1"; from="$2"; to="$3"
+i=0
+while kill -0 "$pid" 2>/dev/null; do
+  i=$((i + 1))
+  if [ "$i" -gt 600 ]; then echo "App wurde nicht beendet, Umbenennen abgebrochen"; exit 1; fi
+  sleep 0.1
+done
+set --
+[ -n "$TE_USER_DATA_DIR" ] && set -- --env "TE_USER_DATA_DIR=$TE_USER_DATA_DIR"
+if [ ! -e "$to" ] && mv "$from" "$to"; then
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$to" 2>/dev/null
+  echo "App umbenannt: $to"
+  open "$@" "$to"
+else
+  echo "App ließ sich nicht in $to umbenennen, sie bleibt unter $from"
+  open "$@" --env PLENUM_KEEP_BUNDLE_NAME=1 "$from"
+fi
+`
+
+// Startet das Skript, das die beendete App nach `target` verschiebt und neu öffnet. Liefert false,
+// wenn die App sich nicht selbst verschieben kann. Dann läuft sie unter dem alten Namen weiter.
+export function renameBundleAfterQuit(target: string): boolean {
+  if (process.env.PLENUM_KEEP_BUNDLE_NAME) return false
+  const bundle = currentBundlePath()
+  if (bundle.includes('/AppTranslocation/') || bundle.startsWith('/Volumes/')) return false
+  try {
+    accessSync(resolve(bundle, '..'), constants.W_OK)
+    accessSync(bundle, constants.W_OK)
+  } catch {
+    return false
+  }
+  const logFile = join(app.getPath('userData'), 'logs', 'update.log')
+  const child = spawn('/bin/sh', ['-c', `{ : >>"$4"; } 2>/dev/null && exec >>"$4" 2>&1\n${RENAME_SCRIPT}`, 'sh', String(process.pid), bundle, target, logFile], {
+    detached: true,
+    stdio: 'ignore'
+  })
+  child.unref()
+  return true
+}
 
 export class Updater {
   state: UpdateState
@@ -242,7 +286,7 @@ export class Updater {
   private installBlocker(): string | null {
     const bundle = currentBundlePath()
     if (bundle.includes('/AppTranslocation/') || bundle.startsWith('/Volumes/')) {
-      return 'Verschiebe Teams Everywhere in den Ordner Programme und starte die App von dort, dann klappt das Update.'
+      return `Verschiebe ${BASE_NAME} in den Ordner Programme und starte die App von dort, dann klappt das Update.`
     }
     try {
       accessSync(resolve(bundle, '..'), constants.W_OK)
@@ -323,8 +367,8 @@ function removeStaleDownloads(): void {
   }
 }
 
-// /Applications/Teams Everywhere.app/Contents/MacOS/Teams Everywhere -> /Applications/Teams Everywhere.app
-function currentBundlePath(): string {
+// /Applications/Plenum.app/Contents/MacOS/Plenum -> /Applications/Plenum.app
+export function currentBundlePath(): string {
   return resolve(app.getPath('exe'), '../../..')
 }
 

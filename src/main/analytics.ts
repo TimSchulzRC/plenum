@@ -86,7 +86,7 @@ class Analytics {
     this.dynamic = opts.dynamic
     const version = app.getVersion()
     this.base = {
-      $app_name: 'Teams Everywhere',
+      $app_name: 'Plenum',
       $app_version: version,
       app_channel: opts.variant,
       $os: osName(process.platform),

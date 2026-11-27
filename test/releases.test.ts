@@ -6,17 +6,17 @@ function release(tag: string, opts: { prerelease?: boolean; draft?: boolean; arc
   const version = tag.replace(/^v/, '')
   return {
     tag_name: tag,
-    html_url: `https://github.com/TimSchulzRC/teams-everywhere/releases/tag/${tag}`,
+    html_url: `https://github.com/TimSchulzRC/plenum/releases/tag/${tag}`,
     draft: opts.draft ?? false,
     prerelease: opts.prerelease ?? version.includes('-'),
     assets: [
       ...(opts.arches ?? ['arm64', 'x64']).map((arch) => ({
-        name: `Teams-Everywhere-${version}-mac-${arch}.zip`,
+        name: `Plenum-${version}-mac-${arch}.zip`,
         browser_download_url: `https://example.invalid/${version}-${arch}.zip`,
         size: 1
       })),
       ...(opts.patch ? (opts.arches ?? ['arm64', 'x64']) : []).map((arch) => ({
-        name: `Teams-Everywhere-${version}-mac-${arch}-patch.zip`,
+        name: `Plenum-${version}-mac-${arch}-patch.zip`,
         browser_download_url: `https://example.invalid/${version}-${arch}-patch.zip`,
         size: 1
       })),
@@ -54,7 +54,7 @@ test('Nightly-Installation bekommt den neuesten Nightly', () => {
   const releases = [release('v0.1.0-nightly.20261118.1'), release('v0.1.0-nightly.20261119.3'), release('v0.1.0-nightly.20261119.2')]
   const c = pickUpdate(releases, '0.1.0-nightly.20261118.1', 'arm64')
   assert.equal(c?.version, '0.1.0-nightly.20261119.3')
-  assert.equal(c?.zip.name, 'Teams-Everywhere-0.1.0-nightly.20261119.3-mac-arm64.zip')
+  assert.equal(c?.zip.name, 'Plenum-0.1.0-nightly.20261119.3-mac-arm64.zip')
   assert.equal(c?.checksums?.name, 'SHA256SUMS.txt')
 })
 
@@ -77,8 +77,8 @@ test('ohne ZIP für die eigene Architektur, als Entwurf oder bei gleicher Versio
 
 test('Patch-ZIP wird mitgeliefert, wenn der Release eines für die eigene Architektur hat', () => {
   const withPatch = pickUpdate([release('v0.1.0-nightly.20261119.3', { patch: true })], '0.1.0-nightly.20261118.1', 'arm64')
-  assert.equal(withPatch?.patch?.name, 'Teams-Everywhere-0.1.0-nightly.20261119.3-mac-arm64-patch.zip')
-  assert.equal(withPatch?.zip.name, 'Teams-Everywhere-0.1.0-nightly.20261119.3-mac-arm64.zip')
+  assert.equal(withPatch?.patch?.name, 'Plenum-0.1.0-nightly.20261119.3-mac-arm64-patch.zip')
+  assert.equal(withPatch?.zip.name, 'Plenum-0.1.0-nightly.20261119.3-mac-arm64.zip')
   assert.equal(pickUpdate([release('v0.1.0-nightly.20261119.3')], '0.1.0-nightly.20261118.1', 'arm64')?.patch, null)
 })
 
@@ -88,7 +88,7 @@ test('Tags, die keine Version sind, werden übersprungen', () => {
 
 test('checksumFor liest SHA256SUMS.txt', () => {
   const hash = 'a'.repeat(64)
-  const sums = `${'b'.repeat(64)}  Teams-Everywhere-1.0.0-mac-x64.zip\n${hash}  Teams-Everywhere-1.0.0-mac-arm64.zip\n`
-  assert.equal(checksumFor(sums, 'Teams-Everywhere-1.0.0-mac-arm64.zip'), hash)
+  const sums = `${'b'.repeat(64)}  Plenum-1.0.0-mac-x64.zip\n${hash}  Plenum-1.0.0-mac-arm64.zip\n`
+  assert.equal(checksumFor(sums, 'Plenum-1.0.0-mac-arm64.zip'), hash)
   assert.equal(checksumFor(sums, 'fehlt.zip'), null)
 })

@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Sicherheitslücke melden
-    url: https://github.com/TimSchulzRC/teams-everywhere/security/advisories/new
+    url: https://github.com/TimSchulzRC/plenum/security/advisories/new
     about: Sicherheitsprobleme bitte nicht öffentlich als Issue melden.

@@ -59,7 +59,7 @@ async function download(acct: AccountService, url: string): Promise<{ data: Uint
   if (/(^|\.)sharepoint(-df)?\.com$/.test(host) || /(^|\.)(onedrive\.live\.com|1drv\.ms)$/.test(host)) {
     if (!acct.engine.tokens.findBearer('graph.microsoft.com')) {
       throw new ToolError(
-        'Für Dateien aus SharePoint und OneDrive fehlt noch ein Graph-Token der Teams-Web-App. Öffne in Teams Everywhere einmal den Kalender und versuche es dann erneut.'
+        'Für Dateien aus SharePoint und OneDrive fehlt noch ein Graph-Token der Teams-Web-App. Öffne in Plenum einmal den Kalender und versuche es dann erneut.'
       )
     }
     let item: any

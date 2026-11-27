@@ -78,12 +78,14 @@ export function channelOf(version: string): UpdateChannel {
   return /-nightly\./.test(version) ? 'nightly' : 'stable'
 }
 
+// Installationen von vor der Umbenennung suchen nach „Teams-Everywhere-…“. Der Release-Workflow
+// lädt deshalb jede ZIP zusätzlich unter dem alten Namen hoch (.github/workflows/release.yml).
 export function zipAssetName(version: string, arch: string): string {
-  return `Teams-Everywhere-${version}-mac-${arch}.zip`
+  return `Plenum-${version}-mac-${arch}.zip`
 }
 
 export function patchAssetName(version: string, arch: string): string {
-  return `Teams-Everywhere-${version}-mac-${arch}-patch.zip`
+  return `Plenum-${version}-mac-${arch}-patch.zip`
 }
 
 export function pickUpdate(releases: GithubRelease[], currentVersion: string, arch: string): UpdateCandidate | null {

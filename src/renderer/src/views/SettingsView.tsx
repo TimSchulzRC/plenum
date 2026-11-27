@@ -264,7 +264,7 @@ const FEEDBACK_KINDS: { value: FeedbackKind; label: string }[] = [
   { value: 'other', label: 'Sonstiges' }
 ]
 
-const ISSUES_URL = 'https://github.com/TimSchulzRC/teams-everywhere/issues/new/choose'
+const ISSUES_URL = 'https://github.com/TimSchulzRC/plenum/issues/new/choose'
 
 // Problem melden oder Idee schicken, ohne GitHub-Konto. Geht als Ereignis an PostHog.
 function FeedbackSection(): JSX.Element {

@@ -1,6 +1,6 @@
 # Nutzungsdaten und Fehlerberichte
 
-Teams Everywhere sendet anonyme Nutzungsdaten und Fehlerberichte an [PostHog](https://posthog.com), ein Analysewerkzeug mit Rechenzentrum in der EU. Damit sehe ich, welche Funktionen genutzt werden, wo Anrufe scheitern und welche Fehler bei wem auftreten.
+Plenum sendet anonyme Nutzungsdaten und Fehlerberichte an [PostHog](https://posthog.com), ein Analysewerkzeug mit Rechenzentrum in der EU. Damit sehe ich, welche Funktionen genutzt werden, wo Anrufe scheitern und welche Fehler bei wem auftreten.
 
 ## Wann die App sendet
 
@@ -149,10 +149,10 @@ POSTHOG_PERSONAL_API_KEY=phx_… node scripts/posthog-setup.mjs
 
 Den persönlichen API-Schlüssel legst du in PostHog unter Einstellungen › Persönliche API-Schlüssel an. Das Skript braucht Lese- und Schreibrechte für Projekte, Dashboards, Insights, Abfragen und Warnungen. Es
 
-- nimmt das Projekt „Teams Everywhere“, sonst das leere „Default project“ einer neuen Organisation (und benennt es um), sonst legt es eins an (`POSTHOG_PROJECT_ID` wählt ein anderes),
+- nimmt das Projekt „Plenum“, sonst das leere „Default project“ einer neuen Organisation (und benennt es um), sonst legt es eins an (`POSTHOG_PROJECT_ID` wählt ein anderes),
 - schaltet das Speichern von IP-Adressen, Sitzungsaufzeichnungen und Autocapture aus und zählt Tage in deutscher Zeit,
 - filtert Dev-Builds (`app_channel = dev`, auch PR-Builds) als Testkonten aus allen Auswertungen, vorhandene Testkonten-Filter bleiben,
-- legt die Dashboards „Teams Everywhere – Nutzung“ und „Teams Everywhere – Probleme und Fehler“ an,
+- legt die Dashboards „Plenum – Nutzung“ und „Plenum – Probleme und Fehler“ an,
 - schickt dir eine Mail, wenn mehr als 20 Fehler pro Stunde auftreten (`POSTHOG_ALERT_THRESHOLD`),
 - gibt Projektschlüssel und Host für den Build aus.
 

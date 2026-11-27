@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { appVariant, dataName, displayName } from '../src/main/variant.ts'
+import { appVariant, dataName, displayName, legacyDataNames } from '../src/main/variant.ts'
 
 test('nicht gepackt ist immer dev, gepackt zählt der Kanal', () => {
   assert.equal(appVariant(false, '0.1.0'), 'dev')
@@ -15,13 +15,19 @@ test('PR-Builds sind dev und haben dieselben Daten wie pnpm run dev', () => {
 })
 
 test('Nightly und Dev tragen den Kanal im Namen', () => {
-  assert.equal(displayName('stable'), 'Teams Everywhere')
-  assert.equal(displayName('nightly'), 'Teams Everywhere (nightly)')
-  assert.equal(displayName('dev'), 'Teams Everywhere (dev)')
+  assert.equal(displayName('stable'), 'Plenum')
+  assert.equal(displayName('nightly'), 'Plenum (nightly)')
+  assert.equal(displayName('dev'), 'Plenum (dev)')
 })
 
 test('nur Dev hat eigene Daten, Stable und Nightly teilen sie', () => {
-  assert.equal(dataName('stable'), 'Teams Everywhere')
-  assert.equal(dataName('nightly'), 'Teams Everywhere')
-  assert.equal(dataName('dev'), 'Teams Everywhere (dev)')
+  assert.equal(dataName('stable'), 'Plenum')
+  assert.equal(dataName('nightly'), 'Plenum')
+  assert.equal(dataName('dev'), 'Plenum (dev)')
+})
+
+test('alte Datenordner: Stable und Nightly aus Teams Everywhere, davor Teams Mac, Dev aus der alten Dev', () => {
+  assert.deepEqual(legacyDataNames('stable'), ['Teams Everywhere', 'Teams Mac'])
+  assert.deepEqual(legacyDataNames('nightly'), ['Teams Everywhere', 'Teams Mac'])
+  assert.deepEqual(legacyDataNames('dev'), ['Teams Everywhere (dev)'])
 })

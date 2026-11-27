@@ -119,7 +119,7 @@ function NoSources(): JSX.Element {
   return (
     <div className="cw-picker-empty">
       <p className="cw-muted">
-        Keine Quellen gefunden. Erlaube Teams Everywhere die Bildschirmaufnahme unter Systemeinstellungen › Datenschutz & Sicherheit › Bildschirm- & Systemaudioaufnahme (fehlt die App dort, mit „+“ hinzufügen) und starte sie danach neu.
+        Keine Quellen gefunden. Erlaube Plenum die Bildschirmaufnahme unter Systemeinstellungen › Datenschutz & Sicherheit › Bildschirm- & Systemaudioaufnahme (fehlt die App dort, mit „+“ hinzufügen) und starte sie danach neu.
       </p>
       <Button size="small" onClick={() => void api.openScreenCaptureSettings()}>
         Systemeinstellungen öffnen

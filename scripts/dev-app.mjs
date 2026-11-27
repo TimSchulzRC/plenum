@@ -1,7 +1,7 @@
 // Läuft vor `pnpm run dev` und `pnpm start`. Im Dev-Modus läuft die App als Electron.app aus
 // node_modules. Name, Bundle-ID und Icon nimmt macOS aus deren Info.plist und Resources,
 // app.setName und app.dock.setIcon ändern daran nichts. Das Skript macht daraus
-// „Teams Everywhere (dev)“ mit eigener Bundle-ID und dem Dev-Icon:
+// „Plenum (dev)“ mit eigener Bundle-ID und dem Dev-Icon:
 // - Dock, Finder und Mitteilungen zeigen das Dev-Icon, schon bevor die App läuft.
 // - macOS fragt die Mitteilungen für Dev getrennt von der installierten App ab.
 // Danach signiert es das Bundle ad hoc neu. Ohne gültige Signatur lehnt macOS die
@@ -13,7 +13,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const NAME = 'Teams Everywhere (dev)'
+const NAME = 'Plenum (dev)'
 const BUNDLE_ID = 'io.github.timschulzrc.teamseverywhere.dev'
 const LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 

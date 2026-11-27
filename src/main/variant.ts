@@ -2,7 +2,7 @@
 // Ohne Electron-Abhängigkeiten, damit `pnpm test` die Logik direkt prüfen kann.
 export type AppVariant = 'stable' | 'nightly' | 'dev'
 
-export const BASE_NAME = 'Teams Everywhere'
+export const BASE_NAME = 'Plenum'
 
 // Nicht gepackt heißt `pnpm run dev` oder `pnpm start` aus einem Checkout. Gepackt mit
 // „-dev.“ in der Version ist ein Build aus einem Pull Request (.github/workflows/pr-build.yml),
@@ -24,4 +24,10 @@ export function displayName(variant: AppVariant): string {
 // Versionen und PR-Builds hinweg dieselben bleiben.
 export function dataName(variant: AppVariant): string {
   return variant === 'dev' ? `${BASE_NAME} (dev)` : BASE_NAME
+}
+
+// Datenordner aus der Zeit vor der Umbenennung, der neueste zuerst. Bis November 2026 hieß die
+// App „Teams Everywhere“, davor „Teams Mac“. Der erste vorhandene zieht einmalig um.
+export function legacyDataNames(variant: AppVariant): string[] {
+  return variant === 'dev' ? ['Teams Everywhere (dev)'] : ['Teams Everywhere', 'Teams Mac']
 }

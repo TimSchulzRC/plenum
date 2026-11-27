@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, powerMonitor, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { AccountService, type AccountRecord, type NotifyPayload } from './account'
 import { copyLoginCookies, engineSession } from './engine/engine'
 import { CallManager } from './calls'
@@ -9,11 +10,11 @@ import { imageAction } from './image-actions'
 import { chooseFolder, deliverAttachment, downloadsDir, saveAttachmentsTo, showSavedFile, type AttachmentFile } from './mail-files'
 import { store } from './store'
 import { createMainWindow, uiWindows } from './windows'
-import { Updater } from './updater'
+import { currentBundlePath, renameBundleAfterQuit, Updater } from './updater'
 import { log } from './log'
-import { migrateLegacyUserData } from './legacy-data'
+import { migrateLegacyUserData, renamedBundlePath } from './legacy-data'
 import { LiveNotifications } from './live-notifications'
-import { appVariant, dataName, displayName } from './variant'
+import { appVariant, dataName, displayName, legacyDataNames } from './variant'
 import { analytics } from './analytics'
 import { setupCrashReporting, setupUiAnalytics, trackApiCall, trackApiFailure, trackFocus, usageContext, watchAccount } from './usage'
 import { dockBadge } from '@shared/badge'
@@ -43,15 +44,31 @@ const variant = appVariant(app.isPackaged, app.getVersion())
 const appName = displayName(variant)
 app.setName(dataName(variant))
 
-// Bis zur Umbenennung hieß die App „Teams Mac“. Der alte Datenordner enthält
-// Konten, Einstellungen und die Anmeldungen (Partitions) und zieht einmalig um.
+// Bis November 2026 hieß die App „Teams Everywhere“, davor „Teams Mac“. Der alte Datenordner
+// enthält Konten, Einstellungen und die Anmeldungen (Partitions) und zieht einmalig um.
 // TE_USER_DATA_DIR startet die App mit einem eigenen Datenordner, z. B. zum Testen von Updates.
 const customUserDataDir = process.env.TE_USER_DATA_DIR
 const userDataDir = customUserDataDir || join(app.getPath('appData'), dataName(variant))
-const migration = customUserDataDir || variant === 'dev' ? 'none' : migrateLegacyUserData(join(app.getPath('appData'), 'Teams Mac'), userDataDir)
-// Läuft „Teams Mac“ noch, startet die App nur kurz mit einem Wegwerf-Ordner, meldet das und beendet sich.
-// So entsteht der neue Ordner nicht leer, und der Umzug klappt beim nächsten Start.
-app.setPath('userData', migration === 'legacy-running' ? join(app.getPath('temp'), 'teams-everywhere-waiting') : userDataDir)
+const legacyDataDir = customUserDataDir
+  ? undefined
+  : legacyDataNames(variant)
+      .map((name) => join(app.getPath('appData'), name))
+      .find((dir) => existsSync(dir))
+const migration = legacyDataDir ? migrateLegacyUserData(legacyDataDir, userDataDir) : 'none'
+// Läuft die alte App noch, startet die App nur kurz mit einem Wegwerf-Ordner, meldet das und beendet sich.
+// So entsteht der neue Ordner nicht leer, und der Umzug klappt beim nächsten Start. Scheitert das
+// Verschieben, bleibt die App vorerst im alten Ordner und versucht es beim nächsten Start wieder.
+// Hat ein gleichzeitiger Start den Ordner schon verschoben, gilt der neue.
+const failedDir = migration === 'failed' && !existsSync(userDataDir) ? legacyDataDir : undefined
+app.setPath('userData', migration === 'legacy-running' ? join(app.getPath('temp'), 'plenum-waiting') : (failedDir ?? userDataDir))
+
+// Das erste Update auf Plenum installiert noch der Updater von Teams Everywhere, unter dem alten
+// Pfad. Dann beendet sich die App, ein Skript benennt das Bundle um und startet es neu.
+// Bundle-ID, Datenordner und Mitteilungsrechte bleiben dabei gleich.
+if (app.isPackaged && process.platform === 'darwin' && variant !== 'dev' && migration !== 'legacy-running') {
+  const target = renamedBundlePath(currentBundlePath(), appName)
+  if (target && renameBundleAfterQuit(target)) app.exit(0)
+}
 
 registerMediaScheme()
 
@@ -59,7 +76,8 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 }
 
-// build.appId in package.json
+// build.appId in package.json. Sie stammt noch aus der Zeit als „Teams Everywhere“ und bleibt:
+// Der Updater nimmt nur Bundles mit derselben ID an, und macOS knüpft Mitteilungen daran.
 const BUNDLE_ID = 'io.github.timschulzrc.teamseverywhere'
 
 let mainWindow: BrowserWindow | null = null
@@ -453,7 +471,7 @@ function startMcp(): void {
     }
   }))
   const protocol = new McpProtocol(
-    { name: variant === 'dev' ? 'teams-everywhere-dev' : 'teams-everywhere', title: appName, version: app.getVersion(), instructions: SERVER_INSTRUCTIONS },
+    { name: variant === 'dev' ? 'plenum-dev' : 'plenum', title: appName, version: app.getVersion(), instructions: SERVER_INSTRUCTIONS },
     tools,
     (tool, err) => {
       log.warn(`[mcp] ${tool} fehlgeschlagen`, err.message)
@@ -470,7 +488,7 @@ function startMcp(): void {
   mcp = new McpServer({
     file: join(app.getPath('userData'), 'mcp.json'),
     defaultPort: variant === 'dev' ? 47312 : 47311,
-    name: variant === 'dev' ? 'teams-everywhere-dev' : 'teams-everywhere',
+    name: variant === 'dev' ? 'plenum-dev' : 'plenum',
     protocol,
     onChange: (info) => broadcast('mcp', info),
     log: (level, msg) => log[level](msg)
@@ -615,11 +633,12 @@ app.on('window-all-closed', () => {
 })
 
 void app.whenReady().then(() => {
-  if (migration === 'legacy-running') {
+  if (migration === 'legacy-running' && legacyDataDir) {
+    const legacyName = basename(legacyDataDir)
     dialog.showMessageBoxSync({
       type: 'warning',
-      message: 'Bitte beende zuerst „Teams Mac“',
-      detail: 'Teams Everywhere übernimmt beim ersten Start die Konten und Anmeldungen aus „Teams Mac“. Das geht nur, solange die alte App nicht läuft. Beende „Teams Mac“ und starte Teams Everywhere dann erneut.'
+      message: `Bitte beende zuerst „${legacyName}“`,
+      detail: `${appName} übernimmt beim ersten Start die Konten und Anmeldungen aus „${legacyName}“. Das geht nur, solange die alte App nicht läuft. Beende „${legacyName}“ und starte ${appName} dann erneut.`
     })
     app.quit()
     return

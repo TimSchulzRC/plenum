@@ -10,7 +10,7 @@ test('Fehlertexte verlieren Mailadressen, Personen, Unterhaltungen und Tokens', 
     'member 8:orgid:2f1c9e7a-1111-4222-8333-944455556666 not found',
     'GET https://emea.ng.msg.teams.microsoft.com/v1/users/ME/conversations/19%3Ameeting_xyz%40thread.v2/messages?startTime=1&token=abc',
     'Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl',
-    'at load (/Users/tim/Projekte/teams-everywhere/out/main/index.js:12:34)'
+    'at load (/Users/tim/Projekte/plenum/out/main/index.js:12:34)'
   ].join('\n')
   const out = scrubText(raw)
   assert.doesNotMatch(out, /mustermann|firma\.de/)
@@ -42,7 +42,7 @@ test('JSON.parse-Fehler verlieren die zitierte Eingabe', () => {
 })
 
 test('Zitierte Pfade aus fs-Fehlern fallen weg, Stackframes bleiben', () => {
-  const out = scrubText("ENAMETOOLONG: name too long, open '/Users/max/Library/Application Support/Teams Everywhere/mcp/Angebot Müller GmbH.pdf'\n    at saveMcpFile (/Applications/Teams Everywhere.app/Contents/Resources/app.asar/out/main/index.js:120:7)")
+  const out = scrubText("ENAMETOOLONG: name too long, open '/Users/max/Library/Application Support/Plenum/mcp/Angebot Müller GmbH.pdf'\n    at saveMcpFile (/Applications/Plenum.app/Contents/Resources/app.asar/out/main/index.js:120:7)")
   assert.doesNotMatch(out, /Angebot|Müller/)
   assert.match(out, /open '<path>'/)
   assert.match(out, /app\.asar\/out\/main\/index\.js:120:7/)

@@ -1,4 +1,4 @@
-// Richtet das PostHog-Projekt für Teams Everywhere ein: Projekteinstellungen, Dashboards
+// Richtet das PostHog-Projekt für Plenum ein: Projekteinstellungen, Dashboards
 // „Nutzung“ und „Probleme und Fehler“ mit ihren Insights und eine Warnung bei vielen Fehlern.
 // Läuft beliebig oft: Vorhandenes wird aktualisiert, nichts doppelt angelegt.
 //
@@ -7,14 +7,14 @@
 // Umgebung:
 //   POSTHOG_PERSONAL_API_KEY  persönlicher API-Schlüssel (PostHog › Einstellungen › Personal API keys)
 //   POSTHOG_API_HOST          https://eu.posthog.com (Standard) oder https://us.posthog.com
-//   POSTHOG_PROJECT_ID        Projekt-ID. Ohne: das Projekt „Teams Everywhere“, sonst wird es angelegt.
+//   POSTHOG_PROJECT_ID        Projekt-ID. Ohne: das Projekt „Plenum“, sonst wird es angelegt.
 //   POSTHOG_ALERT_THRESHOLD   Fehler pro Stunde, ab denen PostHog eine Mail schickt (Standard 20, 0 = keine Warnung)
 //
 // Was die App sendet, steht in docs/analytics.md.
 
 const KEY = process.env.POSTHOG_PERSONAL_API_KEY
 const HOST = (process.env.POSTHOG_API_HOST || 'https://eu.posthog.com').replace(/\/$/, '')
-const PROJECT_NAME = 'Teams Everywhere'
+const PROJECT_NAME = 'Plenum'
 const ALERT_THRESHOLD = Number(process.env.POSTHOG_ALERT_THRESHOLD ?? 20)
 
 if (!KEY) {
@@ -90,7 +90,7 @@ const ACTIVE = 'app_focused'
 
 const DASHBOARDS = [
   {
-    name: 'Teams Everywhere – Nutzung',
+    name: 'Plenum – Nutzung',
     description: 'Wer die App nutzt, wie oft und welche Funktionen. Dev-Builds sind ausgefiltert. Ereignisse: docs/analytics.md im Repo.',
     insights: [
       {
@@ -197,7 +197,7 @@ const DASHBOARDS = [
     ]
   },
   {
-    name: 'Teams Everywhere – Probleme und Fehler',
+    name: 'Plenum – Probleme und Fehler',
     description: 'Fehler, Abstürze, gescheiterte Aufrufe und Feedback. Details zu einzelnen Fehlern: Error tracking. Dev-Builds sind ausgefiltert.',
     insights: [
       {
@@ -377,7 +377,7 @@ async function upsertDashboard(id, def, existingDashboards, existingInsights) {
     const ok = await validate(id, ins)
     if (!ok) continue
     const prev = existingInsights.find((i) => i.name === ins.name && !i.deleted && (i.dashboards ?? []).includes(dash.id))
-    const body = { name: ins.name, description: ins.description ?? '', query: ins.query, tags: ['teams-everywhere'], saved: true }
+    const body = { name: ins.name, description: ins.description ?? '', query: ins.query, tags: ['plenum'], saved: true }
     let saved
     if (prev) {
       saved = await api('PATCH', `/api/environments/${id}/insights/${prev.id}/`, body)
@@ -394,7 +394,7 @@ async function upsertDashboard(id, def, existingDashboards, existingInsights) {
 // Mail an die einrichtende Person, wenn die Fehler pro Stunde über der Schwelle liegen
 async function upsertAlert(id, insightId, userId) {
   if (!ALERT_THRESHOLD || !insightId) return
-  const name = `Viele Fehler in Teams Everywhere (über ${ALERT_THRESHOLD} pro Stunde)`
+  const name = `Viele Fehler in Plenum (über ${ALERT_THRESHOLD} pro Stunde)`
   const body = {
     name,
     insight: insightId,
@@ -407,7 +407,7 @@ async function upsertAlert(id, insightId, userId) {
   }
   try {
     const alerts = await listAll(`/api/environments/${id}/alerts/`)
-    const prev = alerts.find((a) => a.name?.startsWith('Viele Fehler in Teams Everywhere'))
+    const prev = alerts.find((a) => a.name?.startsWith('Viele Fehler in Plenum'))
     if (prev) await api('PATCH', `/api/environments/${id}/alerts/${prev.id}/`, body)
     else await api('POST', `/api/environments/${id}/alerts/`, body)
     console.log(`Warnung ${prev ? 'aktualisiert' : 'angelegt'}: ${name}`)
@@ -432,7 +432,7 @@ const hourly = { name: 'Fehler pro Stunde (Warnung)', query: trends([ev('$except
 let hourlyId
 if (await validate(id, hourly)) {
   const prev = insights.find((i) => i.name === hourly.name && !i.deleted)
-  const body = { name: hourly.name, query: hourly.query, tags: ['teams-everywhere'], saved: true }
+  const body = { name: hourly.name, query: hourly.query, tags: ['plenum'], saved: true }
   hourlyId = prev ? (await api('PATCH', `/api/environments/${id}/insights/${prev.id}/`, body)).id : (await api('POST', `/api/environments/${id}/insights/`, body)).id
 }
 await upsertAlert(id, hourlyId, me.id)

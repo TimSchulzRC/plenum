@@ -2,7 +2,7 @@
 # Packt eine fertig signierte App ohne Contents/Frameworks/*.framework in ein ZIP.
 # Die Frameworks ändern sich nur mit der Electron-Version. Der Updater übernimmt sie aus
 # der installierten App und prüft danach die Signatur des ganzen Bundles.
-# Aufruf: scripts/patch-zip.sh "release/mac-arm64/Teams Everywhere.app" release/…-patch.zip
+# Aufruf: scripts/patch-zip.sh "release/mac-arm64/Plenum.app" release/…-patch.zip
 set -eu
 app="$1"
 out="$2"
