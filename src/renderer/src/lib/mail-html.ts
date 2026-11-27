@@ -528,11 +528,19 @@ export function ownSignature(mails: MailInput[]): { html: string; text: string }
   // Bilder, die mit der Mail rausgehen
   const allowed = (url: string) => /^(?:data:image\/|https:)/i.test(url.trim())
   for (const img of div.querySelectorAll('img')) if (!allowed(img.getAttribute('src') ?? '')) img.remove()
-  // Ebenso Bilder aus CSS (background-image: url(…)) und dem alten background-Attribut
-  for (const el of div.querySelectorAll('[style]')) {
-    const style = el.getAttribute('style') ?? ''
-    const clean = style.replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi, (m, _q, url: string) => (allowed(url) ? m : 'none'))
-    if (clean !== style) el.setAttribute('style', clean)
+  // Ebenso Bilder aus CSS. Den Stil liest der CSS-Parser des Browsers (Escapes, Zeilenumbrüche, Kurzformen),
+  // dann schreibt die App ihn aus dem geparsten Ergebnis neu: Was der Parser nicht versteht, fällt weg.
+  // Eine Eigenschaft mit nicht erlaubter Quelle oder mit image-set() und Co. fällt ganz weg.
+  for (const el of div.querySelectorAll<HTMLElement>('[style]')) {
+    const css = el.style
+    for (const prop of [...css]) {
+      const value = css.getPropertyValue(prop)
+      const urls = [...value.matchAll(/url\(\s*"((?:[^"\\]|\\.)*)"\s*\)/gi)].map((m) => m[1].replace(/\\(.)/g, '$1'))
+      const other = /image-set\(|cross-fade\(|element\(|paint\(/i.test(value) || (/url\(/i.test(value) && urls.length !== (value.match(/url\(/gi) ?? []).length)
+      if (other || urls.some((u) => !allowed(u))) css.removeProperty(prop)
+    }
+    if (css.length) el.setAttribute('style', css.cssText)
+    else el.removeAttribute('style')
   }
   for (const el of div.querySelectorAll('[background]')) if (!allowed(el.getAttribute('background') ?? '')) el.removeAttribute('background')
   const html = div.innerHTML.trim()
