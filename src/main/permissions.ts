@@ -12,8 +12,7 @@ const PANES: Record<MediaPermission, string> = {
 }
 
 function status(kind: MediaPermission): PermissionState {
-  // Windows kennt Freigaben für Mikrofon und Kamera, Bildschirmaufnahme nur macOS. Linux keine.
-  if (process.platform !== 'darwin' && !(process.platform === 'win32' && kind !== 'screen')) return 'unsupported'
+  if (process.platform !== 'darwin') return 'unsupported'
   const s = systemPreferences.getMediaAccessStatus(kind)
   return s === 'unknown' ? 'unsupported' : s
 }
@@ -43,5 +42,4 @@ export async function requestPermission(kind: MediaPermission): Promise<Permissi
 
 export function openPermissionSettings(kind: MediaPermission): void {
   if (process.platform === 'darwin') void shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${PANES[kind]}`)
-  else if (process.platform === 'win32') void shell.openExternal(kind === 'camera' ? 'ms-settings:privacy-webcam' : 'ms-settings:privacy-microphone')
 }

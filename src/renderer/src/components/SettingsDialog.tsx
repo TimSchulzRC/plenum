@@ -78,12 +78,17 @@ export function SettingsDialog(): JSX.Element | null {
   const [analyticsInfo, setAnalyticsInfo] = useState<{ available: boolean; installId?: string } | null>(null)
   const [perms, setPerms] = usePermissions(page !== null, page === 'permissions')
   const dialogRef = useRef<HTMLDivElement>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
   const open = page !== null
 
   useEffect(() => {
     if (!open) return
     void api.getAnalyticsInfo().then(setAnalyticsInfo)
     const prevFocus = document.activeElement as HTMLElement | null
+    // Die App dahinter ist weder per Tab noch per focus() erreichbar
+    const overlay = overlayRef.current
+    const behind = overlay?.parentElement ? [...overlay.parentElement.children].filter((el): el is HTMLElement => el !== overlay && el instanceof HTMLElement) : []
+    for (const el of behind) el.inert = true
     dialogRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
       // Offene Dropdowns schließen sich mit Escape selbst und markieren das Ereignis
@@ -95,6 +100,7 @@ export function SettingsDialog(): JSX.Element | null {
     window.addEventListener('keydown', onKey)
     return () => {
       window.removeEventListener('keydown', onKey)
+      for (const el of behind) el.inert = false
       prevFocus?.focus?.()
     }
   }, [open])
@@ -110,6 +116,7 @@ export function SettingsDialog(): JSX.Element | null {
   return (
     <div
       className="settings-overlay"
+      ref={overlayRef}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) close()
       }}

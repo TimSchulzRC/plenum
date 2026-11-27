@@ -134,6 +134,18 @@ export const useStore = create<MainState>((set, get) => ({
   closeSettings: () => set({ settingsPage: null })
 }))
 
+// Die Unterhaltung hinter dem Einstellungsfenster gilt als nicht sichtbar: Sie markiert nichts
+// als gelesen, und ihre Mitteilungen kommen wieder. Früher ersetzte die Einstellungsseite sie ganz.
+let focusContext: { accountId?: string; conversationId?: string } = {}
+export function setConversationFocus(ctx: { accountId?: string; conversationId?: string }): void {
+  focusContext = ctx
+  if (!useStore.getState().settingsPage) window.teams.setFocusContext(ctx)
+}
+
+export function conversationVisible(): boolean {
+  return document.hasFocus() && !useStore.getState().settingsPage
+}
+
 export function useActive(): { account?: AccountInfo; snapshot?: AccountSnapshot; selection: Selection } {
   const accounts = useStore((s) => s.accounts)
   const id = useStore((s) => s.activeAccountId)
@@ -189,6 +201,9 @@ export function initStore(): void {
   if (initialized) return
   initialized = true
   trackNavigation()
+  useStore.subscribe((s, prev) => {
+    if (!s.settingsPage !== !prev.settingsPage) window.teams.setFocusContext(s.settingsPage ? {} : focusContext)
+  })
   void Promise.all([api.listAccounts(), api.getSettings(), api.getCallState()]).then(([accounts, settings, call]) => {
     const active = accounts.find((a) => a.id === settings.activeAccountId)?.id ?? accounts[0]?.id
     useStore.setState({ accounts, settings, activeAccountId: active, callState: call })
