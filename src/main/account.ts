@@ -1317,23 +1317,24 @@ export class AccountService extends EventEmitter<AccountEvents> {
   // Gleichzeitige Abrufe (Neu laden während des Zwei-Minuten-Abrufs) teilen sich einen
   private mailFoldersRun?: Promise<MailFolder[]>
 
+  // Gleichzeitig, über das Limit des Postfachs: nacheinander kostete das beim ersten Laden ein Vielfaches
   private async resolveMailKinds(): Promise<void> {
-    for (const k of WELL_KNOWN) {
-      if (this.mailKindsDone.has(k)) continue
-      try {
-        const f = await this.api.mailWellKnown(k)
-        this.mailKinds.set(String(f.id), k)
-        this.mailKindsDone.add(k)
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 404) this.mailKindsDone.add(k)
-      }
-    }
+    await Promise.all(
+      WELL_KNOWN.filter((k) => !this.mailKindsDone.has(k)).map(async (k) => {
+        try {
+          const f = await this.mailLimit.run(() => this.api.mailWellKnown(k), true)
+          this.mailKinds.set(String(f.id), k)
+          this.mailKindsDone.add(k)
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 404) this.mailKindsDone.add(k)
+        }
+      })
+    )
   }
 
   getMailFolders(): Promise<MailFolder[]> {
     this.mailFoldersRun ??= (async () => {
-      const list = await this.api.mailFolders()
-      await this.resolveMailKinds()
+      const [list] = await Promise.all([this.mailLimit.run(() => this.api.mailFolders(), true), this.resolveMailKinds()])
       const items: any[] = list?.value ?? []
       return sortFolders(items.map((f) => mapFolder(f, this.mailKinds.get(String(f.id)))))
     })().finally(() => {
@@ -1350,7 +1351,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
   }
 
   async listMail(folderId: string, next?: string): Promise<MailPage> {
-    const res = await this.api.mailMessages(folderId, next)
+    const res = await this.mailLimit.run(() => this.api.mailMessages(folderId, next), true)
     const items: any[] = res?.value ?? []
     return { items: items.map((m) => mapSummary(m, this.id)), next: res?.['@odata.nextLink'] || undefined }
   }

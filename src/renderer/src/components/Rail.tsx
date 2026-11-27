@@ -13,11 +13,14 @@ import {
   Settings24Filled
 } from '@fluentui/react-icons'
 import { Tooltip } from '@fluentui/react-components'
-import type { ComponentType } from 'react'
+import { useEffect, useMemo, type ComponentType } from 'react'
 import { chatBadge } from '@shared/badge'
 import { useActive, useStore, type View } from '../store'
 import { UpdateButton } from './UpdateButton'
 import { useMailUnread, useMailUnreadPolling } from '../lib/mail-unread'
+import { warmMail } from '../lib/mail-lists'
+import { hoverIntent } from '../lib/cache'
+import { HOVER_DELAY } from '../lib/prefetch'
 
 interface Item {
   view: View
@@ -47,6 +50,12 @@ export function Rail(): JSX.Element {
     // Die Chatliste zeigt alle Konten, also zählt der Chat-Knopf auch alle
     chat: accounts.reduce((n, a) => n + chatBadge(a), 0)
   }
+  // Beim Überfahren von „E-Mail“ Ordner und Posteingänge auffrischen, falls sie älter sind
+  const warmOnHover = useMemo(
+    () => hoverIntent(() => warmMail(useStore.getState().accounts.filter((a) => !a.parentId && a.status === 'ready').map((a) => a.id)), HOVER_DELAY),
+    []
+  )
+  useEffect(() => warmOnHover.cancel, [warmOnHover])
   return (
     <nav className="rail">
       {ITEMS.map((it) => {
@@ -59,6 +68,7 @@ export function Rail(): JSX.Element {
               className={`rail-item ${view === it.view ? 'active' : ''}`}
               aria-label={badge > 0 ? `${name}, ${badge} ungelesen` : name}
               onClick={() => useStore.getState().setView(it.view)}
+              {...(it.view === 'mail' ? { onMouseEnter: warmOnHover.onMouseEnter, onMouseLeave: warmOnHover.onMouseLeave, onMouseDown: warmOnHover.onMouseDown } : {})}
             >
               <Icon />
               {badge > 0 && <span className="rail-badge">{badge > 99 ? '99+' : badge}</span>}

@@ -24,6 +24,8 @@ import {
   pascalize,
   recipientsPatch,
   replyDraftBody,
+  tokenValid,
+  validFirst,
   wellKnownUrl,
   type MailApi,
   type MailQuery
@@ -310,9 +312,14 @@ export class TeamsApi {
   }
 
   // ---------- E-Mail: Graph, sonst Outlook (siehe mail.ts) ----------
+  // Dienste mit Token, solche mit gültigem Token zuerst. Die Web-App erneuert den Graph-Token oft lange
+  // nicht: Mit abgelaufenem Token kostete jede Anfrage erst 401, 1,5 s Warten und einen zweiten Versuch.
   private mailApis(order: MailApi[]): MailApi[] {
     const t = this.engine.tokens
-    return order.filter((a) => (a === 'graph' ? t.has('graph') || !!t.findBearer('graph.microsoft.com') : !!t.bearerFor(OUTLOOK_AUDIENCES)))
+    const has = (a: MailApi) => (a === 'graph' ? t.has('graph') || !!t.findBearer('graph.microsoft.com') : !!t.bearerFor(OUTLOOK_AUDIENCES))
+    const valid = (a: MailApi) =>
+      tokenValid(a === 'graph' ? (t.expiry('graph') ?? t.bearerExpiry(t.findBearer('graph.microsoft.com'))) : t.bearerExpiry(t.bearerFor(OUTLOOK_AUDIENCES)))
+    return validFirst(order.filter(has), valid)
   }
 
   hasMailToken(): boolean {

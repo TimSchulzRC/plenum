@@ -44,6 +44,16 @@ export class PrefetchCache<T> {
     }
   }
 
+  // Gespeicherten Wert ändern, ohne ihn frischer zu machen (z. B. als gelesen markiert)
+  update(key: string, fn: (value: T) => T): void {
+    const e = this.entries.get(key)
+    if (e) e.value = fn(e.value)
+  }
+
+  keys(): string[] {
+    return [...this.entries.keys()]
+  }
+
   // Daten behalten (für die sofortige Anzeige), aber beim nächsten Mal neu laden.
   // Eine laufende Anfrage zählt nicht mehr, weil sie den alten Stand liefern kann.
   markStale(key: string): void {

@@ -25,6 +25,14 @@ export const folderName = (api: MailApi, folder: string) => (api === 'outlook' &
 const folderRef = (api: MailApi, folder: string) => encodeURIComponent(folderName(api, folder))
 const folders = (api: MailApi) => (api === 'graph' ? 'mailFolders' : 'MailFolders')
 
+// Token gilt noch mindestens eine Minute (Ablauf unbekannt: gilt)
+export const tokenValid = (exp: number | undefined, now = Date.now()): boolean => exp === undefined || exp > now + 60_000
+
+// Dienste mit gültigem Token zuerst, die Reihenfolge sonst wie übergeben
+export function validFirst<T>(apis: T[], valid: (a: T) => boolean): T[] {
+  return [...apis.filter(valid), ...apis.filter((a) => !valid(a))]
+}
+
 export function folderListUrl(api: MailApi): string {
   return `${MAIL_BASE[api]}/${folders(api)}?$top=100&$select=${select(api, FOLDER)}`
 }

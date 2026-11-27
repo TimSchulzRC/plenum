@@ -44,6 +44,7 @@ import { accountTitle } from '@shared/accounts'
 import { accountColor, ipcErrorText } from '../lib/calendar'
 import { addressLabel, fileSize, mergeMail, withImages } from '../lib/mail'
 import { cachedMail, loadImageIndex, loadMail, prefetchMail, prefetchTop } from '../lib/mail-load'
+import { cachedFolders, cachedList, loadFolders as loadFolderList, loadList, prefetchList, updateCachedMail } from '../lib/mail-lists'
 import { HOVER_DELAY } from '../lib/prefetch'
 import { mailDocument, type ChatOptions } from '../lib/mail-html'
 import { modelRanges, modelRequest, type SigRange } from '../lib/mail-signature'
@@ -68,6 +69,8 @@ const ICONS: Record<MailFolderKind, JSX.Element> = {
 }
 
 const key = (m: { accountId: string; id: string }) => `${m.accountId}|${m.id}`
+// Den Posteingang über seinen festen Namen laden, wie „Alle Posteingänge“ und das Vorladen: eine Liste im Speicher
+const folderKey = (f: MailFolder) => (f.kind === 'inbox' ? 'inbox' : f.id)
 
 // E-Mail aller Konten. Links Ordner je Konto (bei mehreren Konten oben „Alle Posteingänge“),
 // in der Mitte die Liste, rechts Lesebereich oder Verfassen.
@@ -81,8 +84,17 @@ export function MailView(): JSX.Element {
   const color = useCallback((id: string) => accountColor(ids, id), [ids])
   const byId = useCallback((id: string) => accounts.find((a) => a.id === id), [accounts])
   const readyKey = accounts.filter((a) => a.status === 'ready').map((a) => a.id).join(',')
+  // Konten im Posteingang: verbundene und solche mit gespeicherter Liste. Verbindet sich ein Konto kurz
+  // neu, bleiben seine Mails stehen, statt dass die ganze Liste neu lädt.
+  const inboxKey = accounts
+    .filter((a) => a.status === 'ready' || cachedList(a.id, 'inbox'))
+    .map((a) => a.id)
+    .join(',')
 
-  const [folders, setFolders] = useState<Record<string, { list?: MailFolder[]; error?: string }>>({})
+  // Gespeicherte Ordner sofort, abgeglichen wird danach
+  const [folders, setFolders] = useState<Record<string, { list?: MailFolder[]; error?: string }>>(() =>
+    Object.fromEntries(ids.flatMap((id) => (cachedFolders(id) ? [[id, { list: cachedFolders(id) }]] : [])))
+  )
   const [collapsed, setCollapsed] = useState<string[]>([])
   const [sel, setSel] = useState<Sel>(() =>
     accounts.length > 1 ? { kind: 'all' } : { kind: 'folder', accountId: accounts[0]?.id ?? '', folderId: 'inbox', name: 'Posteingang', folderKind: 'inbox' }
@@ -93,11 +105,10 @@ export function MailView(): JSX.Element {
   const [compose, setCompose] = useState<ComposeState | null>(null)
   const [reload, setReload] = useState(0)
 
-  // Ordner aller Konten, beim Öffnen und alle zwei Minuten
-  const loadFolders = useCallback(() => {
+  // Ordner aller Konten, beim Öffnen (ein frischer gespeicherter Stand reicht) und alle zwei Minuten
+  const loadFolders = useCallback((force = false) => {
     for (const id of readyKey.split(',').filter(Boolean)) {
-      api
-        .getMailFolders(id)
+      loadFolderList(id, force)
         .then((list) => {
           setFolders((f) => ({ ...f, [id]: { list } }))
           const inbox = list.find((x) => x.kind === 'inbox')
@@ -109,32 +120,41 @@ export function MailView(): JSX.Element {
 
   useEffect(() => {
     loadFolders()
-    const t = setInterval(loadFolders, 120_000)
+    const t = setInterval(() => loadFolders(true), 120_000)
     return () => clearInterval(t)
   }, [loadFolders])
 
   const wanted = useMemo<{ accountId: string; folderId: string }[]>(() => {
-    if (sel.kind === 'all') return readyKey.split(',').filter(Boolean).map((accountId) => ({ accountId, folderId: 'inbox' }))
+    if (sel.kind === 'all') return inboxKey.split(',').filter(Boolean).map((accountId) => ({ accountId, folderId: 'inbox' }))
     return [{ accountId: sel.accountId, folderId: sel.folderId }]
-  }, [sel, readyKey])
+  }, [sel, inboxKey])
   const wantedKey = wanted.map((w) => `${w.accountId}:${w.folderId}`).join(',')
 
-  // Liste laden. Alle 60 Sekunden die erste Seite neu, schon nachgeladene ältere Mails bleiben.
+  // Liste laden. Gespeicherte Listen stehen sofort da, dann der aktuelle Stand (ein frischer gespeicherter
+  // reicht). Alle 60 Sekunden die erste Seite neu, schon nachgeladene ältere Mails bleiben. Nicht
+  // verbundene Konten zeigen nur ihren gespeicherten Stand.
+  const lastReload = useRef(reload)
   useEffect(() => {
     let alive = true
-    setSources(null)
-    const load = (refresh: boolean) =>
+    const ready = new Set(readyKey.split(',').filter(Boolean))
+    const stored = wanted.flatMap((w): Source[] => {
+      const p = cachedList(w.accountId, w.folderId)
+      return p ? [{ ...w, items: p.items, next: p.next }] : []
+    })
+    setSources(stored.length ? stored : null)
+    const load = (force: boolean) =>
       Promise.all(
         wanted.map((w) =>
-          api
-            .listMail(w.accountId, w.folderId)
-            .then((p): Source => ({ ...w, items: p.items, next: p.next }))
-            .catch((e): Source => ({ ...w, items: [], error: ipcErrorText(e) }))
+          !ready.has(w.accountId)
+            ? Promise.resolve(stored.find((x) => x.accountId === w.accountId && x.folderId === w.folderId) ?? { ...w, items: [], error: 'Nicht verbunden' })
+            : loadList(w.accountId, w.folderId, force)
+                .then((p): Source => ({ ...w, items: p.items, next: p.next }))
+                .catch((e): Source => ({ ...w, items: [], error: ipcErrorText(e) }))
         )
       ).then((fresh) => {
         if (!alive) return
         setSources((prev) => {
-          if (!refresh || !prev) return fresh
+          if (!prev) return fresh
           return fresh.map((f) => {
             const old = prev.find((p) => p.accountId === f.accountId && p.folderId === f.folderId)
             if (!old || f.error) return old ?? f
@@ -144,14 +164,16 @@ export function MailView(): JSX.Element {
           })
         })
       })
-    void load(false)
+    // Neu laden (Knopf) holt immer den aktuellen Stand
+    void load(reload !== lastReload.current)
+    lastReload.current = reload
     const t = setInterval(() => void load(true), 60_000)
     return () => {
       alive = false
       clearInterval(t)
     }
     // wantedKey fasst wanted zusammen, wanted selbst ändert sich bei jedem Render
-  }, [wantedKey, reload])
+  }, [wantedKey, reload, readyKey])
 
   const items = useMemo(() => mergeMail((sources ?? []).map((s) => s.items)), [sources])
   // Die obersten Mails vorladen (ohne Bilder), dann öffnen sie sofort
@@ -162,7 +184,26 @@ export function MailView(): JSX.Element {
   }, [topKey])
   // Beim Überfahren einer Mail in der Liste: nach kurzer Pause vorladen, beim Drücken sofort
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => clearTimeout(hoverTimer.current), [])
+  const folderTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(
+    () => () => {
+      clearTimeout(hoverTimer.current)
+      clearTimeout(folderTimer.current)
+    },
+    []
+  )
+  // Beim Überfahren eines Ordners seine Liste vorladen, beim Drücken sofort
+  const hoverFolder = (fn: () => unknown) => ({
+    onMouseEnter: () => {
+      clearTimeout(folderTimer.current)
+      folderTimer.current = setTimeout(fn, HOVER_DELAY)
+    },
+    onMouseLeave: () => clearTimeout(folderTimer.current),
+    onMouseDown: () => {
+      clearTimeout(folderTimer.current)
+      fn()
+    }
+  })
   const hoverProps = (x: MailSummary) => ({
     onMouseEnter: () => {
       clearTimeout(hoverTimer.current)
@@ -200,11 +241,17 @@ export function MailView(): JSX.Element {
     setLoadingMore(false)
   }
 
-  const patchItem = (m: Open, patch: Partial<MailSummary>) =>
-    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: s.items.map((i) => (i.id === m.id ? { ...i, ...patch } : i)) })))
+  const patchItem = (m: Open, patch: Partial<MailSummary>) => {
+    const fn = (items: MailSummary[]) => items.map((i) => (i.id === m.id ? { ...i, ...patch } : i))
+    updateCachedMail(m.accountId, fn)
+    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items) })))
+  }
 
-  const removeItem = (m: Open) =>
-    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: s.items.filter((i) => i.id !== m.id) })))
+  const removeItem = (m: Open) => {
+    const fn = (items: MailSummary[]) => items.filter((i) => i.id !== m.id)
+    updateCachedMail(m.accountId, fn)
+    setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items) })))
+  }
 
   // Ungelesen-Zahl im Ordner und an der Seitenleiste sofort anpassen, der nächste Abruf bestätigt sie
   const bumpUnread = (accountId: string, delta: number) => {
@@ -265,14 +312,18 @@ export function MailView(): JSX.Element {
             </button>
           </Tooltip>
           <Tooltip content="Neu laden" relationship="label">
-            <button className="icon-btn" onClick={() => (loadFolders(), setReload((n) => n + 1))}>
+            <button className="icon-btn" onClick={() => (loadFolders(true), setReload((n) => n + 1))}>
               <ArrowSync20Regular />
             </button>
           </Tooltip>
         </div>
         <div className="list-scroll">
           {multi && (
-            <button className={`folder-row ${sel.kind === 'all' ? 'selected' : ''}`} onClick={() => selectFolder({ kind: 'all' })}>
+            <button
+              className={`folder-row ${sel.kind === 'all' ? 'selected' : ''}`}
+              onClick={() => selectFolder({ kind: 'all' })}
+              {...hoverFolder(() => readyKey.split(',').filter(Boolean).forEach((id) => prefetchList(id, 'inbox')))}
+            >
               <MailInboxAll20Regular />
               <span className="name">Alle Posteingänge</span>
               <Count n={accounts.reduce((n, a) => n + (folders[a.id]?.list?.find((f) => f.kind === 'inbox')?.unread ?? 0), 0)} />
@@ -306,7 +357,8 @@ export function MailView(): JSX.Element {
                         <button
                           key={folder.id}
                           className={`folder-row ${selected ? 'selected' : ''}`}
-                          onClick={() => selectFolder({ kind: 'folder', accountId: a.id, folderId: folder.id, name: folder.name, folderKind: folder.kind })}
+                          onClick={() => selectFolder({ kind: 'folder', accountId: a.id, folderId: folderKey(folder), name: folder.name, folderKind: folder.kind })}
+                          {...hoverFolder(() => a.status === 'ready' && prefetchList(a.id, folderKey(folder)))}
                         >
                           {folder.kind ? ICONS[folder.kind] : <Folder20Regular />}
                           <span className="name">{folder.name}</span>

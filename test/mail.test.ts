@@ -15,6 +15,8 @@ import {
   pascalize,
   recipientsPatch,
   replyDraftBody,
+  tokenValid,
+  validFirst,
   sortFolders,
   textToHtml,
   unwrapSafeLink,
@@ -287,4 +289,16 @@ test('Mail mit nachgeladenen Bildern: eingebettete Anhänge fallen aus der Liste
   const after = withImages(m, { images: { 'logo@x': 'data:image/png;base64,AAA', 'unused@x': 'data:image/png;base64,BBB' }, cids: { logo: 'logo@x', unused: 'unused@x' } })
   assert.deepEqual(after.attachments.map((a) => a.id), ['unused', 'failed', 'pdf'])
   assert.equal(after.inlineImages['logo@x'], 'data:image/png;base64,AAA')
+})
+
+test('Mail-Dienste: gültiger Token zuerst, abgelaufener zuletzt', () => {
+  const now = 1_000_000
+  assert.equal(tokenValid(undefined, now), true)
+  assert.equal(tokenValid(now + 120_000, now), true)
+  assert.equal(tokenValid(now + 30_000, now), false)
+  assert.equal(tokenValid(now - 1, now), false)
+  const exp: Record<string, number> = { graph: now - 5000, outlook: now + 3_600_000 }
+  assert.deepEqual(validFirst(['graph', 'outlook'], (a) => tokenValid(exp[a], now)), ['outlook', 'graph'])
+  exp.graph = now + 3_600_000
+  assert.deepEqual(validFirst(['graph', 'outlook'], (a) => tokenValid(exp[a], now)), ['graph', 'outlook'])
 })

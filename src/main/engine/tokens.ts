@@ -219,6 +219,13 @@ export class TokenStore {
     return best?.token
   }
 
+  // Ablauf eines Tokens aus dieser Sammlung (ms), undefined wenn unbekannt
+  bearerExpiry(token: string | undefined): number | undefined {
+    if (!token) return undefined
+    for (const t of this.bearers.values()) if (t.token === token) return t.exp
+    return decodeJwt(token)?.exp
+  }
+
   expiry(family: Family): number | undefined {
     const h = this.headersFor(family)
     const auth = h['authorization']
