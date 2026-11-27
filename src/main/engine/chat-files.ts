@@ -1,16 +1,21 @@
-// Dateien an Chatnachrichten, wie die Teams-Web-App sie schickt: Die Datei geht über die OneDrive-API
-// (SharePoint `_api/v2.0`) ins eigene OneDrive (Chats) oder in den Dateiordner des Kanals, wird für die
-// Chatmitglieder freigegeben, und die Nachricht verweist in properties.files darauf.
+// Dateien an Chatnachrichten: Die Datei geht über Graph ins eigene OneDrive (Chats) oder in den
+// Dateiordner des Kanals, wird im Chat für die Mitglieder freigegeben, und die Nachricht verweist in
+// properties.files darauf, mit denselben Feldern wie in der Teams-Web-App. Deren Graph-Token darf das
+// (Files.ReadWrite.All, Sites.ReadWrite.All).
 // Ohne Electron-Abhängigkeit, damit die Tests die Datei direkt laden können.
 
+export const GRAPH = 'https://graph.microsoft.com/v1.0'
+
 // Ordner im OneDrive, den Teams für Chatdateien anlegt. Der Name hängt von der Sprache ab, in der
-// Teams ihn zuerst angelegt hat. Ein vorhandener Ordner gewinnt, sonst der englische.
+// Teams ihn zuerst angelegt hat. Ein vorhandener Ordner gewinnt, sonst der erste.
 export const CHAT_FILES_FOLDERS = ['Microsoft Teams-Chatdateien', 'Microsoft Teams Chat Files']
 
-// Bis hierhin ein einzelnes PUT, wie in der Web-App (Quick-Upload), darüber eine Upload-Session
-export const SIMPLE_UPLOAD_MAX = 10 * 1024 * 1024
+// Bis hierhin ein einzelnes PUT (Graph-Grenze 4 MB), darüber eine Upload-Session
+export const SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024
 // Teile einer Upload-Session müssen ein Vielfaches von 320 KiB sein
 export const CHUNK_BYTES = 320 * 1024 * 32
+
+const ITEM_FIELDS = '$select=id,name,webUrl,webDavUrl,eTag,size,parentReference,sharepointIds'
 
 export interface DriveItem {
   id: string
@@ -23,8 +28,8 @@ export interface DriveItem {
   sharepointIds?: { listItemUniqueId?: string; siteUrl?: string }
 }
 
-// Aufruf an die SharePoint-Site mit deren Token. Wirft bei Fehlern (mit status).
-export interface SiteRequest {
+// Graph-Aufruf mit dem Token der Web-App. Wirft bei Fehlern (mit status).
+export interface GraphRequest {
   (url: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }): Promise<any>
 }
 
@@ -33,31 +38,10 @@ export interface ChunkPut {
   (url: string, body: Uint8Array, headers: Record<string, string>): Promise<any>
 }
 
-// Wo die Datei landet: Site (mit / am Ende) und Ordner relativ zur Dokumentbibliothek
-export interface UploadTarget {
-  siteUrl: string
-  folder: string
-}
+// Zielordner als Graph-Adresse: ein Ordner per ID (Kanal) oder ein Pfad unter der OneDrive-Wurzel (Chat)
+export type UploadTarget = { driveId: string; folderId: string } | { rootPath: string }
 
-export function withSlash(url: string): string {
-  return url.endsWith('/') ? url : `${url}/`
-}
-
-// personalFileSite aus chatsvc /v1/users/ME/properties (JSON-String oder Objekt)
-export function personalSiteUrl(props: any): string | undefined {
-  let site = props?.personalFileSite
-  if (typeof site === 'string') {
-    try {
-      site = JSON.parse(site)
-    } catch {
-      return undefined
-    }
-  }
-  const url = site?.personalSiteUrl
-  return typeof url === 'string' && /^https:\/\//i.test(url) ? withSlash(url) : undefined
-}
-
-// Zeichen, die SharePoint in Dateinamen ablehnt, ersetzen
+// Zeichen, die OneDrive in Dateinamen ablehnt, ersetzen
 export function driveFileName(name: string): string {
   const clean = name
     .replace(/["*:<>?/\\|]/g, '_')
@@ -82,35 +66,58 @@ export function encodeDrivePath(path: string): string {
     .join('/')
 }
 
-function itemUrl(target: UploadTarget, name: string): string {
-  return `${target.siteUrl}_api/v2.0/drive/root:/${encodeDrivePath(`${target.folder}/${name}`)}:`
+export function itemAddress(target: UploadTarget, name: string): string {
+  if ('rootPath' in target) return `${GRAPH}/me/drive/root:/${encodeDrivePath(`${target.rootPath}/${name}`)}:`
+  return `${GRAPH}/drives/${encodeURIComponent(target.driveId)}/items/${encodeURIComponent(target.folderId)}:/${encodeDrivePath(name)}:`
 }
 
-const SELECT = '$select=*,sharepointIds,webDavUrl'
+// Chatordner im OneDrive: der vorhandene, sonst der erste (Graph legt ihn beim Hochladen an)
+export async function chatFilesTarget(graph: GraphRequest): Promise<UploadTarget> {
+  for (const folder of CHAT_FILES_FOLDERS) {
+    try {
+      await graph(`${GRAPH}/me/drive/root:/${encodeDrivePath(folder)}?$select=id`)
+      return { rootPath: folder }
+    } catch (e) {
+      if ((e as { status?: number }).status !== 404) throw e
+    }
+  }
+  return { rootPath: CHAT_FILES_FOLDERS[0] }
+}
+
+// Dateiordner eines Kanals (liegt in der SharePoint-Site des Teams bzw. des privaten Kanals)
+export async function channelFilesTarget(graph: GraphRequest, groupId: string, channelId: string): Promise<UploadTarget> {
+  const f = (await graph(`${GRAPH}/teams/${encodeURIComponent(groupId)}/channels/${encodeURIComponent(channelId)}/filesFolder?$select=id,parentReference`)) as DriveItem
+  if (!f?.id || !f.parentReference?.driveId) throw new Error('Teams hat für diesen Kanal keinen Dateiordner geliefert')
+  return { driveId: f.parentReference.driveId, folderId: f.id }
+}
 
 // Lädt die Datei hoch. Bei gleichem Namen legt OneDrive eine Kopie mit Nummer an.
-export async function uploadDriveFile(request: SiteRequest, put: ChunkPut, target: UploadTarget, name: string, data: Uint8Array): Promise<DriveItem> {
-  const url = itemUrl(target, driveFileName(name))
+export async function uploadDriveFile(graph: GraphRequest, put: ChunkPut, target: UploadTarget, name: string, data: Uint8Array): Promise<DriveItem> {
+  const url = itemAddress(target, driveFileName(name))
+  let done: DriveItem
   if (data.byteLength <= SIMPLE_UPLOAD_MAX) {
-    return (await request(`${url}/content?@name.conflictBehavior=rename&${SELECT}`, {
+    done = (await graph(`${url}/content?@microsoft.graph.conflictBehavior=rename`, {
       method: 'PUT',
       body: data,
       headers: { 'content-type': 'application/octet-stream' }
     })) as DriveItem
+  } else {
+    const session = (await graph(`${url}/createUploadSession`, {
+      method: 'POST',
+      body: { item: { '@microsoft.graph.conflictBehavior': 'rename' } }
+    })) as { uploadUrl?: string }
+    if (!session?.uploadUrl) throw new Error('OneDrive hat keine Upload-Adresse geliefert')
+    let last: any
+    for (let start = 0; start < data.byteLength; start += CHUNK_BYTES) {
+      const end = Math.min(start + CHUNK_BYTES, data.byteLength)
+      last = await put(session.uploadUrl, data.subarray(start, end), { 'content-range': `bytes ${start}-${end - 1}/${data.byteLength}` })
+    }
+    done = last as DriveItem
   }
-  const session = (await request(`${url}/createUploadSession`, {
-    method: 'POST',
-    body: { item: { '@name.conflictBehavior': 'rename' } }
-  })) as { uploadUrl?: string }
-  if (!session?.uploadUrl) throw new Error('OneDrive hat keine Upload-Adresse geliefert')
-  let last: any
-  for (let start = 0; start < data.byteLength; start += CHUNK_BYTES) {
-    const end = Math.min(start + CHUNK_BYTES, data.byteLength)
-    last = await put(session.uploadUrl, data.subarray(start, end), { 'content-range': `bytes ${start}-${end - 1}/${data.byteLength}` })
-  }
-  if (!last?.id) throw new Error('OneDrive hat den Upload nicht bestätigt')
-  // Die Antwort der Session kennt webDavUrl und sharepointIds nicht
-  return (await request(`${target.siteUrl}_api/v2.0/drives/${encodeURIComponent(last.parentReference?.driveId ?? '')}/items/${encodeURIComponent(last.id)}?${SELECT}`)) as DriveItem
+  const driveId = done?.parentReference?.driveId
+  if (!done?.id || !driveId) throw new Error('OneDrive hat den Upload nicht bestätigt')
+  // Die Upload-Antwort kennt webDavUrl und sharepointIds nicht
+  return (await graph(`${GRAPH}/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(done.id)}?${ITEM_FIELDS}`)) as DriveItem
 }
 
 // GUID der Datei in SharePoint, so referenziert Teams Dateien
@@ -121,7 +128,7 @@ export function itemGuid(item: DriveItem): string {
 
 export type InviteRecipient = { objectId: string } | { email: string }
 
-// Empfänger für die Freigabe: Mailadresse, wenn bekannt, sonst die Objekt-ID aus der MRI (8:orgid:<oid>)
+// Empfänger der Freigabe: Mailadresse, wenn bekannt, sonst die Objekt-ID aus der MRI (8:orgid:<oid>)
 export function inviteRecipients(members: { mri: string; email?: string }[]): InviteRecipient[] {
   const out: InviteRecipient[] = []
   for (const m of members) {
@@ -134,28 +141,44 @@ export function inviteRecipients(members: { mri: string; email?: string }[]): In
   return out
 }
 
-// Freigabe für die Chatmitglieder, wie die Web-App sie anlegt. Gibt den Freigabelink zurück.
-export async function inviteMembers(request: SiteRequest, siteUrl: string, item: DriveItem, recipients: InviteRecipient[]): Promise<{ shareUrl?: string; shareId?: string }> {
+// Freigabe für die Chatmitglieder ohne Mail an sie. Teams gibt Chatdateien zum Bearbeiten frei.
+export async function inviteMembers(graph: GraphRequest, item: DriveItem, recipients: InviteRecipient[]): Promise<{ shareUrl?: string; shareId?: string }> {
   if (recipients.length === 0) return {}
-  const res = await request(`${siteUrl}_api/v2.0/sites/root/items/${encodeURIComponent(itemGuid(item))}/driveItem/invite`, {
+  const res = await graph(`${GRAPH}/drives/${encodeURIComponent(item.parentReference?.driveId ?? '')}/items/${encodeURIComponent(item.id)}/invite`, {
     method: 'POST',
-    headers: { prefer: 'ReturnSpecificErrorCode,getDefaultLink' },
-    body: { recipients, requireSignIn: true, sendInvitation: false }
+    body: { recipients, roles: ['write'], requireSignIn: true, sendInvitation: false }
   })
   const first = Array.isArray(res?.value) ? res.value[0] : undefined
   return { shareUrl: first?.link?.webUrl, shareId: first?.id }
 }
 
+function decoded(url: string): string {
+  try {
+    return decodeURI(url)
+  } catch {
+    return url
+  }
+}
+
+// Basis der Website (OneDrive oder Team-Site) mit Schrägstrich am Ende
+export function siteBase(item: DriveItem): string {
+  const site = item.sharepointIds?.siteUrl
+  if (site) return site.endsWith('/') ? site : `${site}/`
+  const m = (item.webUrl ?? '').match(/^(https:\/\/[^/]+\/(?:personal|sites|teams)\/[^/]+\/)/i)
+  return m ? m[1] : ''
+}
+
 // Ein Eintrag für properties.files der Chatnachricht (Feldnamen wie im Serializer der Web-App)
-export function filesEntry(item: DriveItem, siteUrl: string, opts: { shareUrl?: string; shareId?: string; channel?: boolean } = {}): Record<string, unknown> {
+export function filesEntry(item: DriveItem, opts: { shareUrl?: string; shareId?: string; channel?: boolean } = {}): Record<string, unknown> {
   const id = itemGuid(item)
   const type = fileExtension(item.name)
-  const objectUrl = item.webDavUrl || item.webUrl || ''
+  const objectUrl = decoded(item.webDavUrl || item.webUrl || '')
+  const baseUrl = siteBase(item)
   return {
     '@type': 'http://schema.skype.com/File',
     version: 2,
     id,
-    baseUrl: siteUrl,
+    baseUrl,
     type,
     title: item.name,
     state: 'active',
@@ -167,7 +190,7 @@ export function filesEntry(item: DriveItem, siteUrl: string, opts: { shareUrl?: 
     fileInfo: {
       itemId: item.id,
       fileUrl: objectUrl,
-      siteUrl,
+      siteUrl: baseUrl,
       serverRelativeUrl: '',
       shareUrl: opts.shareUrl ?? null,
       shareId: opts.shareId ?? null

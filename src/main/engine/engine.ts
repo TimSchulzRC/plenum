@@ -1,9 +1,8 @@
 import { BrowserWindow, session, shell, type Session, type WebContents } from 'electron'
 import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
-import { decodeJwt, TokenStore, type Family } from './tokens'
-import { parseRedirect, silentRequest, tokenRequestBody } from './silent-token'
-import { isTokenAudience, loginCookieToSet, mayReceiveTokens, teamsStartUrl } from './hosts'
+import { TokenStore, type Family } from './tokens'
+import { loginCookieToSet, mayReceiveTokens, teamsStartUrl } from './hosts'
 import type { AccountStatus, BridgeMessage, CallState, IncomingCall, MediaStreamInfo } from '@shared/types'
 import { log } from '../log'
 import { analytics } from '../analytics'
@@ -106,13 +105,7 @@ export class Engine extends EventEmitter<EngineEvents> {
       if (own) {
         delete details.requestHeaders[own]
         if (!mayReceiveTokens(details.url)) {
-          for (const k of Object.keys(details.requestHeaders)) {
-            if (!TOKEN_HEADERS.has(k.toLowerCase())) continue
-            // Ein SharePoint-Token geht nur an seine eigene Site
-            const v = details.requestHeaders[k]
-            const bearer = k.toLowerCase() === 'authorization' && /^bearer\s/i.test(v) ? decodeJwt(v.replace(/^bearer\s+/i, '')) : null
-            if (!isTokenAudience(bearer?.aud, details.url)) delete details.requestHeaders[k]
-          }
+          for (const k of Object.keys(details.requestHeaders)) if (TOKEN_HEADERS.has(k.toLowerCase())) delete details.requestHeaders[k]
         }
       }
       try {
@@ -432,7 +425,7 @@ export class Engine extends EventEmitter<EngineEvents> {
     headers[OWN_REQUEST_HEADER] = '1'
     // Graph und Outlook antworten mit Access-Control-Allow-Origin: *. Mit Cookies lehnt Chromium das
     // ab (net::ERR_FAILED), und sie brauchen nur den Bearer-Token.
-    const credentials = family === 'graph' || family === 'outlook' || family === 'sharepoint' ? 'omit' : 'include'
+    const credentials = family === 'graph' || family === 'outlook' ? 'omit' : 'include'
     return this.ses.fetch(url, { method: init.method ?? 'GET', headers, body, credentials } as RequestInit)
   }
 
@@ -444,66 +437,6 @@ export class Engine extends EventEmitter<EngineEvents> {
       /* ignore */
     }
     return 'https://teams.microsoft.com'
-  }
-
-  // Token für eine SharePoint-Site (Dateianhänge). Hat die Web-App selbst schon einen geholt, gilt der.
-  // Sonst still über die Anmeldung der Web-App, wie MSAL es im Browser macht.
-  private siteTokens = new Map<string, Promise<string>>()
-  async sharepointToken(origin: string): Promise<string> {
-    const have = this.tokens.bearerForOrigin(origin)
-    if (have) return have
-    let pending = this.siteTokens.get(origin)
-    if (!pending) {
-      pending = this.acquireToken(origin).finally(() => this.siteTokens.delete(origin))
-      this.siteTokens.set(origin, pending)
-    }
-    return pending
-  }
-
-  private async acquireToken(resource: string): Promise<string> {
-    const tenant = this.tokens.me.tid ?? this.opts.tenantId
-    if (!tenant) throw new Error('Teams ist noch nicht verbunden')
-    const req = silentRequest({ tenant, resource, webOrigin: this.webOrigin(), loginHint: this.tokens.me.upn ?? this.opts.loginHint })
-    const code = await new Promise<string>((resolve, reject) => {
-      const win = new BrowserWindow({ show: false, webPreferences: { session: this.ses, sandbox: true, contextIsolation: true } })
-      let done = false
-      const finish = (err?: Error, value?: string) => {
-        if (done) return
-        done = true
-        clearTimeout(timer)
-        if (!win.isDestroyed()) win.destroy()
-        if (err) reject(err)
-        else resolve(value!)
-      }
-      const timer = setTimeout(() => finish(new Error('Anmeldung für OneDrive hat nicht geantwortet')), 20_000)
-      const check = (e: { preventDefault(): void } | null, url: string) => {
-        const r = parseRedirect(url, req)
-        if (!r) return
-        e?.preventDefault()
-        if ('code' in r) finish(undefined, r.code)
-        else finish(new Error(`Anmeldung für OneDrive fehlgeschlagen (${r.error})`))
-      }
-      win.webContents.on('will-redirect', (e) => check(e, e.url))
-      win.webContents.on('will-navigate', (e) => check(e, e.url))
-      win.webContents.on('did-navigate', (_e, url) => check(null, url))
-      win.webContents.on('did-fail-load', (_e, _code, _desc, url) => check(null, url))
-      win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-      void win.loadURL(req.authorizeUrl).catch(() => undefined)
-    })
-    const res = await this.ses.fetch(req.tokenUrl, {
-      method: 'POST',
-      // Die Web-App ist eine SPA: Microsoft tauscht ihren Code nur gegen eine Anfrage mit Origin ein
-      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: this.webOrigin(), accept: 'application/json' },
-      body: tokenRequestBody(req, code),
-      credentials: 'omit'
-    } as RequestInit)
-    const json = (await res.json().catch(() => ({}))) as { access_token?: string; error?: string; error_description?: string }
-    if (!res.ok || !json.access_token) {
-      log.warn(`[engine ${this.accountId}] token for site -> ${res.status} ${json.error ?? ''} ${(json.error_description ?? '').split(/\r?\n/)[0]}`)
-      throw new Error(`Anmeldung für OneDrive fehlgeschlagen (${json.error ?? res.status})`)
-    }
-    this.tokens.addBearer(json.access_token)
-    return json.access_token
   }
 
   // Datei in ein <input type=file> der Web-App legen (z.B. eigenes Hintergrundbild).

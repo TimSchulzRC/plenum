@@ -12,8 +12,6 @@ export type Family =
   | 'substrate'
   | 'authsvc'
   | 'outlook'
-  // SharePoint/OneDrive: keine Vorlage, der Token kommt pro Site über bearerForOrigin
-  | 'sharepoint'
   | 'other'
 
 export interface CapturedRequest {
@@ -134,9 +132,14 @@ export class TokenStore {
 
     const auth = lower['authorization']
     if (auth && /^bearer\s/i.test(auth)) {
-      const info = this.addBearer(auth.replace(/^bearer\s+/i, ''))
-      if (info?.aud && info.oid && (!this.me.oid || info.aud.includes('api.spaces.skype.com') || info.aud.includes('chatsvcagg'))) {
-        this.me = { ...this.me, ...info }
+      const tok = auth.replace(/^bearer\s+/i, '')
+      const info = decodeJwt(tok)
+      if (info?.aud) {
+        const prev = this.bearers.get(info.aud)
+        if (!prev || (info.exp ?? 0) >= (prev.exp ?? 0)) this.bearers.set(info.aud, { token: tok, exp: info.exp, at: Date.now() })
+        if (info.oid && (!this.me.oid || info.aud.includes('api.spaces.skype.com') || info.aud.includes('chatsvcagg'))) {
+          this.me = { ...this.me, ...info }
+        }
       }
     }
     const skype =
@@ -162,16 +165,6 @@ export class TokenStore {
     // Basis-URL nur übernehmen, wenn die alte noch nicht gesetzt war oder sich die Region ändert.
     this.templates.set(cls.family, { family: cls.family, base: cls.base, headers: tpl, at: Date.now(), url, method })
     if (!prev || prev.base !== cls.base) this.onChange?.(cls.family)
-  }
-
-  // Bearer-Token unter seiner Audience merken (mitgelesen oder selbst geholt)
-  addBearer(tok: string): JwtInfo | null {
-    const info = decodeJwt(tok)
-    if (info?.aud) {
-      const prev = this.bearers.get(info.aud)
-      if (!prev || (info.exp ?? 0) >= (prev.exp ?? 0)) this.bearers.set(info.aud, { token: tok, exp: info.exp, at: Date.now() })
-    }
-    return info
   }
 
   has(family: Family): boolean {
@@ -222,18 +215,6 @@ export class TokenStore {
     for (const aud of auds) {
       const t = this.bearers.get(aud)
       if (t && (!best || (t.exp ?? 0) > (best.exp ?? 0))) best = t
-    }
-    return best?.token
-  }
-
-  // Token, der genau für diese Origin ausgestellt ist (SharePoint-Site) und noch eine Minute gilt
-  bearerForOrigin(origin: string): string | undefined {
-    const want = origin.replace(/\/+$/, '').toLowerCase()
-    let best: { token: string; exp?: number } | undefined
-    for (const [aud, t] of this.bearers) {
-      if (aud.replace(/\/+$/, '').toLowerCase() !== want) continue
-      if (t.exp && t.exp < Date.now() + 60_000) continue
-      if (!best || (t.exp ?? 0) > (best.exp ?? 0)) best = t
     }
     return best?.token
   }

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { Engine, enginePreloadPath } from './engine/engine'
 import { TeamsApi, ApiError, clientMessageId } from './engine/api'
 import { amsImageIds, replaceInlineImages } from './engine/ams'
-import { CHAT_FILES_FOLDERS, filesEntry, inviteMembers, inviteRecipients, personalSiteUrl, uploadDriveFile, withSlash, type UploadTarget } from './engine/chat-files'
+import { channelFilesTarget, chatFilesTarget, filesEntry, inviteMembers, inviteRecipients, uploadDriveFile, type UploadTarget } from './engine/chat-files'
 import { contentId, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN, type MailQuery } from './engine/mail'
 import { MailDirectory, mailMatches } from './engine/mail-people'
 import {
@@ -105,8 +105,8 @@ export class AccountService extends EventEmitter<AccountEvents> {
   folders: ChatFolder[] = []
   folderVersion?: number
   channelIndex = new Map<string, Channel>()
-  // Dateiordner je Kanal aus den Teamdaten (SharePoint-Site und serverrelativer Ordner)
-  private channelFiles = new Map<string, { siteUrl?: string; folder?: string }>()
+  // Gruppen-ID des Teams je Kanal, für den Dateiordner des Kanals
+  private channelGroups = new Map<string, string>()
   // Ziel für Chatdateien im eigenen OneDrive, einmal ermittelt
   private chatFilesTarget?: Promise<UploadTarget>
   people = new Map<string, Person>()
@@ -304,7 +304,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
 
     const teams: Team[] = []
     this.channelIndex.clear()
-    this.channelFiles.clear()
+    this.channelGroups.clear()
     for (const t of data?.teams ?? []) {
       const channels: Channel[] = (t.channels ?? [])
         .filter((c: any) => !c.isDeleted && c.isMember !== false)
@@ -322,10 +322,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
             description: c.description || undefined
           }
           this.channelIndex.set(ch.id, ch)
-          this.channelFiles.set(ch.id, {
-            siteUrl: c.sharepointSiteUrl || t.teamSiteInformation?.sharepointSiteUrl || undefined,
-            folder: c.defaultFileSettings?.filesRelativePath || undefined
-          })
+          if (t.teamSiteInformation?.groupId) this.channelGroups.set(ch.id, String(t.teamSiteInformation.groupId))
           return ch
         })
         .sort((a: Channel, b: Channel) => (a.isGeneral ? -1 : b.isGeneral ? 1 : a.displayName.localeCompare(b.displayName, 'de')))
@@ -1091,41 +1088,21 @@ export class AccountService extends EventEmitter<AccountEvents> {
       .sort((a: Message, b: Message) => a.time - b.time)
   }
 
-  // Ordner für Chatdateien im eigenen OneDrive: der, den Teams schon angelegt hat, sonst der englische
-  private async findChatFilesTarget(): Promise<UploadTarget> {
-    const siteUrl = personalSiteUrl(await this.api.myProperties())
-    if (!siteUrl) throw new Error('Teams hat keine OneDrive-Adresse für dieses Konto geliefert. Dateien lassen sich hier nicht anhängen.')
-    for (const folder of CHAT_FILES_FOLDERS) {
-      try {
-        await this.api.site(`${siteUrl}_api/v2.0/drive/root:/${encodeURIComponent(folder)}?$select=id`)
-        return { siteUrl, folder }
-      } catch (e) {
-        if (!(e instanceof ApiError && e.status === 404)) throw e
-      }
-    }
-    return { siteUrl, folder: CHAT_FILES_FOLDERS[CHAT_FILES_FOLDERS.length - 1] }
-  }
-
-  // Ordner eines Kanals relativ zu seiner Dokumentbibliothek
-  private async channelFilesTarget(channelId: string): Promise<UploadTarget> {
-    const info = this.channelFiles.get(channelId)
-    if (!info?.siteUrl || !info.folder) throw new Error('Teams hat für diesen Kanal keinen Dateiordner geliefert. Dateien lassen sich hier noch nicht anhängen.')
-    const siteUrl = withSlash(info.siteUrl)
-    const root = await this.api.site<{ webUrl?: string }>(`${siteUrl}_api/v2.0/drive/root?$select=webUrl`)
-    const library = root.webUrl ? decodeURIComponent(new URL(root.webUrl).pathname).replace(/\/+$/, '') : ''
-    const folder = decodeURIComponent(info.folder).replace(/\/+$/, '')
-    if (!library || !folder.toLowerCase().startsWith(`${library.toLowerCase()}/`)) throw new Error('Der Dateiordner des Kanals liegt nicht in seiner Dokumentbibliothek.')
-    return { siteUrl, folder: folder.slice(library.length + 1) }
-  }
-
   // Lädt die Dateien hoch und gibt sie im Chat für alle Mitglieder frei. Im Kanal gilt die
   // Berechtigung des Teams, dort teilt auch die Web-App nicht.
   private async uploadChatFiles(conversationId: string, files: ChatFile[]): Promise<Record<string, unknown>[]> {
     const channel = this.channelIndex.has(conversationId)
     let target: UploadTarget
-    if (channel) target = await this.channelFilesTarget(conversationId)
-    else {
-      this.chatFilesTarget ??= this.findChatFilesTarget()
+    const graph = (url: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) => this.api.files(url, init)
+    if (channel) {
+      const groupId = this.channelGroups.get(conversationId)
+      if (!groupId) throw new Error('Für diesen Kanal kennt Teams keinen Dateiordner.')
+      target = await channelFilesTarget(graph, groupId, conversationId)
+    } else {
+      this.chatFilesTarget ??= chatFilesTarget(graph).catch((e) => {
+        if (e instanceof ApiError && (e.status === 401 || e.status === 403 || e.status === 404)) throw new Error('Dieses Konto hat kein OneDrive, darum lassen sich hier keine Dateien senden.')
+        throw e
+      })
       target = await this.chatFilesTarget.catch((e) => {
         this.chatFilesTarget = undefined
         throw e
@@ -1144,21 +1121,15 @@ export class AccountService extends EventEmitter<AccountEvents> {
     }
     const out: Record<string, unknown>[] = []
     for (const f of files) {
-      const item = await uploadDriveFile(
-        (url, init) => this.api.site(url, init),
-        (url, body, headers) => this.api.uploadChunk(url, body, headers),
-        target,
-        f.name,
-        f.data
-      )
+      const item = await uploadDriveFile(graph, (url, body, headers) => this.api.uploadChunk(url, body, headers), target, f.name, f.data)
       let share: { shareUrl?: string; shareId?: string } = {}
       try {
-        share = await inviteMembers((url, init) => this.api.site(url, init), target.siteUrl, item, recipients)
+        share = await inviteMembers(graph, item, recipients)
       } catch (e) {
         log.warn(`[files] Freigabe fehlgeschlagen: ${(e as Error).message}`)
         throw new Error(`${item.name} liegt in deinem OneDrive, ließ sich aber nicht für die Chatmitglieder freigeben.`)
       }
-      out.push(filesEntry(item, target.siteUrl, { ...share, channel }))
+      out.push(filesEntry(item, { ...share, channel }))
     }
     return out
   }

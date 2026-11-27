@@ -158,20 +158,16 @@ export class TeamsApi {
   }
 
   // ---------- Dateien in OneDrive/SharePoint (Anhänge an Chatnachrichten) ----------
-  // Eigene Einstellungen im Chat-Dienst, darin personalFileSite (OneDrive-Adresse)
-  myProperties(): Promise<any> {
-    return this.json('chatsvc', this.chatsvc('/v1/users/ME/properties'))
-  }
-
-  // Aufruf an eine SharePoint-Site mit dem Token genau dieser Site
-  async site<T = any>(url: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<T> {
-    const token = await this.engine.sharepointToken(new URL(url).origin)
-    return this.json<T>('sharepoint', url, { ...init, headers: { ...(init.headers ?? {}), authorization: `Bearer ${token}` } })
+  // Graph mit dem Token der Web-App. Den bekommt sie erst einige Sekunden nach dem Start.
+  files<T = any>(url: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<T> {
+    const t = this.engine.tokens
+    if (!t.has('graph') && !t.findBearer('graph.microsoft.com')) throw new ApiError(0, 'OneDrive ist noch nicht bereit. Versuch es in einer Minute noch einmal.')
+    return this.json<T>('graph', url, init)
   }
 
   // Teil einer Upload-Session: Die Adresse ist vorsigniert und bekommt keinen Token
   uploadChunk(url: string, body: Uint8Array, headers: Record<string, string>): Promise<any> {
-    return this.json('sharepoint', url, { method: 'PUT', body, headers })
+    return this.json('other', url, { method: 'PUT', body, headers })
   }
 
   // ---------- Chat-Service-Aggregator (Teams, Kanäle, Chats) ----------
