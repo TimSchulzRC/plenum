@@ -9,6 +9,7 @@ const CLIENTS: { id: McpClient; label: string }[] = [
 ]
 
 // Einstellungen für den lokalen MCP-Server: an/aus, Befehle zum Kopieren, direkt eintragen.
+// Was der Server liest, erklärt die Einleitung des Bereichs im Einstellungsfenster.
 export function McpSettings(): JSX.Element {
   const [info, setInfo] = useState<McpInfo | null>(null)
   const [copied, setCopied] = useState<string>()
@@ -45,15 +46,8 @@ export function McpSettings(): JSX.Element {
 
   return (
     <section>
-      <h2>Claude Code und Codex</h2>
       <div className="row">
-        <div className="grow">
-          MCP-Server
-          <div className="hint">
-            Claude Code, Codex und andere MCP-Clients auf diesem Gerät lesen darüber Chats, Kanäle, geteilte Dateien, Anrufverlauf, Aktivität, Kalender und E-Mails aller Konten. Sie
-            können nichts senden oder ändern.
-          </div>
-        </div>
+        <div className="grow">MCP-Server</div>
         <Switch checked={info.enabled} onChange={(_e, d) => void api.setMcpEnabled(d.checked).then(setInfo)} />
       </div>
       {info.enabled && info.url && (

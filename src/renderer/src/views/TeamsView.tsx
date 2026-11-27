@@ -8,7 +8,7 @@ import { Composer, type ComposerHandle } from '../components/Composer'
 import { MessageItem } from '../components/MessageItem'
 import { dayLabel, listTime, sameDay } from '../lib/format'
 import { cacheKey, channelCache, fetchChannel, fetchReplies, prefetchChannel, replyCache, prefetchReplies, useHoverPrefetch } from '../lib/prefetch'
-import { personName, useActive, useStore } from '../store'
+import { conversationVisible, personName, setConversationFocus, useActive, useStore } from '../store'
 
 export function TeamsView(): JSX.Element {
   const { snapshot, selection } = useActive()
@@ -136,7 +136,7 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
       setError(undefined)
       const last = t[t.length - 1]
       const lastMsg = last ? (last.replies[last.replies.length - 1] ?? last.root) : undefined
-      if (lastMsg && document.hasFocus()) void api.markRead(accountId, channel.id, lastMsg.id).catch(() => undefined)
+      if (lastMsg && conversationVisible()) void api.markRead(accountId, channel.id, lastMsg.id).catch(() => undefined)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -148,7 +148,7 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
     setLoading(!channelCache.peek(cacheKey(accountId, channel.id)))
     stick.current = true
     void load()
-    window.teams.setFocusContext({ accountId, conversationId: channel.id })
+    setConversationFocus({ accountId, conversationId: channel.id })
     const off = onEvent('conversation-updated', (e) => {
       if (e.accountId === accountId && e.conversationIds.includes(channel.id)) void load()
     })
@@ -156,7 +156,7 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
     return () => {
       off()
       clearInterval(t)
-      window.teams.setFocusContext({})
+      setConversationFocus({})
     }
   }, [accountId, channel.id, load])
 

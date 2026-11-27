@@ -6,7 +6,7 @@ import { api, onEvent } from '../api'
 import { dayLabel, sameDay } from '../lib/format'
 import { cacheKey, fetchHorizons, fetchMessages, horizonCache, messageCache, receiptsEnabled as hasReceipts } from '../lib/prefetch'
 import { readReceipt } from '../lib/receipts'
-import { personName, useStore } from '../store'
+import { conversationVisible, personName, setConversationFocus, useStore } from '../store'
 import { AccountChip, ChatAvatar, PersonAvatar, presenceLabel } from './Avatars'
 import { Composer, type ComposerHandle, type SendPayload } from './Composer'
 import { MessageItem } from './MessageItem'
@@ -162,12 +162,12 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
   }, [accountId, chat.id, receiptsEnabled])
 
   useEffect(() => {
-    window.teams.setFocusContext({ accountId, conversationId: chat.id })
+    setConversationFocus({ accountId, conversationId: chat.id })
     stick.current = true
     setReplyTo(null)
     setEditing(null)
     setTimeout(() => composer.current?.focus(), 50)
-    return () => window.teams.setFocusContext({})
+    return () => setConversationFocus({})
   }, [accountId, chat.id])
 
   // Typing-Anzeige nach Ablauf ausblenden
@@ -177,17 +177,18 @@ export function ConversationView({ chat }: { chat: ChatSummary }): JSX.Element {
     return () => clearTimeout(t)
   }, [typing])
 
-  // Gelesen markieren
+  // Gelesen markieren, auch sobald das Einstellungsfenster davor wieder zugeht
+  const settingsOpen = useStore((s) => s.settingsPage !== null)
   useEffect(() => {
     const last = [...msgs].reverse().find((m) => !m.pending)
     if (!last || last.isMine) return
     const mark = () => {
-      if (document.hasFocus()) void api.markRead(accountId, chat.id, last.id).catch(() => undefined)
+      if (conversationVisible()) void api.markRead(accountId, chat.id, last.id).catch(() => undefined)
     }
     mark()
     window.addEventListener('focus', mark)
     return () => window.removeEventListener('focus', mark)
-  }, [msgs, accountId, chat.id])
+  }, [msgs, accountId, chat.id, settingsOpen])
 
   useLayoutEffect(() => {
     const el = scroller.current

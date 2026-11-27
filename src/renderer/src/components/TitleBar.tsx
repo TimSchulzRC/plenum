@@ -69,7 +69,7 @@ export function TitleBar(): JSX.Element {
           </MenuTrigger>
           <MenuPopover>
             <MenuList>
-              <MenuItem icon={<Settings20Regular />} onClick={() => useStore.getState().setView('settings')}>
+              <MenuItem icon={<Settings20Regular />} onClick={() => useStore.getState().openSettings()}>
                 Einstellungen
               </MenuItem>
               {account && (

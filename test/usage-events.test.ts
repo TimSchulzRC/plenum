@@ -60,6 +60,14 @@ test('Testmitteilung meldet, ob sie ankam', () => {
   assert.deepEqual(spec?.resultProps?.({ ok: false, error: 'denied' }), { ok: false, error: 'denied' })
 })
 
+test('Berechtigungen: Art und Zustand danach', () => {
+  const spec = usageFor('requestPermission', ['microphone'], ctx)
+  assert.equal(spec?.event, 'permission_requested')
+  assert.deepEqual(spec?.props, { kind: 'microphone' })
+  assert.deepEqual(spec?.resultProps?.({ microphone: 'granted', camera: 'denied', screen: 'denied' }), { state: 'granted' })
+  assert.deepEqual(usageFor('openPermissionSettings', ['screen'], ctx), { event: 'permission_settings_opened', props: { kind: 'screen' } })
+})
+
 test('Neuer Termin: nur Merkmale, nie Titel, Ort, Text oder Adressen', () => {
   const ev = { subject: 'Geheimes Projekt', start: 1, end: 2, isAllDay: false, location: 'Raum Elbe', attendees: ['kim@fabrikam.de', 'robin@fabrikam.de'], teamsMeeting: true, body: 'Agenda' }
   const spec = usageFor('createEvent', ['acc-1', ev], ctx)

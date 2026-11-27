@@ -5,6 +5,7 @@ import { api } from './api'
 import { track } from './analytics'
 import { ImageViewer } from './components/ImageViewer'
 import { Rail } from './components/Rail'
+import { SettingsDialog } from './components/SettingsDialog'
 import { UpdateButton } from './components/UpdateButton'
 import { showUpdateButton, updateStatusText } from './update'
 import { TitleBar, statusText } from './components/TitleBar'
@@ -15,7 +16,6 @@ import { CalendarView } from './views/CalendarView'
 import { CallsView } from './views/CallsView'
 import { MailView } from './views/MailView'
 import { ChatView } from './views/ChatView'
-import { SettingsView } from './views/SettingsView'
 import { TeamsView } from './views/TeamsView'
 
 initStore()
@@ -37,6 +37,7 @@ export default function MainApp(): JSX.Element {
         track('keyboard_shortcut', { shortcut: `cmd+${e.key}` })
       } else if (e.key === 'n' && !e.shiftKey) {
         e.preventDefault()
+        useStore.getState().closeSettings()
         useStore.getState().select({ newChat: true }, 'chat')
         track('keyboard_shortcut', { shortcut: 'cmd+n' })
       } else if (e.key === '[') {
@@ -56,8 +57,7 @@ export default function MainApp(): JSX.Element {
   if (accounts.length === 0) return <Welcome />
 
   let content: JSX.Element
-  if (view === 'settings') content = <SettingsView />
-  else if (view === 'mail') content = <MailView />
+  if (view === 'mail') content = <MailView />
   else if (!snapshot) content = <Loading />
   else if (view === 'chat') content = <ChatView />
   else if (view === 'teams') content = <TeamsView />
@@ -96,6 +96,7 @@ export default function MainApp(): JSX.Element {
         </div>
       </div>
       <ImageViewer />
+      <SettingsDialog />
     </div>
   )
 }
@@ -134,12 +135,13 @@ function Welcome(): JSX.Element {
           Anmelden
         </Button>
       </div>
+      <SettingsDialog />
     </div>
   )
 }
 
-// Ohne Konto gibt es keine Einstellungsseite. Hier zeigt der Willkommensbildschirm,
-// was „Nach Updates suchen …“ ergeben hat.
+// Ohne Konto gibt es keine Seitenleiste mit Update-Knopf. Hier zeigt der Willkommensbildschirm,
+// was die Suche nach Updates ergeben hat.
 function WelcomeUpdate(): JSX.Element | null {
   const update = useStore((s) => s.update)
   if (showUpdateButton(update)) return <UpdateButton />

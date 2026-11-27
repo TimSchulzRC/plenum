@@ -37,6 +37,7 @@ const ITEMS: Item[] = [
 
 export function Rail(): JSX.Element {
   const view = useStore((s) => s.view)
+  const settingsOpen = useStore((s) => s.settingsPage !== null)
   const accounts = useStore((s) => s.accounts)
   const { account } = useActive()
   useMailUnreadPolling()
@@ -50,13 +51,14 @@ export function Rail(): JSX.Element {
   return (
     <nav className="rail">
       {ITEMS.map((it) => {
-        const Icon = view === it.view ? it.active : it.icon
+        const active = view === it.view && !settingsOpen
+        const Icon = active ? it.active : it.icon
         const badge = badges[it.view] ?? 0
         const name = `${it.label} (${it.shortcut})`
         return (
           <Tooltip key={it.view} content={name} relationship="inaccessible" positioning="after">
             <button
-              className={`rail-item ${view === it.view ? 'active' : ''}`}
+              className={`rail-item ${active ? 'active' : ''}`}
               aria-label={badge > 0 ? `${name}, ${badge} ungelesen` : name}
               onClick={() => useStore.getState().setView(it.view)}
             >
@@ -69,8 +71,12 @@ export function Rail(): JSX.Element {
       <div className="rail-spacer" />
       <UpdateButton />
       <Tooltip content="Einstellungen (⌘ ,)" relationship="label" positioning="after">
-        <button className={`rail-item ${view === 'settings' ? 'active' : ''}`} onClick={() => useStore.getState().setView('settings')} style={{ marginBottom: 8 }}>
-          {view === 'settings' ? <Settings24Filled /> : <Settings24Regular />}
+        <button
+          className={`rail-item ${settingsOpen ? 'active' : ''}`}
+          onClick={() => (settingsOpen ? useStore.getState().closeSettings() : useStore.getState().openSettings())}
+          style={{ marginBottom: 8 }}
+        >
+          {settingsOpen ? <Settings24Filled /> : <Settings24Regular />}
         </button>
       </Tooltip>
     </nav>
