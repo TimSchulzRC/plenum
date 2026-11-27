@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { Engine, enginePreloadPath } from './engine/engine'
 import { TeamsApi, ApiError, clientMessageId } from './engine/api'
 import { amsImageIds, replaceInlineImages } from './engine/ams'
+import { channelFilesTarget, chatFilesTarget, filesEntry, inviteMembers, inviteRecipients, uploadDriveFile, type UploadTarget } from './engine/chat-files'
 import { contentId, mapAttachment, mapFolder, mapMessage, mapSummary, MAX_ATTACHMENT_BYTES, sortFolders, WELL_KNOWN, type MailQuery } from './engine/mail'
 import { MailDirectory, mailMatches } from './engine/mail-people'
 import {
@@ -37,6 +38,7 @@ import type {
   CallLogEntry,
   Channel,
   ChannelThread,
+  ChatFile,
   ChatFolder,
   ChatSummary,
   Message,
@@ -103,6 +105,10 @@ export class AccountService extends EventEmitter<AccountEvents> {
   folders: ChatFolder[] = []
   folderVersion?: number
   channelIndex = new Map<string, Channel>()
+  // Gruppen-ID des Teams je Kanal, für den Dateiordner des Kanals
+  private channelGroups = new Map<string, string>()
+  // Ziel für Chatdateien im eigenen OneDrive, einmal ermittelt
+  private chatFilesTarget?: Promise<UploadTarget>
   people = new Map<string, Person>()
   presence = new Map<string, Presence>()
   me?: Person
@@ -298,6 +304,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
 
     const teams: Team[] = []
     this.channelIndex.clear()
+    this.channelGroups.clear()
     for (const t of data?.teams ?? []) {
       const channels: Channel[] = (t.channels ?? [])
         .filter((c: any) => !c.isDeleted && c.isMember !== false)
@@ -315,6 +322,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
             description: c.description || undefined
           }
           this.channelIndex.set(ch.id, ch)
+          if (t.teamSiteInformation?.groupId) this.channelGroups.set(ch.id, String(t.teamSiteInformation.groupId))
           return ch
         })
         .sort((a: Channel, b: Channel) => (a.isGeneral ? -1 : b.isGeneral ? 1 : a.displayName.localeCompare(b.displayName, 'de')))
@@ -1080,12 +1088,65 @@ export class AccountService extends EventEmitter<AccountEvents> {
       .sort((a: Message, b: Message) => a.time - b.time)
   }
 
-  async sendMessage(conversationId: string, html: string, opts: { replyToId?: string; subject?: string; importance?: 'normal' | 'high' | 'urgent' } = {}): Promise<Message> {
+  // Lädt die Dateien hoch und gibt sie im Chat für alle Mitglieder frei. Im Kanal gilt die
+  // Berechtigung des Teams, dort teilt auch die Web-App nicht.
+  private async uploadChatFiles(conversationId: string, files: ChatFile[]): Promise<Record<string, unknown>[]> {
+    const channel = this.channelIndex.has(conversationId)
+    let target: UploadTarget
+    const graph = (url: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) => this.api.files(url, init)
+    if (channel) {
+      const groupId = this.channelGroups.get(conversationId)
+      if (!groupId) throw new Error('Für diesen Kanal kennt Teams keinen Dateiordner.')
+      target = await channelFilesTarget(graph, groupId, conversationId)
+    } else {
+      this.chatFilesTarget ??= chatFilesTarget(graph).catch((e) => {
+        if (e instanceof ApiError && (e.status === 401 || e.status === 403 || e.status === 404)) throw new Error('Dieses Konto hat kein OneDrive, darum lassen sich hier keine Dateien senden.')
+        throw e
+      })
+      target = await this.chatFilesTarget.catch((e) => {
+        this.chatFilesTarget = undefined
+        throw e
+      })
+    }
+    let recipients: ReturnType<typeof inviteRecipients> = []
+    // Notizen an mich selbst (48:notes) haben niemanden zum Freigeben
+    if (!channel && !conversationId.startsWith('48:')) {
+      const members = await this.api
+        .thread(conversationId)
+        .then((t) => (t?.members ?? []).map((m: any) => String(m.id)) as string[])
+        .catch(() => this.chats.get(conversationId)?.members ?? [])
+      const others = members.filter((m) => m && m !== this.record.mri)
+      recipients = inviteRecipients(others.map((mri) => ({ mri, email: this.people.get(mri)?.email })))
+      // Ohne Empfänger käme die Datei an, ließe sich aber von niemandem öffnen
+      if (!recipients.length) throw new Error('Die Mitglieder dieses Chats ließen sich nicht ermitteln, die Datei wurde nicht gesendet.')
+    }
+    const out: Record<string, unknown>[] = []
+    for (const f of files) {
+      const item = await uploadDriveFile(graph, (url, init) => this.api.uploadSession(url, init), target, f.name, f.data)
+      let share: { shareUrl?: string; shareId?: string } = {}
+      try {
+        share = await inviteMembers(graph, item, recipients)
+      } catch (e) {
+        log.warn(`[files] Freigabe fehlgeschlagen: ${(e as Error).message}`)
+        throw new Error(`${item.name} liegt in deinem OneDrive, ließ sich aber nicht für die Chatmitglieder freigeben.`)
+      }
+      out.push(filesEntry(item, { ...share, channel }))
+    }
+    return out
+  }
+
+  async sendMessage(
+    conversationId: string,
+    html: string,
+    opts: { replyToId?: string; subject?: string; importance?: 'normal' | 'high' | 'urgent'; files?: ChatFile[] } = {}
+  ): Promise<Message> {
     const cmid = clientMessageId()
     const target = opts.replyToId ? `${conversationId};messageid=${opts.replyToId}` : conversationId
     // Eingefügte Bilder kommen als data:-URL aus dem Eingabefeld und gehen vorher zu Teams
     const images = await replaceInlineImages(html, (data, mime) => this.api.uploadImage(conversationId, data, mime))
     html = images.html
+    // Dateien liegen danach im OneDrive bzw. Kanalordner, die Nachricht verweist darauf
+    const files = opts.files?.length ? await this.uploadChatFiles(conversationId, opts.files) : []
     const body = {
       content: html,
       messagetype: 'RichText/Html',
@@ -1093,7 +1154,11 @@ export class AccountService extends EventEmitter<AccountEvents> {
       amsreferences: images.ids,
       clientmessageid: cmid,
       imdisplayname: this.me?.displayName ?? this.record.displayName ?? '',
-      properties: { importance: opts.importance && opts.importance !== 'normal' ? opts.importance : '', subject: opts.subject ?? '' }
+      properties: {
+        importance: opts.importance && opts.importance !== 'normal' ? opts.importance : '',
+        subject: opts.subject ?? '',
+        ...(files.length ? { files: JSON.stringify(files) } : {})
+      }
     }
     const res = await this.api.sendMessage(target, body)
     const id = String(res?.OriginalArrivalTime ?? Date.now())
@@ -1113,7 +1178,7 @@ export class AccountService extends EventEmitter<AccountEvents> {
       subject: opts.subject || undefined,
       importance: opts.importance === 'normal' ? undefined : opts.importance,
       reactions: [],
-      attachments: [],
+      attachments: files.map((f) => ({ kind: 'file' as const, name: String(f.fileName), url: String(f.objectUrl), fileType: String(f.fileType) })),
       parentId: opts.replyToId
     }
     if (chat) {

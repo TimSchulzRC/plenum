@@ -644,7 +644,7 @@ function NewChat(): JSX.Element {
         onSend={async (p) => {
           if (!account) return
           const id = await api.createChat(account.id, picked.map((x) => x.mri), picked.length > 1 && topic.trim() ? topic.trim() : undefined)
-          await api.sendMessage(account.id, id, p.html, { importance: p.importance })
+          await api.sendMessage(account.id, id, p.html, { importance: p.importance, files: p.files })
           useStore.getState().select({ chatId: id, newChat: false }, 'chat')
           void api.refresh(account.id)
         }}

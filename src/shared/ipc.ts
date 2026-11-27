@@ -5,6 +5,7 @@ import type {
   AppSettings,
   BridgeMessage,
   CalendarEvent,
+  ChatFile,
   NewCalendarEvent,
   MailAttachmentsSaved,
   MailDraft,
@@ -55,7 +56,7 @@ export interface ApiMethods {
     accountId: string,
     conversationId: string,
     html: string,
-    opts?: { replyToId?: string; subject?: string; importance?: 'normal' | 'high' | 'urgent' }
+    opts?: { replyToId?: string; subject?: string; importance?: 'normal' | 'high' | 'urgent'; files?: ChatFile[] }
   ): Message
   editMessage(accountId: string, conversationId: string, messageId: string, html: string): void
   deleteMessage(accountId: string, conversationId: string, messageId: string): void

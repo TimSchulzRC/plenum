@@ -52,7 +52,11 @@ export class TeamsApi {
     return b
   }
 
-  async json<T = any>(family: Family, url: string, init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean } = {}): Promise<T> {
+  async json<T = any>(
+    family: Family,
+    url: string,
+    init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; omitCookies?: boolean } = {}
+  ): Promise<T> {
     let res = await this.engine.request(family, url, init)
     if (res.status === 401) {
       // Token evtl. gerade abgelaufen – kurz warten, die Web-App erneuert ihn.
@@ -155,6 +159,20 @@ export class TeamsApi {
     const skype = this.engine.tokens.skypeToken?.token
     if (!skype) throw new ApiError(0, 'Teams ist noch nicht verbunden, das Bild kann noch nicht hochgeladen werden')
     return uploadAmsImage((url, init) => this.json('ams', url, init), skype, conversationId, data, mime)
+  }
+
+  // ---------- Dateien in OneDrive/SharePoint (Anhänge an Chatnachrichten) ----------
+  // Graph mit dem Token der Web-App. Den bekommt sie erst einige Sekunden nach dem Start.
+  files<T = any>(url: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<T> {
+    const t = this.engine.tokens
+    if (!t.has('graph') && !t.findBearer('graph.microsoft.com')) throw new ApiError(0, 'OneDrive ist noch nicht bereit. Versuch es in einer Minute noch einmal.')
+    return this.json<T>('graph', url, init)
+  }
+
+  // Upload-Session (Teil hochladen, abbrechen): Die Adresse ist vorsigniert und bekommt keinen Token.
+  // Ohne Cookies, sie antwortet wie Graph mit Access-Control-Allow-Origin: *.
+  uploadSession(url: string, init: { method: string; body?: Uint8Array; headers?: Record<string, string> }): Promise<any> {
+    return this.json('other', url, { ...init, omitCookies: true })
   }
 
   // ---------- Chat-Service-Aggregator (Teams, Kanäle, Chats) ----------

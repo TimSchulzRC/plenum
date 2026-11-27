@@ -267,6 +267,13 @@ export interface MailPage {
   next?: string
 }
 
+// Datei, die mit einer Chatnachricht geht. Die Bytes gehen als Uint8Array über IPC.
+export interface ChatFile {
+  name: string
+  contentType: string
+  data: Uint8Array
+}
+
 export interface MailFile {
   name: string
   contentType: string

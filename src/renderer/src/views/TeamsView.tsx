@@ -218,7 +218,7 @@ export function ChannelView({ team, channel }: { team: Team; channel: Channel })
           withSubject
           placeholder={`Nachricht in ${channel.displayName}`}
           onSend={async (p) => {
-            await api.sendMessage(accountId, channel.id, p.html, { subject: p.subject, importance: p.importance })
+            await api.sendMessage(accountId, channel.id, p.html, { subject: p.subject, importance: p.importance, files: p.files })
             stick.current = true
             setTimeout(() => void load(), 800)
           }}
@@ -357,7 +357,7 @@ function ThreadPane({ thread, accountId, channelId, myMri, myName, names, compos
         ref={composer}
         placeholder="Im Thread antworten"
         onSend={async (p) => {
-          const msg = await api.sendMessage(accountId, channelId, p.html, { replyToId: thread.id, importance: p.importance })
+          const msg = await api.sendMessage(accountId, channelId, p.html, { replyToId: thread.id, importance: p.importance, files: p.files })
           stick.current = true
           setSent((s) => [...s, msg])
           setTimeout(onChanged, 1000)
