@@ -659,6 +659,7 @@ function MailReader({
           text: x.text,
           time: messageTime(x.at),
           files: x.files,
+          signature: x.signature,
           header: [
             `Von: ${from?.upn ?? ''}`,
             `An: ${x.to.join('; ')}`,

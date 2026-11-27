@@ -634,6 +634,48 @@ export function threadParts(lines: SigLine[], signatures: { start: number; end: 
   })
 }
 
+// ---------- Eigene Signatur aus gesendeten Mails ----------
+
+export interface SentMailLines {
+  lines: SigLine[]
+  sender?: string
+}
+
+const lineKey = (l: SigLine) => l.text || (l.image ? '[Bild]' : '')
+
+// Eigene Signatur: das Ende der eigenen Nachricht, das in mindestens zwei der letzten gesendeten Mails
+// gleich ist, ohne Grußformel (die schreibt man selbst). Neueste Mail zuerst. Findet sich keins, die
+// Signatur, die die Regeln in einer der Mails finden, mit Namenszeile. Ergebnis: Mail und Zeilen [start, end).
+export function learnSignature(mails: SentMailLines[]): { mail: number; start: number; end: number } | undefined {
+  // Nur die eigene Nachricht, ohne zitierten Verlauf
+  const own = mails.map((m) => m.lines.slice(0, partStarts(m.lines)[1] ?? m.lines.length))
+  for (let i = 0; i < own.length; i++) {
+    const a = own[i]
+    let same = 0
+    for (let j = 0; j < own.length; j++) {
+      if (j === i) continue
+      const b = own[j]
+      let k = 0
+      while (k < a.length && k < b.length && lineKey(a[a.length - 1 - k]) === lineKey(b[b.length - 1 - k])) k++
+      same = Math.max(same, k)
+    }
+    // Die erste Zeile ist Inhalt, auch wenn zwei Mails gleich lauten
+    let start = Math.max(1, a.length - same)
+    while (start < a.length && closingLine(a[start].text).closing) start++
+    const block = a.slice(start)
+    if (block.length >= 2 && block.some((l) => specific(l) || link(l)) && !block.some(prose)) return { mail: i, start, end: a.length }
+  }
+  for (let i = 0; i < own.length; i++) {
+    const r = findSignatures(mails[i].lines, mails[i].sender).find((x) => x.start < own[i].length)
+    if (!r) continue
+    let start = r.start
+    // Die Namenszeile steht über dem Bereich, den der Lesebereich einklappt
+    if (start > 1 && nameLine(own[i][start - 1])) start--
+    return { mail: i, start, end: Math.min(r.end, own[i].length) }
+  }
+  return undefined
+}
+
 // ---------- Sprachmodell (Apple Intelligence) für Teile ohne Regel-Treffer ----------
 
 export interface OpenPart {

@@ -73,7 +73,12 @@ test('Neuer Termin: nur Merkmale, nie Titel, Ort, Text oder Adressen', () => {
 test('Mail gesendet: Art und Anzahl, nie Adressen, Betreff, Text oder Dateinamen', () => {
   const draft = { to: ['kim@fabrikam.de'], cc: ['robin@fabrikam.de'], subject: 'Geheim', text: 'Vertraulich', attachments: [{ name: 'plan.pdf', contentType: 'application/pdf', data: 'AAA' }] }
   const spec = usageFor('sendMail', ['acc-1', draft, { id: 'AAMk', kind: 'replyAll' }], ctx)
-  assert.deepEqual(spec, { event: 'mail_sent', props: { kind: 'replyAll', recipients: 2, attachments: 1 } })
+  assert.deepEqual(spec, { event: 'mail_sent', props: { kind: 'replyAll', recipients: 2, attachments: 1, signature: false } })
   assert.doesNotMatch(JSON.stringify(spec), /fabrikam|Geheim|Vertraulich|plan|AAMk|acc-1/)
+  // Mit Signatur: nur ob, nie der Inhalt. Das Logo zählt nicht als Anhang.
+  const signed = { ...draft, signature: '<p>Alex Beispiel · Contoso GmbH</p>', attachments: [...draft.attachments, { name: 'logo.png', contentType: 'image/png', data: 'BBB', contentId: 'logo@x' }] }
+  const s2 = usageFor('sendMail', ['acc-1', signed], ctx)
+  assert.deepEqual(s2?.props, { kind: 'new', recipients: 2, attachments: 1, signature: true })
+  assert.doesNotMatch(JSON.stringify(s2), /Alex|Contoso|logo/)
   assert.equal(usageFor('sendMail', ['acc-1', draft], ctx)?.props?.kind, 'new')
 })

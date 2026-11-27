@@ -252,3 +252,18 @@ Zeile 2</pre></div></body></html>`
   assert.equal(mailHtmlToText('<div>Hallo<br></div><div><br></div><div>Text</div><div>Ende</div>'), 'Hallo\n\nText\nEnde')
   assert.equal(unwrapSafeLink('https://example.com/a'), 'https://example.com/a')
 })
+
+test('Eigene Signatur unter dem Text, Logo als eingebetteter Anhang', () => {
+  const d = { to: ['kim@fabrikam.de'], cc: [], subject: 'Angebot', text: 'Hi', attachments: [], signature: '<p>Alex Beispiel</p><img src="cid:logo@sig">' }
+  const n = newDraftBody(d) as { body: { content: string } }
+  assert.match(n.body.content, /Hi<\/div><div><br><\/div><div class="te-signature"><p>Alex Beispiel<\/p><img src="cid:logo@sig"><\/div>$/)
+  const r = replyDraftBody(d, 'reply') as { comment: string }
+  assert.match(r.comment, /Hi<\/div>.*te-signature.*Alex Beispiel/)
+  // Ohne Signatur bleibt es beim Text
+  assert.doesNotMatch((replyDraftBody({ ...d, signature: undefined }, 'reply') as { comment: string }).comment, /te-signature/)
+  const inline = attachmentBody({ name: 'logo.png', contentType: 'image/png', data: 'AAA', contentId: 'logo@sig' })
+  assert.equal(inline.isInline, true)
+  assert.equal(inline.contentId, 'logo@sig')
+  assert.equal(pascalize(inline).ContentId, 'logo@sig')
+  assert.equal(attachmentBody({ name: 'plan.pdf', contentType: 'application/pdf', data: 'AAA' }).isInline, undefined)
+})

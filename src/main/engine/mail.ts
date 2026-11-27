@@ -201,8 +201,11 @@ const recipients = (list: string[]) => list.map((address) => ({ emailAddress: { 
 // die Mail unter „Entwürfe“.
 
 // POST /me/messages: neue Mail als Entwurf
+// Eigene Signatur unter dem Text, mit einer Leerzeile dazwischen
+const withSignature = (d: MailDraft) => textToHtml(d.text) + (d.signature ? `<div><br></div><div class="te-signature">${d.signature}</div>` : '')
+
 export function newDraftBody(d: MailDraft): Record<string, unknown> {
-  return { subject: d.subject, body: { contentType: 'HTML', content: textToHtml(d.text) }, toRecipients: recipients(d.to), ccRecipients: recipients(d.cc) }
+  return { subject: d.subject, body: { contentType: 'HTML', content: withSignature(d) }, toRecipients: recipients(d.to), ccRecipients: recipients(d.cc) }
 }
 
 // POST …/messages/{id}/createReply | createReplyAll | createForward. Graph und Outlook setzen comment
@@ -210,7 +213,7 @@ export function newDraftBody(d: MailDraft): Record<string, unknown> {
 // so wie die Oberfläche sie zeigt: Antworten legt Outlook nur mit dem Kommentar an. Weiterleiten
 // braucht die Empfänger schon beim Anlegen (Graph antwortet sonst mit 400).
 export function replyDraftBody(d: MailDraft, kind: 'reply' | 'replyAll' | 'forward'): Record<string, unknown> {
-  return { comment: textToHtml(d.text), ...(kind === 'forward' ? { toRecipients: recipients(d.to) } : {}) }
+  return { comment: withSignature(d), ...(kind === 'forward' ? { toRecipients: recipients(d.to) } : {}) }
 }
 
 export function recipientsPatch(d: MailDraft): Record<string, unknown> {
@@ -224,7 +227,14 @@ export const CREATE_REPLY: Record<MailApi, Record<'reply' | 'replyAll' | 'forwar
 
 // POST /me/messages/{id}/attachments
 export function attachmentBody(f: MailFile): Record<string, unknown> {
-  return { '@odata.type': '#microsoft.graph.fileAttachment', name: f.name, contentType: f.contentType || 'application/octet-stream', contentBytes: f.data }
+  return {
+    '@odata.type': '#microsoft.graph.fileAttachment',
+    name: f.name,
+    contentType: f.contentType || 'application/octet-stream',
+    contentBytes: f.data,
+    // Logo der Signatur: eingebettet, nicht als Anhang sichtbar
+    ...(f.contentId ? { isInline: true, contentId: f.contentId } : {})
+  }
 }
 
 export const NO_MAIL_TOKEN =

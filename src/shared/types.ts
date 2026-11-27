@@ -272,6 +272,8 @@ export interface MailFile {
   contentType: string
   // Base64
   data: string
+  // Eingebettetes Bild (Logo der Signatur), im HTML als cid:<contentId>
+  contentId?: string
 }
 
 // Neue Mail, Antwort oder Weiterleitung. text ist der eigene Text (Klartext), bei Antworten hängt
@@ -282,6 +284,8 @@ export interface MailDraft {
   subject: string
   text: string
   attachments: MailFile[]
+  // Eigene Signatur als HTML, kommt unter den Text. Bilder darin als cid: mit Anhang in attachments.
+  signature?: string
 }
 
 export type MailReplyKind = 'reply' | 'replyAll' | 'forward'
@@ -465,6 +469,17 @@ export interface AppSettings {
   callVideoFit?: 'contain' | 'cover'
   // Signaturen in Mails zusätzlich mit Apple Intelligence (auf dem Gerät) suchen. Fehlt: an.
   mailSignatureModel?: boolean
+  // Eigene Signatur je Konto, aus den gesendeten Mails gelesen. Fehlt ein Konto: noch nicht gelesen.
+  mailSignatures?: Record<string, OwnSignature>
+}
+
+export interface OwnSignature {
+  // leer: in den gesendeten Mails keine gefunden oder abgeschaltet
+  html: string
+  text: string
+  // sent: aus den gesendeten Mails, off: abgeschaltet
+  source: 'sent' | 'off'
+  at: number
 }
 
 export interface NavigateRequest {

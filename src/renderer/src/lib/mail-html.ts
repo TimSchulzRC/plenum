@@ -1,7 +1,7 @@
 import DOMPurify from 'dompurify'
-import type { MailMessage } from '@shared/types'
+import type { MailFile, MailMessage } from '@shared/types'
 import { darkColor, darkCss } from './mail-dark'
-import { bodyStart, findHeaders, findSignatures, isMe, parseMailDate, partStarts, shortDate, threadParts, type OpenPart, type Person, type SigLine, type SigRange, type ThreadPart } from './mail-signature'
+import { bodyStart, findHeaders, findSignatures, isMe, learnSignature, parseMailDate, partStarts, shortDate, threadParts, type OpenPart, type Person, type SigLine, type SigRange, type ThreadPart } from './mail-signature'
 
 export interface MailDoc {
   html: string
@@ -28,7 +28,7 @@ export interface ChatOptions {
   formatTime: (ms: number) => string
   // In dieser Sitzung gesendete Antworten, älteste zuerst. Sie stehen noch nicht in der Mail und
   // kommen als eigene Blasen unter den Verlauf.
-  sent?: { name: string; text: string; time: string; header: string[]; files: number }[]
+  sent?: { name: string; text: string; time: string; header: string[]; files: number; signature?: string }[]
 }
 
 export interface SignatureOptions {
@@ -352,7 +352,7 @@ function chatBody(root: Element, lines: DomLine[], parts: ThreadPart[], chat: Ch
   const sent = (chat.sent ?? []).map((x) => {
     const text = esc(x.text.trim()).replace(/\r?\n/g, '<br>')
     const files = x.files ? `<div class="files">${x.files === 1 ? '1 Anhang' : `${x.files} Anhänge`}</div>` : ''
-    return `<div class="msg mine sent"><div class="meta">${popTrigger('who', esc(x.name), '')}${popTrigger('when', `${esc(x.time)} · gesendet`, headLines(x.header).join(''))}</div><div class="bubble">${text || '<span class="empty">(ohne Text)</span>'}${files}</div></div>`
+    return `<div class="msg mine sent"><div class="meta">${popTrigger('who', esc(x.name), x.signature ? `<div class="sig">${x.signature}</div>` : '')}${popTrigger('when', `${esc(x.time)} · gesendet`, headLines(x.header).join(''))}</div><div class="bubble">${text || '<span class="empty">(ohne Text)</span>'}${files}</div></div>`
   })
   // Älteste oben, neueste unten
   return `<div class="thread">${[...out.reverse(), ...sent].join('')}</div>`
@@ -373,19 +373,10 @@ const foldCss = (dark: boolean) => {
   return `details.te-sig{margin:4px 0 10px}details.te-sig>summary{display:inline-block;list-style:none;cursor:pointer;font-size:12px;color:${fg};padding:1px 9px;border:1px solid ${line};border-radius:10px;user-select:none}details.te-sig>summary::-webkit-details-marker,details.te-head>summary::-webkit-details-marker{display:none}details.te-sig>summary::after{content:" anzeigen"}details.te-sig[open]>summary::after{content:" ausblenden"}details.te-sig[open]>summary{margin-bottom:6px}details.te-head{margin:12px 0 6px}details.te-head>summary{list-style:none;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:12px;font-weight:600;color:${fg};user-select:none}details.te-head>summary::before{content:"▸ "}details.te-head[open]>summary::before{content:"▾ "}details.te-head[open]>summary{margin-bottom:4px}`
 }
 
-// Dokument für das iframe im Lesebereich. Drei Schichten Schutz:
-// 1. DOMPurify entfernt Skripte, Formulare, eingebettete Frames und Event-Attribute.
-// 2. Das iframe läuft mit sandbox ohne allow-scripts und ohne allow-same-origin.
-// 3. Eine eigene Content-Security-Policy lässt externe Bilder, Schriften und CSS-URLs nur zu, wenn
-//    remote true ist. Sonst lädt die Mail nichts nach (Tracking-Pixel), auch nicht über CSS.
-// dark: Farben der Mail für dunklen Hintergrund umrechnen (siehe mail-dark.ts)
-// Signaturen und Kopfzeilen sucht mail-signature.ts, das Einklappen braucht kein Skript (<details>).
-export function mailDocument(
-  m: Pick<MailMessage, 'body' | 'bodyType' | 'inlineImages'> & Partial<Pick<MailMessage, 'from'>>,
-  remote: boolean,
-  dark = false,
-  sig: SignatureOptions = { hide: false }
-): MailDoc {
+// Bereinigtes DOM der Mail: Bilder aufgelöst oder blockiert, Links in neuem Fenster, Farben fürs dunkle
+// Theme umgerechnet. head: <style>-Blöcke der Mail.
+type MailInput = Pick<MailMessage, 'body' | 'bodyType' | 'inlineImages'> & Partial<Pick<MailMessage, 'from'>>
+function mailRoot(m: MailInput, remote: boolean, dark: boolean): { root: HTMLElement; head: string; blocked: number } {
   let head = ''
   let root: HTMLElement
   let blocked = 0
@@ -451,10 +442,29 @@ export function mailDocument(
     html.querySelectorAll('style').forEach((s) => s.remove())
     root = html.querySelector('body') ?? html
   }
+  return { root, head, blocked }
+}
+
+// Absender für die Regel „Block mit dem Namen des Absenders“: Anzeigename, sonst der Teil vor dem @
+const senderText = (m: MailInput) => (m.from ? `${m.from.name ?? ''} ${m.from.address.split('@')[0].replace(/[._-]+/g, ' ')}` : undefined)
+
+// Dokument für das iframe im Lesebereich. Drei Schichten Schutz:
+// 1. DOMPurify entfernt Skripte, Formulare, eingebettete Frames und Event-Attribute.
+// 2. Das iframe läuft mit sandbox ohne allow-scripts und ohne allow-same-origin.
+// 3. Eine eigene Content-Security-Policy lässt externe Bilder, Schriften und CSS-URLs nur zu, wenn
+//    remote true ist. Sonst lädt die Mail nichts nach (Tracking-Pixel), auch nicht über CSS.
+// dark: Farben der Mail für dunklen Hintergrund umrechnen (siehe mail-dark.ts)
+// Signaturen und Kopfzeilen sucht mail-signature.ts, das Einklappen braucht kein Skript (<details>).
+export function mailDocument(
+  m: MailInput,
+  remote: boolean,
+  dark = false,
+  sig: SignatureOptions = { hide: false }
+): MailDoc {
+  const { root, head, blocked } = mailRoot(m, remote, dark)
 
   const lines = collectLines(root)
-  // Absender für die Regel „Block mit dem Namen des Absenders“: Anzeigename, sonst der Teil vor dem @
-  const found = findSignatures(lines, m.from ? `${m.from.name ?? ''} ${m.from.address.split('@')[0].replace(/[._-]+/g, ' ')}` : undefined)
+  const found = findSignatures(lines, senderText(m))
   const starts = partStarts(lines)
   const unresolved = starts
     .map((start, k) => ({ start, end: starts[k + 1] ?? lines.length }))
@@ -482,4 +492,50 @@ export function mailDocument(
   const csp = `default-src 'none'; img-src ${img}; style-src 'unsafe-inline'${remote ? ' https:' : ''}; font-src data:${remote ? ' https:' : ''}`
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html{${dark ? 'background:#292929;color:#dbdbdb;color-scheme:dark' : 'background:#fff;color:#242424'}}${dark ? 'a{color:#8ab4f8}' : ''}body{margin:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:14px;line-height:1.45;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin:0 0 0 8px;padding-left:12px;border-left:2px solid ${dark ? '#4a4a4a' : '#d1d1d1'}}${sig.chat ? chatCss(dark) : foldCss(dark)}</style>${head}</head><body${sig.chat ? ' class="chat"' : ''}>${body}</body></html>`
   return { html, blocked, signatures: all.length, headers: headers.length, unresolved, messages: parts.length + (sig.chat?.sent?.length ?? 0) }
+}
+
+// Eigene Signatur aus den zuletzt gesendeten Mails (neueste zuerst): HTML mit Formatierung und Bildern
+// (eingebettete als data:), dazu der Text für die Vorschau. Siehe learnSignature().
+export function ownSignature(mails: MailInput[]): { html: string; text: string } | undefined {
+  const docs = mails.map((m) => {
+    const { root } = mailRoot(m, true, false)
+    return { root, lines: collectLines(root), sender: senderText(m) }
+  })
+  const hit = learnSignature(docs.map(({ lines, sender }) => ({ lines, sender })))
+  if (!hit) return undefined
+  const { root, lines } = docs[hit.mail]
+  const range = root.ownerDocument.createRange()
+  range.setStartBefore(cutBefore(root, lines[hit.start]))
+  if (hit.end < lines.length) range.setEndBefore(cutBefore(root, lines[hit.end]))
+  else range.setEnd(root, root.childNodes.length)
+  const frag = range.extractContents()
+  wrapTableParts(frag)
+  const div = root.ownerDocument.createElement('div')
+  div.append(frag)
+  trimBlank(div)
+  // Markierungen des Mail-Clients (id="Signature" …) nicht in jede neue Mail mitnehmen
+  for (const el of div.querySelectorAll('[id]')) el.removeAttribute('id')
+  const html = div.innerHTML.trim()
+  if (!html) return undefined
+  return { html, text: lines.slice(hit.start, hit.end).map((l) => l.text).filter(Boolean).join('\n') }
+}
+
+// Signatur zum Senden: Bilder als data: werden eingebettete Anhänge (cid:), wie Outlook es macht.
+// Viele Mail-Programme zeigen data:-Bilder nicht an.
+export function signatureForSend(html: string): { html: string; files: MailFile[] } {
+  const doc = document.implementation.createHTMLDocument('')
+  doc.body.innerHTML = html
+  const files: MailFile[] = []
+  const stamp = Date.now().toString(36)
+  for (const img of doc.body.querySelectorAll('img')) {
+    const m = (img.getAttribute('src') ?? '').match(/^data:([\w.+-]+\/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)$/)
+    if (!m) continue
+    const n = files.length + 1
+    const contentId = `signatur-${n}-${stamp}@te`
+    // image/svg+xml → svg, image/jpeg → jpeg
+    const ext = m[1].split('/')[1].split('+')[0].replace(/\W/g, '') || 'png'
+    files.push({ name: `signatur-${n}.${ext}`, contentType: m[1], data: m[2].replace(/\s/g, ''), contentId })
+    img.setAttribute('src', `cid:${contentId}`)
+  }
+  return { html: doc.body.innerHTML, files }
 }

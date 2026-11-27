@@ -1,12 +1,15 @@
-import { Button, Dropdown, Field, Input, Option, Textarea } from '@fluentui/react-components'
+import { Button, Checkbox, Dropdown, Field, Input, Option, Spinner, Textarea } from '@fluentui/react-components'
 import { Attach20Regular, Dismiss12Regular, Send20Regular } from '@fluentui/react-icons'
-import { useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AccountInfo, MailFile, MailMessage, MailReplyKind } from '@shared/types'
 import { api } from '../api'
 import { accountTitle } from '@shared/accounts'
 import { ipcErrorText, parseAttendees } from '../lib/calendar'
 import { addressLabel, fileSize, replyDraft } from '../lib/mail'
 import { fmt } from '../lib/format'
+import { signatureForSend } from '../lib/mail-html'
+import { learnOwnSignature } from '../lib/own-signature'
+import { useStore } from '../store'
 
 export type ComposeState = { kind: 'new'; accountId: string } | { kind: MailReplyKind; accountId: string; source: MailMessage }
 // Was gesendet wurde, damit die Chat-Ansicht die Antwort sofort zeigt
@@ -17,6 +20,8 @@ export interface SentMail {
   text: string
   files: number
   at: number
+  // mitgesendete Signatur (HTML)
+  signature?: string
 }
 
 const TITLES: Record<ComposeState['kind'], string> = { new: 'Neue E-Mail', reply: 'Antworten', replyAll: 'Allen antworten', forward: 'Weiterleiten' }
@@ -68,6 +73,27 @@ export function MailCompose({
   const [reading, setReading] = useState(0)
   const [error, setError] = useState<string>()
   const picker = useRef<HTMLInputElement>(null)
+  // Eigene Signatur des Kontos. Beim ersten Verfassen liest die App sie aus den gesendeten Mails.
+  const own = useStore((s) => s.settings?.mailSignatures?.[accountId])
+  const [learning, setLearning] = useState(false)
+  const [withSignature, setWithSignature] = useState(true)
+  const ready = account?.status === 'ready'
+  useEffect(() => {
+    // Sobald die Signatur in den Einstellungen steht, ist das Lesen fertig
+    if (own || !ready) {
+      setLearning(false)
+      return
+    }
+    let alive = true
+    setLearning(true)
+    learnOwnSignature(accountId)
+      .catch(() => {})
+      .finally(() => alive && setLearning(false))
+    return () => {
+      alive = false
+    }
+  }, [accountId, !!own, ready])
+  const signature = own?.source === 'sent' ? own.html : ''
 
   const toList = parseAttendees(to)
   const ccList = parseAttendees(cc)
@@ -80,6 +106,8 @@ export function MailCompose({
         ? `${big.name} ist größer als 3 MB`
         : reading
           ? 'Dateien werden noch gelesen'
+          : learning && withSignature
+            ? 'Signatur wird noch gelesen'
           : account && account.status !== 'ready'
           ? `${accountTitle(account).name} ist nicht verbunden`
           : undefined
@@ -107,9 +135,17 @@ export function MailCompose({
     setBusy(true)
     setError(undefined)
     try {
-      const draft = { to: toList.valid, cc: ccList.valid, subject, text, attachments: files.map(({ name, contentType, data }) => ({ name, contentType, data })) }
+      const sig = withSignature && signature ? signatureForSend(signature) : undefined
+      const draft = {
+        to: toList.valid,
+        cc: ccList.valid,
+        subject,
+        text,
+        signature: sig?.html,
+        attachments: [...files.map(({ name, contentType, data }) => ({ name, contentType, data })), ...(sig?.files ?? [])]
+      }
       await api.sendMail(accountId, draft, source && state.kind !== 'new' ? { id: source.id, kind: state.kind } : undefined)
-      onSent({ accountId, to: draft.to, cc: draft.cc, text, files: files.length, at: Date.now() })
+      onSent({ accountId, to: draft.to, cc: draft.cc, text, files: files.length, at: Date.now(), signature: sig ? signature : undefined })
     } catch (e) {
       setError(ipcErrorText(e))
       setBusy(false)
@@ -226,6 +262,27 @@ export function MailCompose({
           placeholder={source ? (docked ? 'Deine Antwort. Der bisherige Verlauf kommt automatisch darunter.' : 'Deine Nachricht. Die ursprüngliche Mail hängt die App darunter.') : 'Deine Nachricht'}
           resize="none"
         />
+      </div>
+      <div className="compose-signature">
+        {learning ? (
+          <>
+            <Spinner size="extra-tiny" />
+            <span>Signatur wird aus deinen gesendeten Mails gelesen …</span>
+          </>
+        ) : signature ? (
+          <Checkbox
+            size="medium"
+            checked={withSignature}
+            onChange={(_e, d) => setWithSignature(!!d.checked)}
+            label={
+              <span className="sig-label" title={own?.text}>
+                Signatur anhängen: <span className="sig-text">{own?.text.split('\n').join(' · ')}</span>
+              </span>
+            }
+          />
+        ) : (
+          <span>{own?.source === 'off' ? 'Signatur abgeschaltet, in den Einstellungen wieder einlesen.' : 'Keine Signatur in deinen gesendeten Mails gefunden. Einstellungen › E-Mail liest sie neu ein.'}</span>
+        )}
       </div>
       {error && <div className="mail-error">{error}</div>}
       {source && !docked && (
