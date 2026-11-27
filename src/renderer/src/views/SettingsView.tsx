@@ -6,7 +6,8 @@ import { api } from '../api'
 import { USAGE_DATA_DOC } from '../analytics'
 import { PersonAvatar } from '../components/Avatars'
 import { McpSettings } from '../components/McpSettings'
-import { disableOwnSignature, learnOwnSignature } from '../lib/own-signature'
+import { confirmOwnSignature, disableOwnSignature, learnOwnSignature } from '../lib/own-signature'
+import { SignaturePreview } from '../components/SignaturePreview'
 import { accountTitle } from '@shared/accounts'
 import { statusText } from '../components/TitleBar'
 import { confirmInstall, resolveUpdateAction, updateLastChecked, updateStatusText } from '../update'
@@ -128,7 +129,7 @@ export function SettingsView(): JSX.Element {
             <OwnSignatureRow key={a.id} account={a} multi={accounts.filter((x) => !x.parentId).length > 1} />
           ))}
         <div className="hint">
-          Deine Signatur liest die App aus deinen zuletzt gesendeten Mails: Was dort am Ende jeder Mail gleich ist, hängt sie an neue Mails und Antworten an, mit Formatierung und Logo. Eine Grußformel schreibst du selbst.
+          Deine Signatur liest die App aus deinen zuletzt gesendeten Mails: was dort ab deinem Namen am Ende gleich ist, mit Formatierung und Logo. Nach dem Übernehmen hängt sie an neue Mails und Antworten. Eine Grußformel schreibst du selbst.
         </div>
         <div className="row">
           <div className="grow">Signaturen auch mit Apple Intelligence erkennen</div>
@@ -504,15 +505,23 @@ function OwnSignatureRow({ account, multi }: { account: AccountInfo; multi: bool
       ? 'Noch nicht gelesen. Das passiert beim ersten Verfassen.'
       : own.source === 'off'
         ? 'Wird nicht angehängt.'
-        : own.text
-          ? own.text
+        : own.html
+          ? own.confirmed
+            ? 'Hängt an neue Mails und Antworten.'
+            : 'Gefunden, noch nicht übernommen.'
           : 'In den gesendeten Mails keine gefunden.'
   return (
     <div className="row own-signature">
       <div className="grow">
         <div>{multi ? `Signatur · ${accountTitle(account).name}` : 'Signatur'}</div>
-        <div className="hint sig-preview">{error ?? status}</div>
+        <div className="hint">{error ?? status}</div>
+        {own?.source === 'sent' && own.html && !busy && <SignaturePreview html={own.html} />}
       </div>
+      {own?.source === 'sent' && own.html && !own.confirmed && (
+        <Button size="small" appearance="primary" disabled={busy} onClick={() => void confirmOwnSignature(account.id, own)}>
+          Übernehmen
+        </Button>
+      )}
       <Button size="small" disabled={busy || account.status !== 'ready'} onClick={() => void relearn()}>
         Neu einlesen
       </Button>

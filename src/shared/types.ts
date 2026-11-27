@@ -479,6 +479,8 @@ export interface OwnSignature {
   text: string
   // sent: aus den gesendeten Mails, off: abgeschaltet
   source: 'sent' | 'off'
+  // Gelesen ist nicht bestätigt: Angehängt wird erst, wenn man die Vorschau übernommen hat
+  confirmed?: boolean
   at: number
 }
 

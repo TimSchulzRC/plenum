@@ -410,6 +410,8 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     setSettings: (patch) => {
       const prev = settings
       settings = { ...settings, ...patch }
+      // Signaturen je Konto: nur die übergebenen Konten ändern, sonst überschriebe ein Konto das andere
+      if (patch.mailSignatures) settings.mailSignatures = { ...prev.mailSignatures, ...patch.mailSignatures }
       store.saveSettings(settings)
       for (const c of settingsChanges(prev, settings)) analytics.track(c.event, c.props, { active: true })
       if (patch.activeAccountId && patch.activeAccountId !== prev.activeAccountId && accounts.size > 1) {

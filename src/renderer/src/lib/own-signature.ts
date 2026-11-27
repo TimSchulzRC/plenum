@@ -1,6 +1,5 @@
 import type { MailMessage, OwnSignature } from '@shared/types'
 import { api } from '../api'
-import { useStore } from '../store'
 import { ownSignature } from './mail-html'
 
 // So viele gesendete Mails liest die App, um die eigene Signatur zu finden. Nacheinander, Exchange
@@ -23,16 +22,20 @@ export function learnOwnSignature(accountId: string): Promise<OwnSignature> {
     }
     const found = ownSignature(mails)
     const value: OwnSignature = { html: found?.html ?? '', text: found?.text ?? '', source: 'sent', at: Date.now() }
-    const all = useStore.getState().settings?.mailSignatures ?? {}
-    await api.setSettings({ mailSignatures: { ...all, [accountId]: value } })
+    // Der Hauptprozess führt die Konten zusammen
+    await api.setSettings({ mailSignatures: { [accountId]: value } })
     return value
   })().finally(() => running.delete(accountId))
   running.set(accountId, p)
   return p
 }
 
+// Gefundene Signatur übernehmen: ab jetzt hängt sie an neue Mails und Antworten
+export async function confirmOwnSignature(accountId: string, own: OwnSignature): Promise<void> {
+  await api.setSettings({ mailSignatures: { [accountId]: { ...own, confirmed: true } } })
+}
+
 // Signatur nicht mehr anhängen, bis sie neu gelesen wird
 export async function disableOwnSignature(accountId: string): Promise<void> {
-  const all = useStore.getState().settings?.mailSignatures ?? {}
-  await api.setSettings({ mailSignatures: { ...all, [accountId]: { html: '', text: '', source: 'off', at: Date.now() } } })
+  await api.setSettings({ mailSignatures: { [accountId]: { html: '', text: '', source: 'off', at: Date.now() } } })
 }

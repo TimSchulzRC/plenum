@@ -8,7 +8,8 @@ import { ipcErrorText, parseAttendees } from '../lib/calendar'
 import { addressLabel, fileSize, replyDraft } from '../lib/mail'
 import { fmt } from '../lib/format'
 import { signatureForSend } from '../lib/mail-html'
-import { learnOwnSignature } from '../lib/own-signature'
+import { confirmOwnSignature, disableOwnSignature, learnOwnSignature } from '../lib/own-signature'
+import { SignaturePreview } from './SignaturePreview'
 import { useStore } from '../store'
 
 export type ComposeState = { kind: 'new'; accountId: string } | { kind: MailReplyKind; accountId: string; source: MailMessage }
@@ -93,7 +94,10 @@ export function MailCompose({
       alive = false
     }
   }, [accountId, !!own, ready])
-  const signature = own?.source === 'sent' ? own.html : ''
+  // Angehängt wird nur eine bestätigte Signatur. Eine neu gefundene zeigt die App einmal zur Prüfung.
+  const found = own?.source === 'sent' && !!own.html
+  const pending = found && !own.confirmed
+  const signature = found && own.confirmed ? own.html : ''
 
   const toList = parseAttendees(to)
   const ccList = parseAttendees(cc)
@@ -269,6 +273,19 @@ export function MailCompose({
             <Spinner size="extra-tiny" />
             <span>Signatur wird aus deinen gesendeten Mails gelesen …</span>
           </>
+        ) : pending && own ? (
+          <div className="sig-confirm">
+            <div>In deinen gesendeten Mails steht diese Signatur. Soll die App sie an deine Mails hängen?</div>
+            <SignaturePreview html={own.html} />
+            <div className="sig-actions">
+              <Button size="small" appearance="primary" onClick={() => void confirmOwnSignature(accountId, own)}>
+                Übernehmen
+              </Button>
+              <Button size="small" appearance="subtle" onClick={() => void disableOwnSignature(accountId)}>
+                Nicht anhängen
+              </Button>
+            </div>
+          </div>
         ) : signature ? (
           <Checkbox
             size="medium"

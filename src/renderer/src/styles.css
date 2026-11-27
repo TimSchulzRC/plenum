@@ -2232,12 +2232,34 @@ button {
 .mail-compose.docked .compose-signature {
   order: 2;
 }
-.settings .own-signature .sig-preview {
-  white-space: pre-line;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.signature-preview {
+  display: block;
+  width: 100%;
+  max-width: 460px;
+  height: 120px;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+.settings .own-signature {
+  align-items: flex-start;
+}
+.sig-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 6px;
+  color: var(--fg-2);
+  width: 100%;
+}
+.sig-confirm .signature-preview {
+  height: 96px;
+  margin-top: 0;
+}
+.sig-actions {
+  display: flex;
+  gap: 6px;
 }
 .mail-compose.docked .mail-error {
   order: 2;

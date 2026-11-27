@@ -78,6 +78,9 @@ function collectLines(root: Element): DomLine[] {
   let text = ''
   let first: Node | undefined
   let image = false
+  let imageKey = ''
+  // Ein Bild ohne Quelle: Die Zeile gilt in keiner anderen Mail als gleich
+  let unknownImage = false
   // Nummer des äußersten markierten Signatur-Elements, in dem wir gerade sind
   const markers: number[] = []
   let markerSeq = 0
@@ -89,12 +92,14 @@ function collectLines(root: Element): DomLine[] {
     if (first && (t || image)) {
       // „-- “ mit Leerzeichen am Ende ist der Signaturtrenner, das Leerzeichen fällt beim Trimmen weg
       const sep = /^[ \t\r\n]*--[ \u00a0]$/.test(text.replace(/[\r\n]+$/, '')) || undefined
-      out.push({ text: t, image: image || undefined, first, marker: markers[0], sep, boundary: boundary || undefined })
+      out.push({ text: t, image: image || undefined, imageKey: (!unknownImage && imageKey) || undefined, first, marker: markers[0], sep, boundary: boundary || undefined })
       boundary = false
     }
     text = ''
     first = undefined
     image = false
+    imageKey = ''
+    unknownImage = false
   }
   const visit = (node: Node) => {
     for (const child of [...node.childNodes]) {
@@ -112,6 +117,10 @@ function collectLines(root: Element): DomLine[] {
       if (el.tagName === 'IMG') {
         first ??= el
         image = true
+        // Länge und Ende der Quelle (bei data: das Ende der Bilddaten) unterscheiden zwei Bilder
+        const src = el.getAttribute('src') ?? ''
+        if (src) imageKey += `${src.length}:${src.slice(-64)};`
+        else unknownImage = true
         continue
       }
       if (el.tagName === 'STYLE') continue
