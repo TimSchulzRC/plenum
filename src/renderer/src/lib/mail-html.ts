@@ -526,7 +526,15 @@ export function ownSignature(mails: MailInput[]): { html: string; text: string }
   for (const el of div.querySelectorAll('[id]')) el.removeAttribute('id')
   // Bilder nur eingebettet (data:) oder über https: So zeigt die Vorschau, die man bestätigt, genau die
   // Bilder, die mit der Mail rausgehen
-  for (const img of div.querySelectorAll('img')) if (!/^(?:data:image\/|https:)/i.test(img.getAttribute('src') ?? '')) img.remove()
+  const allowed = (url: string) => /^(?:data:image\/|https:)/i.test(url.trim())
+  for (const img of div.querySelectorAll('img')) if (!allowed(img.getAttribute('src') ?? '')) img.remove()
+  // Ebenso Bilder aus CSS (background-image: url(…)) und dem alten background-Attribut
+  for (const el of div.querySelectorAll('[style]')) {
+    const style = el.getAttribute('style') ?? ''
+    const clean = style.replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi, (m, _q, url: string) => (allowed(url) ? m : 'none'))
+    if (clean !== style) el.setAttribute('style', clean)
+  }
+  for (const el of div.querySelectorAll('[background]')) if (!allowed(el.getAttribute('background') ?? '')) el.removeAttribute('background')
   const html = div.innerHTML.trim()
   if (!html) return undefined
   return { html, text: lines.slice(hit.start, hit.end).map((l) => l.text).filter(Boolean).join('\n') }
