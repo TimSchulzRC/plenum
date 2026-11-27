@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// Verbindet die Werkzeuge des MCP-Servers mit den laufenden Konten. Ruft nur lesende Endpunkte auf.
+// Verbindet die Werkzeuge des MCP-Servers mit den laufenden Konten. Ruft nur lesende Endpunkte auf,
+// auch bei E-Mail (GET auf Graph bzw. Outlook REST, nichts wird als gelesen markiert).
 import type { AccountService } from '../account'
 import { mapCallLog, mapChatsvcMessage } from '../engine/parse'
 import { isAmsView, isChatMessagesPage } from '../engine/hosts'
+import { mailHtmlToText } from '../engine/mail'
 import { ToolError, type McpAccount, type Page } from './tools'
 import type { CallLogEntry, Message } from '@shared/types'
 
@@ -112,6 +114,14 @@ export function mcpAccount(acct: AccountService): McpAccount {
     activity: () => acct.getActivity(),
     calendar: (start, end) => acct.getCalendar(start, end),
     searchPeople: (q) => acct.searchPeople(q),
-    download: (url) => download(acct, url)
+    download: (url) => download(acct, url),
+    hasMail: () => acct.api.hasMailToken(),
+    mailFolders: () => acct.getMailFolders(),
+    mailQuery: (q, next) => acct.queryMail(q, next),
+    async mail(id) {
+      const { bodyType, body, inlineImages: _, ...rest } = await acct.getMail(id, { inlineImages: false })
+      return { ...rest, text: bodyType === 'html' ? mailHtmlToText(body) : body.replace(/\r\n?/g, '\n').trim() }
+    },
+    mailAttachment: (id, attachmentId) => acct.getMailAttachment(id, attachmentId)
   }
 }

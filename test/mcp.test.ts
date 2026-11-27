@@ -3,11 +3,12 @@ import { test } from 'node:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTools, decodeCursor, encodeCursor, imageUrls, ToolError, type McpAccount } from '../src/main/mcp/tools.ts'
+import { createTools, decodeCursor, encodeCursor, imageUrls, localIso as localIsoOf, ToolError, type McpAccount, type McpMail } from '../src/main/mcp/tools.ts'
 import { McpProtocol } from '../src/main/mcp/protocol.ts'
 import { McpServer } from '../src/main/mcp/server.ts'
 import { mcpCommand, mcpJsonConfig, mcpReplaceCommand, mcpTomlConfig } from '../src/shared/mcp.ts'
-import type { AccountInfo, CallLogEntry, ChatSummary, Message, Team } from '../src/shared/types.ts'
+import type { AccountInfo, CallLogEntry, ChatSummary, MailFolder, Message, Team } from '../src/shared/types.ts'
+import type { MailQuery } from '../src/main/engine/mail.ts'
 
 process.env.TZ = 'Europe/Berlin'
 
@@ -40,10 +41,40 @@ interface FakeOpts {
   teams?: Team[]
   messages: Record<string, Message[]>
   calls?: CallLogEntry[]
+  mails?: McpMail[]
+  // Wie ein Exchange, das received>= in $search nicht versteht
+  rejectKqlRange?: boolean
+  // Folgeseiten scheitern (z. B. Drosselung)
+  failNextPage?: boolean
+  folders?: MailFolder[]
+}
+
+function mail(id: string, hoursAgo: number, extra: Partial<McpMail> = {}): McpMail {
+  return {
+    id,
+    accountId: '',
+    conversationId: `t-${id}`,
+    subject: `Betreff ${id}`,
+    from: { name: 'Kim Fabrik', address: 'kim@fabrikam.de' },
+    to: [{ name: 'Tim', address: 'tim@firma.de' }],
+    cc: [],
+    replyTo: [],
+    preview: 'Vorschau',
+    received: NOW - hoursAgo * H,
+    isRead: true,
+    isDraft: false,
+    hasAttachments: false,
+    importance: 'normal',
+    flagged: false,
+    folderId: 'f-inbox',
+    text: 'Hallo',
+    attachments: [],
+    ...extra
+  }
 }
 
 // Liefert Nachrichten wie der Chat-Dienst: neueste zuerst, seitenweise mit Adresse der älteren Seite
-function fakeAccount(o: FakeOpts, log: string[] = []): McpAccount {
+function fakeAccount(o: FakeOpts, log: string[] = [], queries: MailQuery[] = []): McpAccount {
   const pageOf = <T>(list: T[], size: number, older?: string): { items: T[]; older?: string } => {
     const start = older ? Number(new URL(older).searchParams.get('offset')) : 0
     const items = list.slice(start, start + size)
@@ -71,6 +102,34 @@ function fakeAccount(o: FakeOpts, log: string[] = []): McpAccount {
       if (url.endsWith('.txt')) return { data: new TextEncoder().encode('Inhalt der Datei'), contentType: 'text/plain' }
       if (url.includes('asm.skype.com')) return { data: new Uint8Array([137, 80, 78, 71]), contentType: 'image/png' }
       throw new ToolError('nicht gefunden')
+    },
+    hasMail: () => !!o.mails,
+    mailFolders: async () => o.folders ?? [],
+    // Wie Exchange: Ordner, Zeitraum, ungelesen; die Suche hier nur über Betreff und Absender
+    // Seitenweise wie Graph: next ist die Adresse der Folgeseite mit skip
+    async mailQuery(q, next) {
+      if (!next) queries.push(q)
+      if (next && o.failNextPage) throw Object.assign(new Error('Zu viele Anfragen'), { status: 429 })
+      if (o.rejectKqlRange && q.search && (q.since || q.until)) throw Object.assign(new Error('BadRequest'), { status: 400 })
+      const words = (q.search ?? '').toLowerCase().split(' ').filter(Boolean)
+      const folder = q.folder && (o.folders?.find((f) => f.kind === q.folder)?.id ?? q.folder)
+      const list = (o.mails ?? [])
+        .filter((m) => !folder || m.folderId === folder)
+        .filter((m) => q.search || ((!q.since || m.received >= q.since) && (!q.until || m.received < q.until) && (!q.unreadOnly || !m.isRead)))
+        .filter((m) => words.every((w) => `${m.subject} ${m.from?.address}`.toLowerCase().includes(w)))
+        .sort((a, b) => b.received - a.received)
+      const skip = next ? Number(new URL(next).searchParams.get('skip')) : 0
+      const more = skip + q.top < list.length
+      return { items: list.slice(skip, skip + q.top), next: more ? `https://graph.microsoft.com/v1.0/me/messages?skip=${skip + q.top}` : undefined }
+    },
+    async mail(id) {
+      const m = o.mails?.find((x) => x.id === id)
+      if (!m) throw Object.assign(new Error('ErrorItemNotFound'), { status: 404 })
+      return m
+    },
+    async mailAttachment(id, attachmentId) {
+      if (id !== 'm1' || attachmentId !== 'att1') throw Object.assign(new Error('nicht gefunden'), { status: 404 })
+      return { name: 'Bestellung.csv', contentType: 'text/csv', data: new TextEncoder().encode('Pos;Menge\n1;5') }
     }
   }
 }
@@ -106,6 +165,24 @@ function setup() {
       '19:allg@thread.tacv2': [msg(3, '8:orgid:bernd', 'Angebot Süd geht morgen raus', { subject: 'Kunde Süd' }), msg(4, '8:orgid:anna', 'Danke', { parentId: '3', time: NOW - 2.5 * H })],
       '19:alt@thread.v2': [msg(24 * 60, '8:orgid:anna', 'Angebot von vor zwei Monaten')]
     },
+    folders: [
+      { id: 'f-inbox', name: 'Posteingang', kind: 'inbox', unread: 1, total: 3 },
+      { id: 'f-sent', name: 'Gesendete Elemente', kind: 'sentitems', unread: 0, total: 1 },
+      { id: 'f-proj', name: 'Projekte', unread: 0, total: 1 }
+    ],
+    mails: [
+      mail('m1', 1, {
+        subject: 'Bestellung 4711',
+        isRead: false,
+        hasAttachments: true,
+        cc: [{ address: 'einkauf@firma.de' }],
+        text: 'Liefertermin: 3.12.\nBestellung ansehen (https://firma.de/bestellung/4711)',
+        attachments: [{ id: 'att1', name: 'Bestellung.csv', contentType: 'text/csv', size: 14, isInline: false }]
+      }),
+      mail('m2', 5, { subject: 'Angebot Nord', from: { name: 'Anna Berg', address: 'anna@firma.de' } }),
+      mail('m3', 30, { subject: 'Alte Rechnung', folderId: 'f-proj' }),
+      mail('m4', 2, { subject: 'Re: Angebot Nord', folderId: 'f-sent', from: { address: 'tim@firma.de' } })
+    ],
     calls: [
       { id: 'c1', time: NOW - 3 * H, direction: 'incoming', state: 'missed', peerMri: '8:orgid:anna' },
       { id: 'c2', time: NOW - 5 * H, direction: 'outgoing', state: 'accepted', durationSec: 120, peerMri: '8:orgid:bernd' }
@@ -116,7 +193,9 @@ function setup() {
     upn: 'tim@verein.org',
     chats: [chat('19:verein@thread.v2', 'Vorstand', 4)],
     messages: { '19:verein@thread.v2': [msg(4, '8:orgid:anna', 'Angebot für die Halle liegt vor')] },
-    calls: [{ id: 'c3', time: NOW - 4 * H, direction: 'incoming', state: 'missed', peerName: 'Kassenwart' }]
+    calls: [{ id: 'c3', time: NOW - 4 * H, direction: 'incoming', state: 'missed', peerName: 'Kassenwart' }],
+    folders: [{ id: 'f-inbox', name: 'Inbox', kind: 'inbox', unread: 0, total: 1 }],
+    mails: [mail('v1', 3, { subject: 'Hallenmiete', text: 'Miete: 120 Euro' })]
   })
   const offline = fakeAccount({ id: 'c3', upn: 'alt@firma.de', status: 'login-required', chats: [], messages: {} })
   const accounts = [work, priv, offline]
@@ -144,7 +223,24 @@ test('Werkzeuge: alle lesen nur', async () => {
   const { protocol, cleanup } = setup()
   const res = (await protocol.handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' })) as { result: { tools: { name: string; annotations: { readOnlyHint: boolean } }[] } }
   const names = res.result.tools.map((t) => t.name)
-  assert.deepEqual(names, ['list_accounts', 'list_conversations', 'list_teams', 'get_messages', 'search_messages', 'list_files', 'read_file', 'get_call_history', 'get_activity', 'get_calendar', 'search_people'])
+  assert.deepEqual(names, [
+    'list_accounts',
+    'list_conversations',
+    'list_teams',
+    'get_messages',
+    'search_messages',
+    'list_files',
+    'read_file',
+    'get_call_history',
+    'get_activity',
+    'get_calendar',
+    'search_people',
+    'list_mail_folders',
+    'list_mail',
+    'search_mail',
+    'get_mail',
+    'read_mail_attachment'
+  ])
   assert.ok(res.result.tools.every((t) => t.annotations.readOnlyHint))
   cleanup()
 })
@@ -329,4 +425,189 @@ test('HTTP: Schlüssel, Host- und Origin-Prüfung, JSON-RPC', async () => {
   assert.equal(srv.info().running, false)
   await assert.rejects(post(fresh.url!, { jsonrpc: '2.0', id: 1, method: 'ping' }))
   cleanup()
+})
+
+test('list_mail: Posteingang aller Konten, neueste zuerst, ältere über next_until', async () => {
+  const { json, cleanup } = setup()
+  const r = await json('list_mail')
+  assert.deepEqual(r.mails.map((m: { message_id: string }) => m.message_id), ['m1', 'v1', 'm2'])
+  assert.equal(r.mails[0].from, 'Kim Fabrik <kim@fabrikam.de>')
+  assert.equal(r.mails[0].folder, 'Posteingang')
+  assert.equal(r.mails[0].unread, true)
+  assert.equal(r.mails[0].attachments, true)
+  assert.equal(r.mails[1].account, 'tim@verein.org')
+  assert.equal(r.more, undefined)
+  assert.match(r.warnings[0], /alt@firma\.de: nicht verbunden/)
+  const page = await json('list_mail', { account: 'tim@firma.de', limit: 1 })
+  assert.deepEqual(page.mails.map((m: { message_id: string }) => m.message_id), ['m1'])
+  assert.equal(page.more, true)
+  const next = await json('list_mail', { account: 'tim@firma.de', limit: 1, until: page.next_until })
+  assert.deepEqual(next.mails.map((m: { message_id: string }) => m.message_id), ['m2'])
+  const unread = await json('list_mail', { unread_only: true })
+  assert.deepEqual(unread.mails.map((m: { message_id: string }) => m.message_id), ['m1'])
+  cleanup()
+})
+
+test('list_mail: Ordner per Name, Standardname oder all, unbekannter Ordner mit Liste', async () => {
+  const { json, call, cleanup } = setup()
+  const proj = await json('list_mail', { account: 'a1', folder: 'projekte' })
+  assert.deepEqual(proj.mails.map((m: { message_id: string; folder: string }) => [m.message_id, m.folder]), [['m3', 'Projekte']])
+  const sent = await json('list_mail', { account: 'a1', folder: 'sentitems' })
+  assert.deepEqual(sent.mails.map((m: { message_id: string }) => m.message_id), ['m4'])
+  const all = await json('list_mail', { account: 'a1', folder: 'all' })
+  assert.deepEqual(all.mails.map((m: { folder: string }) => m.folder), ['Posteingang', 'Gesendete Elemente', 'Posteingang', 'Projekte'])
+  const bad = await call('list_mail', { account: 'a1', folder: 'Gibtsnicht' })
+  assert.ok(!bad.isError)
+  assert.match(JSON.parse(bad.content[0].text!).errors[0], /Kein Ordner „Gibtsnicht“. Vorhanden: Posteingang, Gesendete Elemente, Projekte/)
+  cleanup()
+})
+
+test('search_mail: ganzes Postfach, Zeitraum genau zugeschnitten', async () => {
+  const { json, call, cleanup } = setup()
+  assert.match((await call('search_mail', { query: 'subject:"Angebot Nord"' })).content[0].text!, /Feldwerte in Anführungszeichen/)
+  const r = await json('search_mail', { query: 'angebot' })
+  assert.deepEqual(r.mails.map((m: { message_id: string; folder: string }) => [m.message_id, m.folder]), [
+    ['m4', 'Gesendete Elemente'],
+    ['m2', 'Posteingang']
+  ])
+  const since = await json('search_mail', { query: 'angebot', since: '2026-11-25T09:30:00+01:00' })
+  assert.deepEqual(since.mails.map((m: { message_id: string }) => m.message_id), ['m4'])
+  cleanup()
+})
+
+test('get_mail: Text, Empfänger, Anhänge; Konto wird gefunden', async () => {
+  const { json, call, cleanup } = setup()
+  const m = await json('get_mail', { message_id: 'm1' })
+  assert.equal(m.account, 'tim@firma.de')
+  assert.deepEqual(m.to, ['Tim <tim@firma.de>'])
+  assert.deepEqual(m.cc, ['einkauf@firma.de'])
+  assert.match(m.text, /^Liefertermin/)
+  assert.deepEqual(m.attachments, [{ attachment_id: 'att1', name: 'Bestellung.csv', type: 'text/csv', size: 14 }])
+  // Liegt nur im zweiten Konto
+  const v = await json('get_mail', { message_id: 'v1' })
+  assert.equal(v.account, 'tim@verein.org')
+  assert.equal(v.text, 'Miete: 120 Euro')
+  const missing = await call('get_mail', { message_id: 'nix' })
+  assert.equal(missing.isError, true)
+  assert.match(missing.content[0].text!, /in keinem Konto/)
+  cleanup()
+})
+
+test('read_mail_attachment: Text direkt, mit Pfad', async () => {
+  const { call, dir, cleanup } = setup()
+  const r = await call('read_mail_attachment', { message_id: 'm1', attachment_id: 'att1' })
+  const info = JSON.parse(r.content[0].text!)
+  assert.equal(info.text, 'Pos;Menge\n1;5')
+  assert.equal(info.saved_to, join(dir, 'Bestellung.csv'))
+  cleanup()
+})
+
+// Werkzeuge mit eigenen Konten, für Fälle, die setup() nicht abdeckt
+function mailCall(accounts: McpAccount[]) {
+  const tools = createTools({ accounts: () => accounts, saveFile: async (n) => n, now: () => NOW })
+  const protocol = new McpProtocol({ name: 'plenum', title: 'Plenum', version: '0.1.0', instructions: 'x' }, tools)
+  return async (name: string, args: Record<string, unknown>) => {
+    const res = (await protocol.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })) as {
+      result: { content: { text: string }[]; isError?: boolean }
+    }
+    assert.ok(!res.result.isError, res.result.content[0].text)
+    return JSON.parse(res.result.content[0].text)
+  }
+}
+
+const ids = (r: { mails: { message_id: string }[] }) => r.mails.map((m) => m.message_id)
+
+test('search_mail: lehnt Exchange den Zeitraum ab, wird ohne gesucht und lokal zugeschnitten', async () => {
+  const queries: MailQuery[] = []
+  const a = fakeAccount(
+    {
+      id: 'a1',
+      upn: 'tim@firma.de',
+      chats: [],
+      messages: {},
+      rejectKqlRange: true,
+      mails: [mail('m1', 1, { subject: 'Angebot neu' }), mail('m2', 48, { subject: 'Angebot alt' })]
+    },
+    [],
+    queries
+  )
+  const r = await mailCall([a])('search_mail', { query: 'angebot', since: '2026-11-25' })
+  assert.deepEqual(ids(r), ['m1'])
+  assert.deepEqual(queries.map((q) => !!q.since), [true, false])
+})
+
+test('search_mail: liest weitere Seiten, wenn der Filter eine Seite leert', async () => {
+  const read = Array.from({ length: 12 }, (_, i) => mail(`r${i}`, i + 1, { subject: 'Angebot' }))
+  const a = fakeAccount({ id: 'a1', upn: 'tim@firma.de', chats: [], messages: {}, mails: [...read, mail('u1', 20, { subject: 'Angebot', isRead: false })] })
+  const r = await mailCall([a])('search_mail', { query: 'angebot', unread_only: true, limit: 5 })
+  assert.deepEqual(ids(r), ['u1'])
+  assert.equal(r.more, undefined)
+  // Scheitert eine Folgeseite, bleibt, was schon gefunden war
+  const b = fakeAccount({ id: 'a1', upn: 'tim@firma.de', chats: [], messages: {}, failNextPage: true, mails: [mail('u0', 0.5, { subject: 'Angebot', isRead: false }), ...read] })
+  const partial = await mailCall([b])('search_mail', { query: 'angebot', unread_only: true, limit: 5 })
+  assert.deepEqual(ids(partial), ['u0'])
+  assert.equal(partial.more, true)
+  assert.match(partial.errors[0], /Zu viele Anfragen/)
+  // Mehr Treffer als limit: kein next_until (Exchange sortiert die Suche nach Sendezeit), aber ein Hinweis
+  const many = await mailCall([a])('search_mail', { query: 'angebot', limit: 5 })
+  assert.equal(many.more, true)
+  assert.equal(many.next_until, undefined)
+  assert.match(many.warnings[0], /enger fassen/)
+})
+
+test('list_mail: Mails derselben Sekunde im selben Postfach gehen beim Blättern nicht verloren', async () => {
+  const folders: MailFolder[] = [{ id: 'f-inbox', name: 'Posteingang', kind: 'inbox', unread: 0, total: 3 }]
+  const a = fakeAccount({ id: 'a1', upn: 'tim@firma.de', chats: [], messages: {}, folders, mails: [mail('m1', 1), mail('m2', 2), mail('m3', 2), mail('m4', 4)] })
+  const call = mailCall([a])
+  const seen: string[] = []
+  let until: string | undefined
+  for (let i = 0; i < 6; i++) {
+    const r = await call('list_mail', { limit: 2, until })
+    seen.push(...ids(r))
+    until = r.next_until
+    if (!until) break
+  }
+  assert.deepEqual([...new Set(seen)].sort(), ['m1', 'm2', 'm3', 'm4'])
+  // Mehr Mails in einer Sekunde als limit: kein next_until, das dieselbe Seite wiederholen würde
+  const first = await call('list_mail', { limit: 1, until: localIsoOf(NOW - 1.5 * H) })
+  assert.deepEqual(ids(first), ['m2'])
+  const stuck = await call('list_mail', { limit: 1, until: first.next_until })
+  assert.equal(stuck.next_until, undefined)
+  assert.match(stuck.warnings[0], /until früher setzen/)
+})
+
+test('list_mail: next_until überspringt keine Mail derselben Sekunde aus einem anderen Konto', async () => {
+  const inbox = { folderId: 'f-inbox' }
+  const folders: MailFolder[] = [{ id: 'f-inbox', name: 'Posteingang', kind: 'inbox', unread: 0, total: 2 }]
+  const a = fakeAccount({ id: 'a1', upn: 'tim@firma.de', chats: [], messages: {}, folders, mails: [mail('m1', 1, inbox), mail('m2', 3, inbox)] })
+  const b = fakeAccount({ id: 'b2', upn: 'tim@verein.org', chats: [], messages: {}, folders, mails: [mail('v1', 3, inbox)] })
+  const call = mailCall([a, b])
+  const first = await call('list_mail', { limit: 2 })
+  assert.deepEqual(ids(first), ['m1', 'm2'])
+  assert.equal(first.more, true)
+  const second = await call('list_mail', { limit: 2, until: first.next_until })
+  assert.deepEqual(ids(second).sort(), ['m2', 'v1'])
+  assert.equal(second.more, undefined)
+})
+
+test('Mail: Gastkonten mit demselben Heimatpostfach zählen einmal, ihr 404 verschwindet', async () => {
+  const folders: MailFolder[] = [{ id: 'f-inbox', name: 'Posteingang', kind: 'inbox', unread: 1, total: 2 }]
+  const mails = [mail('m1', 1, { subject: 'Angebot' }), mail('m2', 2, { subject: 'Angebot' })]
+  const home = fakeAccount({ id: 'a1', upn: 'tim@firma.de', chats: [], messages: {}, folders, mails })
+  const guest = fakeAccount({ id: 'a1-gast', upn: 'tim@firma.de', chats: [], messages: {}, folders, mails })
+  // Gastmandant ohne Postfach: Exchange antwortet 404
+  const broken = fakeAccount({ id: 'a1-gast2', upn: 'tim@firma.de', chats: [], messages: {}, mails: [] })
+  broken.mailFolders = async () => {
+    throw Object.assign(new Error('outlook 404'), { status: 404 })
+  }
+  broken.mailQuery = broken.mailFolders as never
+  const call = mailCall([home, guest, broken])
+  const f = await call('list_mail_folders', {})
+  assert.equal(f.folders.length, 1)
+  assert.equal(f.errors, undefined)
+  const l = await call('list_mail', {})
+  assert.deepEqual(ids(l), ['m1', 'm2'])
+  assert.equal(l.errors, undefined)
+  const s = await call('search_mail', { query: 'angebot', limit: 1 })
+  assert.deepEqual(ids(s), ['m1'])
 })
