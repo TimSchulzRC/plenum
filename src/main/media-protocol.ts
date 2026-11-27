@@ -45,7 +45,8 @@ export function handleMediaProtocol(getAccount: (id: string) => AccountService |
       const messageId = u.searchParams.get('m') ?? ''
       const e = messageId ? await acct.mailImage(messageId, decodeURIComponent(rawId ?? '')).catch(() => undefined) : undefined
       if (!e || !/^image\//i.test(e.type)) return new Response(null, { status: 404 })
-      return new Response(Buffer.from(e.data), { status: 200, headers: { 'content-type': e.type, 'cache-control': 'max-age=3600' } })
+      // Nicht im iframe zwischenspeichern: Ein geänderter Entwurf hat unter derselben Adresse ein neues Bild
+      return new Response(Buffer.from(e.data), { status: 200, headers: { 'content-type': e.type, 'cache-control': 'no-store' } })
     }
     const key = req.url
     const cached = cache.get(key)

@@ -1303,9 +1303,10 @@ export class AccountService extends EventEmitter<AccountEvents> {
   // Alle Lesezugriffe auf das Postfach teilen sich vier Plätze, Geöffnetes vor Vorgeladenem
   private mailLimit = new Limiter(4)
   private mailImages = new MailImageStore({
-    list: (id, high) => this.mailLimit.run(() => listAttachments(this.api, id), high).then((att) => inlineToLoad(att.map(mapAttachment))),
+    list: (id, high) => this.mailLimit.run(() => listAttachments(this.api, id), high, id).then((att) => inlineToLoad(att.map(mapAttachment))),
+    promote: (id) => this.mailLimit.promote(id),
     fetch: async (id, attachmentId, high) => {
-      const full = await this.mailLimit.run(() => this.api.mailAttachment(id, attachmentId), high)
+      const full = await this.mailLimit.run(() => this.api.mailAttachment(id, attachmentId), high, id)
       const cid = contentId(full?.contentId)
       if (!cid || typeof full?.contentBytes !== 'string') return undefined
       return { cid, type: String(full.contentType || 'application/octet-stream'), data: Buffer.from(full.contentBytes, 'base64') }

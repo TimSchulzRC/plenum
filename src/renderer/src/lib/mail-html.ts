@@ -415,6 +415,11 @@ function mailRoot(m: MailInput, remote: boolean, dark: boolean): { root: HTMLEle
     }) as HTMLElement
     for (const img of html.querySelectorAll('img')) {
       const src = img.getAttribute('src') ?? ''
+      // App-eigene Adressen setzt nur die App, nicht der Absender
+      if (/^\s*tmimg:/i.test(src)) {
+        img.removeAttribute('src')
+        continue
+      }
       const cid = /^cid:/i.test(src) ? src.slice(4).replace(/^<|>$/g, '') : undefined
       if (cid) {
         // Schon geladen (eigene Signatur) als data:, sonst lädt das Dokument das Bild selbst nach,
@@ -505,8 +510,9 @@ export function mailDocument(
     if (folds.length) wrapFolds(root, lines, folds)
     body = root.innerHTML
   }
-  // tmimg: eingebettete Bilder der Mail aus dem Hauptprozess, kein Netz
-  const img = remote ? 'data: tmimg: https: http:' : 'data: tmimg:'
+  // tmimg://mailcid: eingebettete Bilder der Mail aus dem Hauptprozess, kein Netz. Nur dieser Host:
+  // tmimg://proxy lädt externe Bilder und darf am Blocker nicht vorbei.
+  const img = remote ? 'data: tmimg://mailcid https: http:' : 'data: tmimg://mailcid'
   const csp = `default-src 'none'; img-src ${img}; style-src 'unsafe-inline'${remote ? ' https:' : ''}; font-src data:${remote ? ' https:' : ''}`
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html{${dark ? 'background:#292929;color:#dbdbdb;color-scheme:dark' : 'background:#fff;color:#242424'}}${dark ? 'a{color:#8ab4f8}' : ''}body{margin:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:14px;line-height:1.45;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin:0 0 0 8px;padding-left:12px;border-left:2px solid ${dark ? '#4a4a4a' : '#d1d1d1'}}${sig.chat ? chatCss(dark) : foldCss(dark)}</style>${head}</head><body${sig.chat ? ' class="chat"' : ''}>${body}</body></html>`
   return { html, blocked, signatures: all.length, headers: headers.length, unresolved, messages: parts.length + (sig.chat?.sent?.length ?? 0) }

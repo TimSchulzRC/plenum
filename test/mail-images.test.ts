@@ -94,3 +94,50 @@ test('Bildspeicher: Liste aus getMail wird genutzt, alte Mails fallen bei Speich
   assert.deepEqual(await again.index('leer'), {})
   assert.equal(fetched, 0)
 })
+
+test('Limiter: vorgeladene Anfragen einer geöffneten Mail rücken nach vorn', async () => {
+  const lim = new Limiter(1)
+  const order: string[] = []
+  const job = (name: string) => async () => {
+    await wait(5)
+    order.push(name)
+  }
+  const all = [lim.run(job('busy'), true), lim.run(job('other'), false, 'm2'), lim.run(job('mine'), false, 'm1')]
+  lim.promote('m1')
+  await Promise.all(all)
+  assert.deepEqual(order, ['busy', 'mine', 'other'])
+})
+
+test('Bildspeicher: geöffnete Mail holt wartende Vorlade-Anfragen nach vorn', async () => {
+  const promoted: string[] = []
+  const store = new MailImageStore({
+    list: async () => [{ id: 'a', size: 1 }],
+    fetch: async () => {
+      await wait(10)
+      return entry('a@x')
+    },
+    promote: (id) => promoted.push(id)
+  })
+  const bg = store.load('m1', false)
+  await store.image('m1', 'a@x')
+  await bg
+  assert.deepEqual(promoted, ['m1'])
+})
+
+test('Bildspeicher: geänderter Entwurf liefert kein altes Bild', async () => {
+  const data: Record<string, string> = { a: 'logo@x' }
+  const store = new MailImageStore({
+    list: async () => [],
+    fetch: async (_m, id) => (data[id] ? entry(data[id]) : undefined)
+  })
+  store.remember('d1', [{ id: 'a', size: 1 }])
+  assert.equal((await store.image('d1', 'logo@x'))?.cid, 'logo@x')
+  // Anhang ersetzt: neue ID, gleiche Content-ID
+  delete data.a
+  data.b = 'logo@x'
+  store.remember('d1', [{ id: 'b', size: 1 }])
+  assert.deepEqual(await store.index('d1'), { b: 'logo@x' })
+  // Bild entfernt: nichts mehr
+  store.remember('d1', [])
+  assert.equal(await store.image('d1', 'logo@x'), undefined)
+})

@@ -16,14 +16,15 @@ export interface ImageEntry {
 // Anfragen je Postfach. Was der Nutzer geöffnet hat, kommt vor dem, was die App nur vorlädt.
 export class Limiter {
   private active = 0
-  private queue: { start: () => void; high: boolean }[] = []
+  private queue: { start: () => void; high: boolean; key?: string }[] = []
   private max: number
 
   constructor(max: number) {
     this.max = max
   }
 
-  run<T>(fn: () => Promise<T>, high = true): Promise<T> {
+  // key: wozu die Anfrage gehört (Mail), damit promote() sie nach vorn holen kann
+  run<T>(fn: () => Promise<T>, high = true, key?: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const start = () => {
         this.active++
@@ -35,12 +36,23 @@ export class Limiter {
           })
       }
       if (this.active < this.max) start()
-      else if (high) {
-        // vor die erste wartende Hintergrundanfrage
-        const i = this.queue.findIndex((q) => !q.high)
-        this.queue.splice(i < 0 ? this.queue.length : i, 0, { start, high })
-      } else this.queue.push({ start, high })
+      else if (high) this.ahead({ start, high, key })
+      else this.queue.push({ start, high, key })
     })
+  }
+
+  // vor die erste wartende Hintergrundanfrage
+  private ahead(q: { start: () => void; high: boolean; key?: string }): void {
+    const i = this.queue.findIndex((x) => !x.high)
+    this.queue.splice(i < 0 ? this.queue.length : i, 0, q)
+  }
+
+  // Wartende Hintergrundanfragen zu key nach vorn: Der Nutzer hat die vorgeladene Mail geöffnet
+  promote(key: string): void {
+    const mine = this.queue.filter((q) => q.key === key && !q.high)
+    if (!mine.length) return
+    this.queue = this.queue.filter((q) => !mine.includes(q))
+    for (const q of mine) this.ahead({ ...q, high: true })
   }
 }
 
@@ -63,6 +75,8 @@ export interface MailImageSource {
   list: (messageId: string, high: boolean) => Promise<InlineRef[]>
   // Ein Anhang mit Content-ID und Daten, undefined ohne Daten (kein Bild, verlinkter Anhang)
   fetch: (messageId: string, attachmentId: string, high: boolean) => Promise<ImageEntry | undefined>
+  // Wartende Hintergrundanfragen der Mail nach vorn holen
+  promote?: (messageId: string) => void
 }
 
 // Bilder je Mail. Ein Bild steht bereit, sobald sein Anhang da ist, nicht erst, wenn alle da sind.
@@ -70,6 +84,8 @@ export interface MailImageSource {
 export class MailImageStore {
   private refs = new Map<string, InlineRef[]>()
   private got = new Map<string, Map<string, ImageEntry>>()
+  // Anhänge ohne Bilddaten (kein Bild, verlinkter Anhang): nicht noch einmal holen
+  private empty = new Map<string, Set<string>>()
   private running = new Map<string, Promise<void>>()
   private waiters = new Map<string, Set<() => void>>()
   private bytes = 0
@@ -81,17 +97,33 @@ export class MailImageStore {
     this.maxBytes = maxBytes
   }
 
-  // getMail hat die Anhangsliste schon, dann fragt load() sie nicht noch einmal
+  // getMail hat die Anhangsliste schon, dann fragt load() sie nicht noch einmal. Bilder von Anhängen,
+  // die nicht mehr in der Mail sind (Entwurf geändert), fallen weg.
   remember(messageId: string, refs: InlineRef[]): void {
     this.refs.delete(messageId)
     this.refs.set(messageId, refs)
+    const got = this.got.get(messageId)
+    if (got) {
+      const keep = new Set(refs.map((r) => r.id))
+      for (const [id, e] of got) {
+        if (keep.has(id)) continue
+        got.delete(id)
+        this.bytes -= e.data.byteLength
+      }
+    }
     while (this.refs.size > 200) this.refs.delete(this.refs.keys().next().value as string)
   }
 
   // Alle noch fehlenden Bilder einer Mail laden
   load(messageId: string, high: boolean): Promise<void> {
     const cur = this.running.get(messageId)
-    if (cur) return cur
+    if (cur) {
+      // Vorgeladen und jetzt geöffnet: nicht mehr hinter anderen Mails warten
+      if (high) this.source.promote?.(messageId)
+      // Hat sich die Anhangsliste inzwischen geändert (Entwurf) oder ist etwas fehlgeschlagen,
+      // folgt noch ein Durchgang
+      return cur.then(() => (this.missing(messageId) ? this.load(messageId, high) : undefined))
+    }
     const p = (async () => {
       let refs = this.refs.get(messageId)
       if (!refs) {
@@ -102,11 +134,15 @@ export class MailImageStore {
       this.got.set(messageId, got)
       await Promise.all(
         refs
-          .filter((r) => !got.has(r.id))
+          .filter((r) => !got.has(r.id) && !this.empty.get(messageId)?.has(r.id))
           .map((r) =>
             this.source.fetch(messageId, r.id, high).then(
               (e) => {
-                if (!e?.cid) return
+                if (!e?.cid) {
+                  const set = this.empty.get(messageId) ?? new Set<string>()
+                  this.empty.set(messageId, set.add(r.id))
+                  return
+                }
                 got.set(r.id, e)
                 this.bytes += e.data.byteLength
                 this.notify(messageId)
@@ -122,6 +158,13 @@ export class MailImageStore {
     })
     this.running.set(messageId, p)
     return p
+  }
+
+  // Fehlt noch ein Bild, das zu holen ist (neue Anhänge, fehlgeschlagene Anfragen)
+  private missing(messageId: string): boolean {
+    const got = this.got.get(messageId)
+    const empty = this.empty.get(messageId)
+    return (this.refs.get(messageId) ?? []).some((r) => !got?.has(r.id) && !empty?.has(r.id))
   }
 
   private find(messageId: string, cid: string): ImageEntry | undefined {
@@ -173,6 +216,7 @@ export class MailImageStore {
       if (id === keep || this.running.has(id)) continue
       for (const e of got.values()) this.bytes -= e.data.byteLength
       this.got.delete(id)
+      this.empty.delete(id)
     }
   }
 }
