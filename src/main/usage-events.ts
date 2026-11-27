@@ -84,6 +84,7 @@ const MAPPERS: { [K in ApiName]?: Mapper<K> } = {
   deleteMail: () => ({ event: 'mail_deleted' }),
   setMailRead: ([, , isRead]) => ({ event: 'mail_marked', props: { read: isRead } }),
   openMailAttachment: ([, , , mode]) => ({ event: 'mail_attachment_opened', props: { mode } }),
+  saveMailAttachments: ([, , ids, target]) => ({ event: 'mail_attachments_saved', props: { count: ids.length, target } }),
   createEvent: ([, ev]) => ({
     event: 'calendar_event_created',
     props: { all_day: ev.isAllDay, teams_meeting: ev.teamsMeeting, attendees: ev.attendees.length, has_location: !!ev.location, has_body: !!ev.body }

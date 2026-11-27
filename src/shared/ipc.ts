@@ -6,6 +6,7 @@ import type {
   BridgeMessage,
   CalendarEvent,
   NewCalendarEvent,
+  MailAttachmentsSaved,
   MailDraft,
   MailFolder,
   MailMessage,
@@ -79,7 +80,12 @@ export interface ApiMethods {
   getMailUnread(accountId: string): number | null
   listMail(accountId: string, folderId: string, next?: string): MailPage
   getMail(accountId: string, messageId: string): MailMessage
-  openMailAttachment(accountId: string, messageId: string, attachmentId: string, mode: 'open' | 'save'): void
+  // Öffnen, in den Download-Ordner laden oder „Speichern unter …“. Gibt den gespeicherten Pfad zurück.
+  openMailAttachment(accountId: string, messageId: string, attachmentId: string, mode: 'open' | 'download' | 'saveAs'): string | null
+  // Mehrere Anhänge in den Download-Ordner oder einen gewählten Ordner (null bei Abbruch)
+  saveMailAttachments(accountId: string, messageId: string, attachmentIds: string[], target: 'downloads' | 'choose'): MailAttachmentsSaved | null
+  // Von der App gespeicherte Datei im Dateimanager zeigen
+  showSavedFile(path: string): void
   setMailRead(accountId: string, messageId: string, isRead: boolean): void
   deleteMail(accountId: string, messageId: string): void
   sendMail(accountId: string, draft: MailDraft, reply?: { id: string; kind: MailReplyKind }): void

@@ -1,4 +1,4 @@
-import { Button, Spinner, Tooltip } from '@fluentui/react-components'
+import { Button, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Spinner, SplitButton, Tooltip, type MenuButtonProps } from '@fluentui/react-components'
 import {
   Archive20Regular,
   ArrowForward20Regular,
@@ -19,6 +19,11 @@ import {
   Send20Regular,
   Warning20Regular,
   ArrowDownload16Regular,
+  CheckmarkCircle16Regular,
+  FolderOpen16Regular,
+  MoreHorizontal16Regular,
+  Open16Regular,
+  Save16Regular,
   Important16Filled,
   Flag16Filled,
   MailInboxAll20Regular,
@@ -28,7 +33,7 @@ import {
   WeatherSunny20Regular
 } from '@fluentui/react-icons'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { AccountInfo, MailAddress, MailFolder, MailFolderKind, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
+import type { AccountInfo, MailAddress, MailAttachment, MailFolder, MailFolderKind, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
 import { api } from '../api'
 import { fmt, listTime } from '../lib/format'
 import { accountTitle } from '@shared/accounts'
@@ -414,6 +419,138 @@ function Recipients({ label, list, accountId }: { label: string; list: MailAddre
   )
 }
 
+const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path
+
+// Anhänge einer Mail. Klick auf den Namen öffnet, der Pfeil lädt direkt in den Download-Ordner.
+// „Speichern unter …“ gibt es im Menü (… oder Rechtsklick), ab zwei Anhängen auch für alle.
+function MailAttachments({ m, onError }: { m: MailMessage; onError: (e?: string) => void }): JSX.Element {
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set())
+  const [saved, setSaved] = useState<{ text: string; path: string } | null>(null)
+
+  const run = async (key: string, fn: () => Promise<{ text: string; path: string } | null>) => {
+    onError(undefined)
+    setPending((p) => new Set(p).add(key))
+    try {
+      const r = await fn()
+      if (r) setSaved(r)
+    } catch (e) {
+      onError(ipcErrorText(e))
+    } finally {
+      setPending((p) => {
+        const n = new Set(p)
+        n.delete(key)
+        return n
+      })
+    }
+  }
+
+  const open = (a: MailAttachment) => void api.openMailAttachment(m.accountId, m.id, a.id, 'open').catch((e) => onError(ipcErrorText(e)))
+  const save = (a: MailAttachment, mode: 'download' | 'saveAs') =>
+    void run(a.id, async () => {
+      const path = await api.openMailAttachment(m.accountId, m.id, a.id, mode)
+      if (!path) return null
+      return { text: mode === 'download' ? `„${fileName(path)}“ in Downloads gespeichert` : `„${fileName(path)}“ gespeichert`, path }
+    })
+  const saveAll = (target: 'downloads' | 'choose') =>
+    void run('all', async () => {
+      const r = await api.saveMailAttachments(
+        m.accountId,
+        m.id,
+        m.attachments.map((a) => a.id),
+        target
+      )
+      if (!r) return null
+      const n = r.paths.length
+      const where = r.inDownloads ? 'Downloads' : `„${fileName(r.folder)}“`
+      let text = `${n === 1 ? '1 Anhang' : `${n} Anhänge`} in ${where} gespeichert`
+      if (r.skipped) text += `, ${r.skipped} übersprungen (keine Datei)`
+      return { text, path: r.paths[0] }
+    })
+
+  const items = (a: MailAttachment) => (
+    <MenuList>
+      <MenuItem icon={<Open16Regular />} onClick={() => open(a)}>
+        Öffnen
+      </MenuItem>
+      <MenuItem icon={<ArrowDownload16Regular />} onClick={() => save(a, 'download')}>
+        In Downloads speichern
+      </MenuItem>
+      <MenuItem icon={<Save16Regular />} onClick={() => save(a, 'saveAs')}>
+        Speichern unter …
+      </MenuItem>
+    </MenuList>
+  )
+
+  return (
+    <>
+      <div className="mail-attachments">
+        {m.attachments.map((a) => (
+          <Menu key={a.id} openOnContext positioning="below-start">
+            <MenuTrigger disableButtonEnhancement>
+              <div className="mail-attachment">
+                <button className="open" title={`${a.name} öffnen`} onClick={() => open(a)}>
+                  {/^image\//.test(a.contentType ?? '') ? <Image20Regular /> : <Document20Regular />}
+                  <span className="att-name">{a.name}</span>
+                  <span className="att-size">{fileSize(a.size)}</span>
+                </button>
+                <Tooltip content="In Downloads speichern" relationship="label">
+                  <button className="icon-btn" disabled={pending.has(a.id)} onClick={() => save(a, 'download')}>
+                    {pending.has(a.id) ? <Spinner size="extra-tiny" /> : <ArrowDownload16Regular />}
+                  </button>
+                </Tooltip>
+                <Menu positioning="below-end">
+                  <MenuTrigger disableButtonEnhancement>
+                    <Tooltip content="Weitere Optionen" relationship="label">
+                      <button className="icon-btn">
+                        <MoreHorizontal16Regular />
+                      </button>
+                    </Tooltip>
+                  </MenuTrigger>
+                  <MenuPopover>{items(a)}</MenuPopover>
+                </Menu>
+              </div>
+            </MenuTrigger>
+            <MenuPopover>{items(a)}</MenuPopover>
+          </Menu>
+        ))}
+        {m.attachments.length > 1 && (
+          <Menu positioning="below-start">
+            <MenuTrigger disableButtonEnhancement>
+              {(triggerProps: MenuButtonProps) => (
+                <SplitButton
+                  className="mail-save-all"
+                  size="small"
+                  icon={pending.has('all') ? <Spinner size="extra-tiny" /> : <ArrowDownload16Regular />}
+                  menuButton={triggerProps}
+                  primaryActionButton={{ onClick: () => saveAll('downloads'), disabled: pending.has('all') }}
+                >
+                  Alle herunterladen
+                </SplitButton>
+              )}
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                <MenuItem icon={<FolderOpen16Regular />} disabled={pending.has('all')} onClick={() => saveAll('choose')}>
+                  Alle speichern unter …
+                </MenuItem>
+              </MenuList>
+            </MenuPopover>
+          </Menu>
+        )}
+      </div>
+      {saved && (
+        <div className="mail-saved">
+          <CheckmarkCircle16Regular />
+          <span className="text">{saved.text}</span>
+          <Button size="small" appearance="transparent" onClick={() => void api.showSavedFile(saved.path)}>
+            Im Ordner zeigen
+          </Button>
+        </div>
+      )}
+    </>
+  )
+}
+
 function MailReader({
   target,
   account,
@@ -481,9 +618,6 @@ function MailReader({
     }
   }
 
-  const attachment = (id: string, mode: 'open' | 'save') =>
-    void api.openMailAttachment(m.accountId, m.id, id, mode).catch((e) => setError(ipcErrorText(e)))
-
   return (
     <div className="mail-read">
       <div className="mail-actions">
@@ -527,24 +661,7 @@ function MailReader({
             )}
           </div>
         </div>
-        {m.attachments.length > 0 && (
-          <div className="mail-attachments">
-            {m.attachments.map((a) => (
-              <div key={a.id} className="mail-attachment">
-                <button className="open" title={`${a.name} öffnen`} onClick={() => attachment(a.id, 'open')}>
-                  {/^image\//.test(a.contentType ?? '') ? <Image20Regular /> : <Document20Regular />}
-                  <span className="att-name">{a.name}</span>
-                  <span className="att-size">{fileSize(a.size)}</span>
-                </button>
-                <Tooltip content="Speichern unter …" relationship="label">
-                  <button className="icon-btn" onClick={() => attachment(a.id, 'save')}>
-                    <ArrowDownload16Regular />
-                  </button>
-                </Tooltip>
-              </div>
-            ))}
-          </div>
-        )}
+        {m.attachments.length > 0 && <MailAttachments m={m} onError={setError} />}
         {doc.blocked > 0 && !remote && (
           <div className="mail-blocked">
             <Image20Regular />
