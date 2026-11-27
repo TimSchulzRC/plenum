@@ -9,22 +9,45 @@ import { PrefetchCache } from './cache'
 const folders = new PrefetchCache<MailFolder[]>({ maxEntries: 20, freshMs: 60_000 })
 const lists = new PrefetchCache<MailPage>({ maxEntries: 60, freshMs: 30_000 })
 const listKey = (accountId: string, folderId: string) => `${accountId}|${folderId}`
-// Listen, die gerade im Hintergrund laden
-const background = new Set<string>()
+// Listen, die gerade im Hintergrund laden, mit der Anfrage, der die Markierung gehört
+const background = new Map<string, object>()
 
-// Eigene Änderungen (gelesen, gelöscht) der letzten zwei Minuten. Eine Liste, die der Server vor der
-// Änderung beantwortet hat, brächte sonst den alten Stand zurück.
-type Change = { patch?: Partial<MailSummary>; deleted?: boolean; at: number }
+// Eigene Änderungen. Eine Antwort auf eine Anfrage, die vor dem Abschluss der Änderung begonnen hat,
+// kennt sie womöglich noch nicht: Für die gilt die Änderung. Spätere Antworten zeigen den Stand des
+// Servers, auch wenn man die Mail inzwischen anderswo (Outlook) wieder geändert hat.
+type Change = { patch?: Partial<MailSummary>; deleted?: boolean; settled: number }
 const changes = new Map<string, Change>()
+// Ungelesen-Zahlen, die die App selbst angepasst hat, je Konto und Ordner
+type Bump = { delta: number; settled: number }
+const bumps = new Map<string, Bump[]>()
+const KEEP = 120_000
 
-function withChanges(accountId: string, items: MailSummary[]): MailSummary[] {
-  const now = Date.now()
-  for (const [k, c] of changes) if (now - c.at > 120_000) changes.delete(k)
+function prune(now: number): void {
+  for (const [k, c] of changes) if (now - c.settled > KEEP) changes.delete(k)
+  for (const [k, list] of bumps) {
+    const left = list.filter((b) => now - b.settled <= KEEP)
+    if (left.length) bumps.set(k, left)
+    else bumps.delete(k)
+  }
+}
+
+function withChanges(accountId: string, items: MailSummary[], started: number): MailSummary[] {
+  prune(Date.now())
   if (!changes.size) return items
   return items.flatMap((i) => {
     const c = changes.get(`${accountId}|${i.id}`)
-    if (!c) return [i]
+    if (!c || started >= c.settled) return [i]
     return c.deleted ? [] : [{ ...i, ...c.patch }]
+  })
+}
+
+const folderKey = (f: MailFolder) => (f.kind === 'inbox' ? 'inbox' : f.id)
+
+function withBumps(accountId: string, list: MailFolder[], started: number): MailFolder[] {
+  prune(Date.now())
+  return list.map((f) => {
+    const delta = (bumps.get(`${accountId}|${folderKey(f)}`) ?? []).filter((b) => started < b.settled).reduce((n, b) => n + b.delta, 0)
+    return delta ? { ...f, unread: Math.max(0, f.unread + delta) } : f
   })
 }
 
@@ -35,7 +58,10 @@ export const cachedList = (accountId: string, folderId: string): MailPage | unde
 export function loadFolders(accountId: string, force = false, quiet = false): Promise<MailFolder[]> {
   const hit = folders.peek(accountId)
   if (hit && !force && folders.isFresh(accountId)) return Promise.resolve(hit)
-  return folders.load(accountId, () => api.getMailFolders(accountId, quiet))
+  return folders.load(accountId, () => {
+    const started = Date.now()
+    return api.getMailFolders(accountId, quiet).then((list) => withBumps(accountId, list, started))
+  })
 }
 
 export function loadList(accountId: string, folderId: string, force = false, quiet = false): Promise<MailPage> {
@@ -48,11 +74,15 @@ export function loadList(accountId: string, folderId: string, force = false, qui
     void api.promoteMailList(accountId, folderId).catch(() => undefined)
   }
   return lists.load(k, () => {
-    if (quiet) background.add(k)
+    const started = Date.now()
+    const mark = {}
+    if (quiet) background.set(k, mark)
     return api
       .listMail(accountId, folderId, undefined, quiet)
-      .then((p) => ({ ...p, items: withChanges(accountId, p.items) }))
-      .finally(() => background.delete(k))
+      .then((p) => ({ ...p, items: withChanges(accountId, p.items, started) }))
+      .finally(() => {
+        if (background.get(k) === mark) background.delete(k)
+      })
   })
 }
 
@@ -68,23 +98,34 @@ export function warmMail(accountIds: string[]): void {
   }
 }
 
-// Gelesen markiert oder gelöscht: in den gespeicherten Listen des Kontos und in Antworten, die noch
-// unterwegs sind
-export function noteMailChange(accountId: string, id: string, change: { patch: Partial<MailSummary> } | { deleted: true }): void {
-  changes.set(`${accountId}|${id}`, { ...change, at: Date.now() })
-  for (const k of lists.keys()) if (k.startsWith(`${accountId}|`)) lists.update(k, (p) => ({ ...p, items: withChanges(accountId, p.items) }))
+// Gelesen markiert oder gelöscht: sofort in den gespeicherten Listen des Kontos und in Antworten, die vor
+// dem Abschluss beginnen. Gibt eine Funktion zurück, die den Abschluss meldet (ohne: schon abgeschlossen).
+export function noteMailChange(accountId: string, id: string, change: { patch: Partial<MailSummary> } | { deleted: true }, pending = false): () => void {
+  const c: Change = { ...change, settled: pending ? Infinity : Date.now() }
+  changes.set(`${accountId}|${id}`, c)
+  for (const k of lists.keys()) if (k.startsWith(`${accountId}|`)) lists.update(k, (p) => ({ ...p, items: withChanges(accountId, p.items, -Infinity) }))
+  return () => {
+    c.settled = Date.now()
+  }
 }
 
-// Ungelesen-Zahlen der Ordner sofort anpassen, auch im Speicher
-export function updateCachedFolders(accountId: string, fn: (list: MailFolder[]) => MailFolder[]): void {
-  folders.update(accountId, fn)
+// Ungelesen-Zahl eines Ordners selbst angepasst (folderId wie in der Liste, Posteingang 'inbox'): auch im
+// Speicher und in Antworten, die vor dem Abschluss beginnen
+export function noteUnreadBump(accountId: string, folderId: string, delta: number, pending = false): () => void {
+  const b: Bump = { delta, settled: pending ? Infinity : Date.now() }
+  const k = `${accountId}|${folderId}`
+  bumps.set(k, [...(bumps.get(k) ?? []), b])
+  folders.update(accountId, (list) => list.map((f) => (folderKey(f) === folderId ? { ...f, unread: Math.max(0, f.unread + delta) } : f)))
+  return () => {
+    b.settled = Date.now()
+  }
 }
 
 // Nach Senden oder Löschen: Gesendete bzw. Gelöschte beim nächsten Öffnen neu laden
 export function staleFolder(accountId: string, kind: MailFolderKind): string | undefined {
   const f = folders.peek(accountId)?.find((x) => x.kind === kind)
   if (!f) return undefined
-  const id = kind === 'inbox' ? 'inbox' : f.id
+  const id = folderKey(f)
   lists.markStale(listKey(accountId, id))
   folders.markStale(accountId)
   return id

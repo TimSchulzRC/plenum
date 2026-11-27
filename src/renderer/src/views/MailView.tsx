@@ -44,7 +44,7 @@ import { accountTitle } from '@shared/accounts'
 import { accountColor, ipcErrorText } from '../lib/calendar'
 import { addressLabel, fileSize, mergeMail, withImages } from '../lib/mail'
 import { cachedMail, loadImageIndex, loadMail, prefetchMail, prefetchTop } from '../lib/mail-load'
-import { cachedFolders, cachedList, loadFolders as loadFolderList, loadList, noteMailChange, prefetchList, staleFolder, updateCachedFolders } from '../lib/mail-lists'
+import { cachedFolders, cachedList, loadFolders as loadFolderList, loadList, noteMailChange, noteUnreadBump, prefetchList, staleFolder } from '../lib/mail-lists'
 import { HOVER_DELAY } from '../lib/prefetch'
 import { mailDocument, type ChatOptions } from '../lib/mail-html'
 import { modelRanges, modelRequest, type SigRange } from '../lib/mail-signature'
@@ -55,7 +55,8 @@ import { MailCompose, type ComposeState, type SentMail } from '../components/Mai
 import { MailAvatar } from '../components/Avatars'
 
 type Sel = { kind: 'all' } | { kind: 'folder'; accountId: string; folderId: string; name: string; folderKind?: MailFolderKind }
-type Source = { accountId: string; folderId: string; items: MailSummary[]; next?: string; error?: string }
+// older: über „mehr laden“ geholte ältere Zeilen. Nur die bleiben beim Abgleich der ersten Seite stehen.
+type Source = { accountId: string; folderId: string; items: MailSummary[]; next?: string; error?: string; older?: MailSummary[] }
 // draft: Entwurf, immer frisch laden
 type Open = { accountId: string; id: string; draft?: boolean }
 
@@ -179,11 +180,12 @@ export function MailView(): JSX.Element {
         const old = list.find((x) => same(x, f))
         let merged = f
         if (old && f.error) merged = old.items.length ? old : f
-        // Ohne Folgeseite ist das der ganze Ordner: nichts Älteres behalten (auch nicht nach dem Leeren)
-        else if (old && f.next) {
+        // Die erste Seite ersetzt die alte. Was „mehr laden“ geholt hat, bleibt dahinter stehen, solange es
+        // älter ist als die neue erste Seite. Ohne Folgeseite ist das der ganze Ordner, dann nichts.
+        else if (old?.older?.length && f.next) {
           const oldest = Math.min(...f.items.map((i) => i.received))
-          const rest = old.items.filter((i) => i.received < oldest && !f.items.some((x) => x.id === i.id))
-          merged = { ...f, items: [...f.items, ...rest], next: rest.length ? old.next : f.next }
+          const keep = old.older.filter((i) => i.received < oldest && !f.items.some((x) => x.id === i.id))
+          merged = keep.length ? { ...f, items: [...f.items, ...keep], older: keep, next: old.next } : f
         }
         return old ? list.map((x) => (x === old ? merged : x)) : [...list, merged]
       })
@@ -295,7 +297,15 @@ export function MailView(): JSX.Element {
           const same = (s: Source) => s.accountId === accountId && s.folderId === folderId && s.next === cursor
           try {
             const p = await api.listMail(accountId, folderId, cursor)
-            setSources((prev) => prev && prev.map((s) => (same(s) ? { ...s, items: [...s.items, ...p.items.filter((i) => !s.items.some((x) => x.id === i.id))], next: p.next, error: undefined } : s)))
+            setSources(
+              (prev) =>
+                prev &&
+                prev.map((s) => {
+                  if (!same(s)) return s
+                  const add = p.items.filter((i) => !s.items.some((x) => x.id === i.id))
+                  return { ...s, items: [...s.items, ...add], older: [...(s.older ?? []), ...add], next: p.next, error: undefined }
+                })
+            )
           } catch (e) {
             setSources((prev) => prev && prev.map((s) => (same(s) ? { ...s, error: ipcErrorText(e) } : s)))
           }
@@ -305,10 +315,11 @@ export function MailView(): JSX.Element {
   }
 
   // Auch im Speicher und gegen Antworten, die noch unterwegs sind (noteMailChange)
-  const patchItem = (m: Open, patch: Partial<MailSummary>) => {
-    noteMailChange(m.accountId, m.id, { patch })
+  const patchItem = (m: Open, patch: Partial<MailSummary>, pending = false) => {
+    const settle = noteMailChange(m.accountId, m.id, { patch }, pending)
     const fn = (items: MailSummary[]) => items.map((i) => (i.id === m.id ? { ...i, ...patch } : i))
     setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items) })))
+    return settle
   }
 
   const removeItem = (m: Open) => {
@@ -317,18 +328,23 @@ export function MailView(): JSX.Element {
     setSources((prev) => prev && prev.map((s) => (s.accountId !== m.accountId ? s : { ...s, items: fn(s.items) })))
   }
 
-  // Nach Senden oder Löschen: Gesendete bzw. Gelöschte neu laden, gleich, wenn der Ordner offen ist
+  // Nach Senden oder Löschen: Gesendete bzw. Gelöschte neu laden, gleich, wenn der Ordner jetzt offen ist
+  // (auch wenn man während des Sendens dorthin gewechselt hat)
+  const selRef = useRef(sel)
+  selRef.current = sel
   const refreshFolder = (accountId: string, kind: MailFolderKind) => {
     const id = staleFolder(accountId, kind)
-    if (sel.kind === 'folder' && sel.accountId === accountId && sel.folderId === id) setReload((n) => n + 1)
+    const cur = selRef.current
+    if (cur.kind === 'folder' && cur.accountId === accountId && cur.folderId === id) setReload((n) => n + 1)
     setTimeout(() => loadFolders(true), 1500)
   }
 
   // Ungelesen-Zahl im Ordner und an der Seitenleiste sofort anpassen, der nächste Abruf bestätigt sie
-  const bumpUnread = (accountId: string, delta: number) => {
+  // pending: Die Änderung auf dem Server läuft noch, die zurückgegebene Funktion meldet ihr Ende
+  const bumpUnread = (accountId: string, delta: number, pending = false) => {
     const folderId = sel.kind === 'folder' ? sel.folderId : 'inbox'
     const bump = (cur: MailFolder[]) => cur.map((x) => (x.id === folderId || (folderId === 'inbox' && x.kind === 'inbox') ? { ...x, unread: Math.max(0, x.unread + delta) } : x))
-    updateCachedFolders(accountId, bump)
+    const settle = noteUnreadBump(accountId, folderId, delta, pending)
     setFolders((f) => {
       const cur = f[accountId]?.list
       if (!cur) return f
@@ -337,18 +353,21 @@ export function MailView(): JSX.Element {
       if (inbox) setMailUnread(accountId, inbox.unread)
       return { ...f, [accountId]: { list } }
     })
+    return settle
   }
 
   const openMail = (m: MailSummary) => {
     setCompose(null)
     setOpen({ accountId: m.accountId, id: m.id, draft: m.isDraft || undefined })
     if (!m.isRead && !m.isDraft) {
-      patchItem(m, { isRead: true })
-      bumpUnread(m.accountId, -1)
-      void api.setMailRead(m.accountId, m.id, true).catch(() => {
-        patchItem(m, { isRead: false })
-        bumpUnread(m.accountId, 1)
-      })
+      const done = [patchItem(m, { isRead: true }, true), bumpUnread(m.accountId, -1, true)]
+      void api
+        .setMailRead(m.accountId, m.id, true)
+        .catch(() => {
+          patchItem(m, { isRead: false })
+          bumpUnread(m.accountId, 1)
+        })
+        .finally(() => done.forEach((f) => f()))
     }
   }
 
