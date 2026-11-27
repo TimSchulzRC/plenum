@@ -548,7 +548,8 @@ function Tenants({ account }: { account: AccountInfo }): JSX.Element | null {
   const children = accounts.filter((c) => c.parentId === account.id)
   // Eingeschaltete Mandanten bleiben sichtbar, auch wenn die Liste gerade nicht ladbar ist
   const rows: TenantInfo[] = [
-    ...(tenants ?? []).filter((t) => !t.current),
+    // Der eigene Mandant nur, wenn er fälschlich als Gastmandant angelegt ist: zum Entfernen
+    ...(tenants ?? []).filter((t) => !t.current || children.some((c) => c.tenantId?.toLowerCase() === t.tenantId.toLowerCase())),
     ...children.filter((c) => !tenants?.some((t) => t.tenantId === c.tenantId)).map((c) => ({ tenantId: c.tenantId ?? c.id, tenantName: c.tenantName, guest: true, current: false, hidden: false }))
   ]
   if (rows.length === 0 && !error) return null

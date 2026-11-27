@@ -130,6 +130,15 @@ export class TokenStore {
   seen = new Map<string, { method: string; count: number; at: number }>()
   onChange?: (family: Family) => void
 
+  // Alles Erfasste verwerfen (Neuladen in einem anderen Mandanten oder nach abgelaufener Sitzung):
+  // Bereit ist die Engine erst wieder mit frischen Tokens der Web-App
+  reset(): void {
+    this.templates.clear()
+    this.bearers.clear()
+    this.skypeToken = undefined
+    this.me = {}
+  }
+
   capture(url: string, method: string, headers: Record<string, string | string[]>): void {
     const lower: Record<string, string> = {}
     for (const [k, v] of Object.entries(headers)) lower[k.toLowerCase()] = Array.isArray(v) ? v.join(', ') : v

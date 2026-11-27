@@ -85,8 +85,8 @@ export class Engine extends EventEmitter<EngineEvents> {
     }
   }
 
-  // Mandant, in dem die Web-App startet (auch beim Neuladen)
-  setStartTenant(tenantId: string): void {
+  // Mandant, in dem die Web-App startet (auch beim Neuladen), undefined: wie Teams
+  setStartTenant(tenantId: string | undefined): void {
     this.opts.tenantId = tenantId
   }
 
@@ -114,7 +114,9 @@ export class Engine extends EventEmitter<EngineEvents> {
         }
       }
       try {
-        this.tokens.capture(details.url, details.method, details.requestHeaders as Record<string, string>)
+        // Eigene Anfragen tragen nur Tokens, die schon erfasst sind: nicht noch einmal merken, sonst kämen
+        // nach reset() alte zurück
+        if (!own) this.tokens.capture(details.url, details.method, details.requestHeaders as Record<string, string>)
       } catch (e) {
         log.warn('capture failed', e)
       }
@@ -379,9 +381,17 @@ export class Engine extends EventEmitter<EngineEvents> {
     this.win?.hide()
   }
 
-  reload(): void {
+  // fresh: erfasste Tokens verwerfen. Sonst meldete die Engine mit den alten (fremder Mandant, abgelaufene
+  // Sitzung) sofort wieder „bereit“, bevor die Seite sich neu angemeldet hat.
+  reload(fresh = false): void {
     // Verzögerte Neuladeversuche nach destroy() dürfen kein neues Fenster öffnen
     if (this.quitting) return
+    if (fresh) {
+      this.tokens.reset()
+      clearTimeout(this.readyTimer)
+      clearTimeout(this.readyFallback)
+      this.readyFallback = undefined
+    }
     if (!this.win || this.win.isDestroyed()) return this.start()
     this.setStatus('starting')
     void this.win.loadURL(this.startUrl)

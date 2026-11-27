@@ -68,9 +68,10 @@ export class CallManager {
   private activeAccountId?: string
   private compact = false
 
-  // Läuft oder startet gerade ein Anruf in diesem Konto? Dann darf seine Web-App nicht neu laden.
+  // Läuft oder startet gerade ein Anruf in diesem Konto (auch ein angenommener, bevor Teams ihn meldet)?
+  // Dann darf seine Web-App nicht neu laden.
   busy(accountId: string): boolean {
-    return !!this.state && this.activeAccountId === accountId
+    return this.activeAccountId === accountId
   }
   private normalBounds?: Electron.Rectangle
   private closeTimer?: NodeJS.Timeout
