@@ -32,16 +32,18 @@ import {
   ArrowSync20Regular,
   ShieldError20Regular,
   WeatherMoon20Regular,
-  WeatherSunny20Regular
+  WeatherSunny20Regular,
+  Chat20Regular,
+  DocumentText20Regular
 } from '@fluentui/react-icons'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AccountInfo, MailAddress, MailAttachment, MailFolder, MailFolderKind, MailMessage, MailReplyKind, MailSummary } from '@shared/types'
 import { api } from '../api'
-import { fmt, listTime } from '../lib/format'
+import { fmt, listTime, messageTime } from '../lib/format'
 import { accountTitle } from '@shared/accounts'
 import { accountColor, ipcErrorText } from '../lib/calendar'
 import { addressLabel, fileSize, mergeMail } from '../lib/mail'
-import { mailDocument } from '../lib/mail-html'
+import { mailDocument, type ChatOptions } from '../lib/mail-html'
 import { modelRanges, modelRequest, type SigRange } from '../lib/mail-signature'
 import { setMailUnread } from '../lib/mail-unread'
 import { useStore } from '../store'
@@ -377,7 +379,8 @@ export function MailView(): JSX.Element {
             account={byId(open.accountId)}
             multi={multi}
             color={color}
-            onReply={(m, kind) => setCompose({ kind, accountId: m.accountId, source: m })}
+            accounts={accounts}
+            onSent={() => setTimeout(loadFolders, 1500)}
             onUnread={async (m) => {
               await api.setMailRead(m.accountId, m.id, false)
               patchItem(m, { isRead: false })
@@ -413,6 +416,8 @@ const modelCache = new Map<string, SigRange[]>()
 const HIDE_SIG_KEY = 'mail.hideSignatures'
 // Kopfzeilen zitierter Nachrichten einklappen: eigener Schalter, ebenfalls Standard an
 const HIDE_HEAD_KEY = 'mail.hideHeaders'
+// Verlauf als Chat statt als Mail, Standard an
+const CHAT_KEY = 'mail.chat'
 function loadHidden(key: string): boolean {
   try {
     return localStorage.getItem(key) !== '0'
@@ -579,17 +584,19 @@ function MailAttachments({ m, onError }: { m: MailMessage; onError: (e?: string)
 function MailReader({
   target,
   account,
+  accounts,
   multi,
   color,
-  onReply,
+  onSent,
   onUnread,
   onDelete
 }: {
   target: Open
   account?: AccountInfo
+  accounts: AccountInfo[]
   multi: boolean
   color: (id: string) => string
-  onReply: (m: MailMessage, kind: MailReplyKind) => void
+  onSent: () => void
   onUnread: (m: MailMessage) => Promise<void>
   onDelete: (m: MailMessage) => Promise<void>
 }): JSX.Element {
@@ -598,6 +605,10 @@ function MailReader({
   const [remote, setRemote] = useState(false)
   const [hideSig, setHideSig] = useState(() => loadHidden(HIDE_SIG_KEY))
   const [hideHead, setHideHead] = useState(() => loadHidden(HIDE_HEAD_KEY))
+  const [chat, setChat] = useState(() => loadHidden(CHAT_KEY))
+  // Antwort unten im Lesebereich, der Verlauf bleibt darüber sichtbar
+  const [reply, setReply] = useState<MailReplyKind | null>(null)
+  const [sent, setSent] = useState(false)
   const [busy, setBusy] = useState(false)
   // Im dunklen Theme dunkel, einzeln auf hell umschaltbar, falls eine Mail umgekehrt schlecht aussieht
   const darkTheme = useDarkMode()
@@ -623,10 +634,30 @@ function MailReader({
   const modelKey = `${target.accountId}|${target.id}|${remote ? 'remote' : 'local'}`
   const [, setModelTick] = useState(0)
   const modelSig = modelOn ? modelCache.get(modelKey) : undefined
-  const doc = useMemo(() => (m ? mailDocument(m, remote, dark, { hide: hideSig, hideHeaders: hideHead, extra: modelSig }) : null), [m, remote, dark, hideSig, hideHead, modelSig])
+  // Eigene Nachrichten erkennt die Chat-Ansicht an Adresse oder Name eines der Konten
+  const chatOptions = useMemo((): ChatOptions | undefined => {
+    if (!m || !chat) return undefined
+    const who = (a?: MailAddress) => (a ? addressLabel(a) + (a.name ? ` <${a.address}>` : '') : '(Unbekannt)')
+    return {
+      me: accounts.map((a) => ({ name: a.displayName, address: a.upn })),
+      topTime: messageTime(m.received),
+      formatTime: messageTime,
+      topHeader: [
+        `Von: ${who(m.from)}`,
+        ...(m.to.length ? [`An: ${m.to.map(who).join('; ')}`] : []),
+        ...(m.cc.length ? [`Cc: ${m.cc.map(who).join('; ')}`] : []),
+        `Gesendet: ${fmt(m.received, 'EEEE, d. MMMM yyyy HH:mm')}`,
+        `Betreff: ${m.subject}`
+      ]
+    }
+  }, [m, chat, accounts])
+  const doc = useMemo(
+    () => (m ? mailDocument(m, remote, dark, { hide: hideSig, hideHeaders: hideHead, extra: modelSig, chat: chatOptions }) : null),
+    [m, remote, dark, hideSig, hideHead, modelSig, chatOptions]
+  )
 
   useEffect(() => {
-    if (!m || !hideSig || !modelOn || modelCache.has(modelKey)) return
+    if (!m || !(hideSig || chat) || !modelOn || modelCache.has(modelKey)) return
     const open = mailDocument(m, remote).unresolved
     const req = modelRequest(open)
     if (!req.parts.length) return
@@ -642,7 +673,7 @@ function MailReader({
     return () => {
       alive = false
     }
-  }, [m, hideSig, modelOn, modelKey, remote])
+  }, [m, hideSig, chat, modelOn, modelKey, remote])
 
   const toggleSignatures = () => {
     setHideSig(!hideSig)
@@ -651,6 +682,14 @@ function MailReader({
   const toggleHeaders = () => {
     setHideHead(!hideHead)
     saveHidden(HIDE_HEAD_KEY, !hideHead)
+  }
+  const toggleChat = () => {
+    setChat(!chat)
+    saveHidden(CHAT_KEY, !chat)
+  }
+  const startReply = (kind: MailReplyKind) => {
+    setSent(false)
+    setReply(kind)
   }
 
   if (error && !m) {
@@ -683,17 +722,20 @@ function MailReader({
   return (
     <div className="mail-read">
       <div className="mail-actions">
-        <Button size="small" icon={<ArrowReply20Regular />} disabled={busy} onClick={() => onReply(m, 'reply')}>
+        <Button size="small" icon={<ArrowReply20Regular />} disabled={busy || !!reply} onClick={() => startReply('reply')}>
           Antworten
         </Button>
-        <Button size="small" icon={<ArrowReplyAll20Regular />} disabled={busy} onClick={() => onReply(m, 'replyAll')}>
+        <Button size="small" icon={<ArrowReplyAll20Regular />} disabled={busy || !!reply} onClick={() => startReply('replyAll')}>
           Allen antworten
         </Button>
-        <Button size="small" icon={<ArrowForward20Regular />} disabled={busy} onClick={() => onReply(m, 'forward')}>
+        <Button size="small" icon={<ArrowForward20Regular />} disabled={busy || !!reply} onClick={() => startReply('forward')}>
           Weiterleiten
         </Button>
         <div style={{ flex: 1 }} />
-        {doc.headers > 0 && (
+        <Tooltip content={chat ? 'Als Mail anzeigen' : 'Als Chat anzeigen'} relationship="label">
+          <Button size="small" appearance="subtle" icon={chat ? <DocumentText20Regular /> : <Chat20Regular />} onClick={toggleChat} />
+        </Tooltip>
+        {!chat && doc.headers > 0 && (
           <Tooltip
             content={`Kopfzeilen der zitierten Nachrichten (Von, Gesendet, An, Betreff) ${hideHead ? 'ausgeblendet. Klicken zeigt sie.' : 'sichtbar. Klicken blendet sie aus.'}`}
             relationship="label"
@@ -701,7 +743,7 @@ function MailReader({
             <ToggleButton size="small" appearance="subtle" icon={<DocumentHeader20Regular />} checked={hideHead} onClick={toggleHeaders} />
           </Tooltip>
         )}
-        {doc.signatures > 0 && (
+        {!chat && doc.signatures > 0 && (
           <Tooltip
             content={`${doc.signatures === 1 ? '1 Signatur' : `${doc.signatures} Signaturen`} ${hideSig ? 'ausgeblendet. Klicken zeigt sie.' : 'sichtbar. Klicken blendet sie aus.'}`}
             relationship="label"
@@ -725,6 +767,19 @@ function MailReader({
       </div>
       <div className="mail-head">
         <h2>{m.subject}</h2>
+        {chat ? (
+          (multi && account) || doc.messages > 1 ? (
+            <div className="mail-to">
+              {multi && account && (
+                <span title={account.upn}>
+                  <span className="acct-dot" style={{ background: color(account.id) } as CSSProperties} /> {accountTitle(account).name}
+                </span>
+              )}
+              {multi && account && doc.messages > 1 && <span> · </span>}
+              {doc.messages > 1 && <span>{doc.messages} Nachrichten</span>}
+            </div>
+          ) : null
+        ) : (
         <div className="mail-sender">
           <MailAvatar accountId={m.accountId} address={m.from} name="(Unbekannt)" size={40} />
           <div className="mail-people">
@@ -741,6 +796,7 @@ function MailReader({
             )}
           </div>
         </div>
+        )}
         {m.attachments.length > 0 && <MailAttachments m={m} onError={setError} />}
         {doc.blocked > 0 && !remote && (
           <div className="mail-blocked">
@@ -753,7 +809,40 @@ function MailReader({
         )}
         {error && <div className="mail-error">{error}</div>}
       </div>
-      <iframe ref={frame} className={`mail-body ${dark ? 'dark' : ''}`} title="Inhalt der Mail" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={doc.html} />
+      <iframe
+        ref={frame}
+        className={`mail-body ${dark ? 'dark' : ''} ${chat ? 'chat' : ''}`}
+        title="Inhalt der Mail"
+        sandbox="allow-popups allow-popups-to-escape-sandbox"
+        srcDoc={doc.html}
+      />
+      {reply ? (
+        <MailCompose
+          key={reply}
+          docked
+          state={{ kind: reply, accountId: m.accountId, source: m }}
+          accounts={accounts}
+          color={color}
+          onClose={() => setReply(null)}
+          onSent={() => {
+            setReply(null)
+            setSent(true)
+            onSent()
+          }}
+        />
+      ) : (
+        <div className="reply-bar">
+          <button className="reply-start" disabled={busy} onClick={() => startReply('reply')}>
+            <ArrowReply20Regular />
+            <span>{sent ? 'Gesendet. Noch einmal antworten …' : `Antworten an ${m.from ? addressLabel(m.from) : 'Absender'} …`}</span>
+          </button>
+          {m.to.length + m.cc.length > 1 && (
+            <Tooltip content="Allen antworten" relationship="label">
+              <Button appearance="subtle" icon={<ArrowReplyAll20Regular />} disabled={busy} onClick={() => startReply('replyAll')} />
+            </Tooltip>
+          )}
+        </div>
+      )}
     </div>
   )
 }

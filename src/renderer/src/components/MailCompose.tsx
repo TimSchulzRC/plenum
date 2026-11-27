@@ -28,12 +28,15 @@ export function MailCompose({
   state,
   accounts,
   color,
+  docked,
   onClose,
   onSent
 }: {
   state: ComposeState
   accounts: AccountInfo[]
   color: (id: string) => string
+  // Unten im Lesebereich unter dem Verlauf: ohne Betreff und ohne Vorschau der Mail, die steht darüber
+  docked?: boolean
   onClose: () => void
   onSent: () => void
 }): JSX.Element {
@@ -106,7 +109,7 @@ export function MailCompose({
 
   return (
     <form
-      className="mail-compose"
+      className={`mail-compose${docked ? ' docked' : ''}`}
       onSubmit={(e) => {
         e.preventDefault()
         void send()
@@ -186,9 +189,11 @@ export function MailCompose({
             <Input value={cc} onChange={(_e, d) => setCc(d.value)} />
           </Field>
         )}
-        <Field label="Betreff" orientation="horizontal">
-          <Input value={subject} readOnly={state.kind !== 'new'} onChange={(_e, d) => setSubject(d.value)} placeholder="Betreff hinzufügen" />
-        </Field>
+        {!docked && (
+          <Field label="Betreff" orientation="horizontal">
+            <Input value={subject} readOnly={state.kind !== 'new'} onChange={(_e, d) => setSubject(d.value)} placeholder="Betreff hinzufügen" />
+          </Field>
+        )}
         {files.length > 0 && (
           <div className="mail-attachments">
             {files.map((f, i) => (
@@ -209,12 +214,12 @@ export function MailCompose({
           autoFocus={state.kind === 'reply' || state.kind === 'replyAll'}
           value={text}
           onChange={(_e, d) => setText(d.value)}
-          placeholder={source ? 'Deine Nachricht. Die ursprüngliche Mail hängt die App darunter.' : 'Deine Nachricht'}
+          placeholder={source ? (docked ? 'Deine Antwort. Der bisherige Verlauf kommt automatisch darunter.' : 'Deine Nachricht. Die ursprüngliche Mail hängt die App darunter.') : 'Deine Nachricht'}
           resize="none"
         />
       </div>
       {error && <div className="mail-error">{error}</div>}
-      {source && (
+      {source && !docked && (
         <div className="compose-quote">
           <div>
             <b>Von:</b> {addressLabel(source.from)} · {fmt(source.received, 'dd.MM.yyyy HH:mm')}
