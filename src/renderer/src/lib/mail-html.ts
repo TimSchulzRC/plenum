@@ -524,6 +524,9 @@ export function ownSignature(mails: MailInput[]): { html: string; text: string }
   trimBlank(div)
   // Markierungen des Mail-Clients (id="Signature" …) nicht in jede neue Mail mitnehmen
   for (const el of div.querySelectorAll('[id]')) el.removeAttribute('id')
+  // Bilder nur eingebettet (data:) oder über https: So zeigt die Vorschau, die man bestätigt, genau die
+  // Bilder, die mit der Mail rausgehen
+  for (const img of div.querySelectorAll('img')) if (!/^(?:data:image\/|https:)/i.test(img.getAttribute('src') ?? '')) img.remove()
   const html = div.innerHTML.trim()
   if (!html) return undefined
   return { html, text: lines.slice(hit.start, hit.end).map((l) => l.text).filter(Boolean).join('\n') }

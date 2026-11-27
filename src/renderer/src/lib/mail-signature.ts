@@ -689,13 +689,19 @@ export function learnSignature(mails: SentMailLines[]): { mail: number; start: n
     const start = signatureStart(a, Math.max(1, a.length - same))
     if (start >= 0 && valid(a.slice(start))) return { mail: i, start, end: a.length }
   }
+  // Ein Bild im Block muss auch in einer anderen gesendeten Mail stehen (Logo), sonst ist es ein
+  // Screenshot oder Foto, das man einmal mitgeschickt hat. Mit nur einer Mail lässt sich das nicht
+  // prüfen, dann entscheidet die Vorschau, die man bestätigt.
+  const knownImages = (i: number, block: SigLine[]) =>
+    own.length < 2 || block.every((l) => !l.image || own.some((o, j) => j !== i && o.some((x) => sameLine(l, x))))
   for (let i = 0; i < own.length; i++) {
     const r = findSignatures(mails[i].lines, mails[i].sender).find((x) => x.start < own[i].length)
     if (!r) continue
     const end = Math.min(r.end, own[i].length)
     // Die Namenszeile steht direkt über dem Bereich, den der Lesebereich einklappt
     const start = signatureStart(own[i], Math.max(1, r.start - 1))
-    if (start >= 0 && start <= r.start && valid(own[i].slice(start, end))) return { mail: i, start, end }
+    const block = own[i].slice(start, end)
+    if (start >= 0 && start <= r.start && valid(block) && knownImages(i, block)) return { mail: i, start, end }
   }
   return undefined
 }

@@ -46,6 +46,11 @@ test('Review: gleicher Inhalt am Ende zweier Mails ist keine Signatur', () => {
   // Bild ohne bekannte Quelle ist nie gleich
   const unknown: SigLine = { text: '', image: true }
   assert.deepEqual(learn(L('Hallo,', 'ok.', unknown, ...tail), L('Hi,', 'gut.', unknown, ...tail)), { mail: 0, start: 3, end: 5 })
+  // Regeln als Rückfall: ein Screenshot zwischen Name und Telefon, der in der anderen Mail anders ist
+  const rule = (shot: SigLine) => L('Hallo Kim,', 'anbei.', 'Viele Grüße', 'Alex Beispiel', shot, 'Contoso GmbH', 'Tel. +49 123 456789')
+  assert.equal(learn(rule(shotA), rule(shotB)), undefined)
+  // dasselbe Logo in beiden: Signatur
+  assert.deepEqual(learn(rule(logo), L('Hi,', 'ok.', 'Gruß', 'Alex Beispiel', logo, 'Tel. +49 123 456789')), { mail: 0, start: 3, end: 7 })
   // Signatur eines anderen Namens (weitergeleitete Mail ohne Kopf) wird nicht übernommen
   const other = ['Kim Fabrik', 'Fabrikam AG', 'Tel. +49 40 1234567']
   assert.equal(learn(L('Hallo,', 'zur Info.', ...other), L('Hi,', 'siehe unten.', ...other)), undefined)
