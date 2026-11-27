@@ -128,6 +128,8 @@ export class TokenStore {
   bearers = new Map<string, { token: string; exp?: number; at: number; aud: string; tid?: string }>()
   skypeToken?: { token: string; at: number }
   me: JwtInfo = {}
+  // me stammt aus einem Token des Chat-Dienstes (gilt nur für den Mandanten der Sitzung)
+  private meFromChat = false
   // Alle gesehenen Endpunkte für die Diagnose.
   seen = new Map<string, { method: string; count: number; at: number }>()
   onChange?: (family: Family) => void
@@ -139,6 +141,7 @@ export class TokenStore {
     this.bearers.clear()
     this.skypeToken = undefined
     this.me = {}
+    this.meFromChat = false
   }
 
   capture(url: string, method: string, headers: Record<string, string | string[]>): void {
@@ -156,8 +159,14 @@ export class TokenStore {
         // Wer man in dieser Sitzung ist, sagt das Token des Chat-Dienstes (chatsvcagg): Das gilt nur für den
         // Mandanten der Sitzung. Spaces-Tokens holt die Web-App auch für andere Mandanten, und übernähme die
         // App eins davon, hielte sie sich für den Gast dort (falsche Namen, falscher Mandant, kein Postfach).
-        // Andere Tokens nur, solange noch keins da ist.
-        if (info.oid && (info.aud.includes('chatsvcagg') || !this.me.oid)) this.me = { ...info }
+        // Ohne Token des Chat-Dienstes ist me vorläufig: Ein Token ohne idp (eigener Mandant) ersetzt dann ein
+        // vorläufiges eines Gastmandanten.
+        if (info.oid) {
+          if (info.aud.includes('chatsvcagg')) {
+            this.me = { ...info }
+            this.meFromChat = true
+          } else if (!this.meFromChat && (!this.me.oid || (this.me.idp && !info.idp))) this.me = { ...info }
+        }
       }
     }
     const skype =
@@ -203,6 +212,8 @@ export class TokenStore {
       if (info?.aud) {
         const newest = this.pick((a) => a === info.aud)
         if (newest) h['authorization'] = `Bearer ${newest.token}`
+        // Vorlage nur mit dem Token eines fremden Mandanten: lieber ohne als dorthin
+        else if (this.me.tid && info.tid && info.tid.toLowerCase() !== this.me.tid.toLowerCase()) delete h['authorization']
       }
     } else if (!auth) {
       const aud = FAMILY_AUDIENCE[family]
@@ -218,17 +229,18 @@ export class TokenStore {
     return h
   }
 
-  // Neuestes Token der passenden Audiences, bevorzugt aus dem Mandanten der Sitzung (me.tid)
+  // Neuestes Token der passenden Audiences. Ist der Mandant der Sitzung bekannt (me.tid), nur Tokens aus
+  // ihm (oder ohne Mandant): Mit dem eines fremden Mandanten gingen eigene Anfragen dorthin, Mail an ein
+  // fremdes oder gar kein Postfach.
   private pick(match: (aud: string) => boolean): { token: string; exp?: number } | undefined {
     let best: { token: string; exp?: number } | undefined
-    let own: { token: string; exp?: number } | undefined
     const tid = this.me.tid?.toLowerCase()
     for (const t of this.bearers.values()) {
       if (!match(t.aud)) continue
+      if (tid && t.tid && t.tid.toLowerCase() !== tid) continue
       if (!best || (t.exp ?? 0) > (best.exp ?? 0)) best = t
-      if (tid && t.tid?.toLowerCase() === tid && (!own || (t.exp ?? 0) > (own.exp ?? 0))) own = t
     }
-    return own ?? best
+    return best
   }
 
   findBearer(audPart: string): string | undefined {

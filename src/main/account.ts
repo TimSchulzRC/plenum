@@ -637,11 +637,11 @@ export class AccountService extends EventEmitter<AccountEvents> {
         data = await this.api.conversations(since, initial ? 200 : 100)
       }
     } catch (e) {
-      if (e instanceof ApiError && (e.status === 400 || e.status === 404)) this.syncStateUrl = undefined
       log.warn(`[${this.id}] deltaSync failed`, (e as Error).message)
       this.trackSyncFailure('delta', e)
       // Aus der Zeit im fremden Mandanten: nichts mehr ändern
       if (epoch !== this.epoch || this.outOfTenant()) return
+      if (e instanceof ApiError && (e.status === 400 || e.status === 404)) this.syncStateUrl = undefined
       this.noteSync(e)
       if (this.started && touched.length > 0) this.emit('conversation-updated', touched)
       return

@@ -326,7 +326,8 @@ export class TeamsApi {
   // ---------- E-Mail: Graph, sonst Outlook (siehe mail.ts) ----------
   private mailApis(order: MailApi[]): MailApi[] {
     const t = this.engine.tokens
-    return order.filter((a) => (a === 'graph' ? t.has('graph') || !!t.findBearer('graph.microsoft.com') : !!t.bearerFor(OUTLOOK_AUDIENCES)))
+    // Nur mit einem Token des eigenen Mandanten (siehe TokenStore.pick), eine Vorlage allein reicht nicht
+    return order.filter((a) => (a === 'graph' ? !!t.findBearer('graph.microsoft.com') : !!t.bearerFor(OUTLOOK_AUDIENCES)))
   }
 
   hasMailToken(): boolean {

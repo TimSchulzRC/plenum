@@ -42,4 +42,8 @@ export function foreignHome(me: { tid?: string; idp?: string }): string | undefi
 }
 
 // Läuft die Sitzung als Gast? Ein idp-Claim, dessen Mandant nicht der eigene ist oder sich nicht lesen lässt
-export const guestSession = (me: { tid?: string; idp?: string }): boolean => !!me.idp && homeTenantOf(me) !== me.tid?.toLowerCase()
+export function guestSession(me: { tid?: string; idp?: string }): boolean {
+  if (!me.idp) return false
+  const home = homeTenantOf(me)
+  return !home || home !== me.tid?.toLowerCase()
+}

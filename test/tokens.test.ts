@@ -33,12 +33,27 @@ test('Eigene Anfragen nehmen das Token des Mandanten der Sitzung, auch wenn ein 
   assert.equal(t.findBearer('api.spaces.skype.com'), home)
   assert.equal(t.bearerFor(['https://api.spaces.skype.com']), home)
   assert.equal(t.headersFor('mt').authorization, `Bearer ${home}`)
-  // Gibt es keins im Mandanten der Sitzung, das neueste
+  // Nur ein Mail-Token eines fremden Mandanten: keins (sonst ginge Mail an ein fremdes Postfach)
   const outlook = jwt({ aud: 'https://outlook.office.com/', oid: 'me-guest', tid: GUEST, exp: 7000 })
   t.capture('https://outlook.office.com/api/v2.0/me/messages', 'GET', { authorization: `Bearer ${outlook}` })
-  assert.equal(t.bearerFor(['https://outlook.office.com/']), outlook)
+  assert.equal(t.bearerFor(['https://outlook.office.com/']), undefined)
+  const graph = jwt({ aud: 'https://graph.microsoft.com', oid: 'me-guest', tid: GUEST, exp: 7000 })
+  t.capture('https://graph.microsoft.com/v1.0/me/messages', 'GET', { authorization: `Bearer ${graph}` })
+  assert.equal(t.findBearer('graph.microsoft.com'), undefined)
+  assert.equal(t.headersFor('graph').authorization, undefined)
   // reset() verwirft alles
   t.reset()
   assert.equal(t.findBearer('api.spaces.skype.com'), undefined)
   assert.deepEqual(t.me, {})
+})
+
+test('Ohne Token des Chat-Dienstes: ein Token des eigenen Mandanten ersetzt ein vorläufiges eines Gastmandanten', () => {
+  const t = new TokenStore()
+  t.capture('https://teams.microsoft.com/api/mt/emea/beta/users/x', 'GET', auth({ aud: 'https://api.spaces.skype.com', oid: 'me-guest', tid: GUEST, idp: `https://sts.windows.net/${HOME}/`, exp: 9000 }))
+  assert.equal(t.me.tid, GUEST)
+  t.capture('https://teams.microsoft.com/api/mt/emea/beta/users/y', 'GET', auth({ aud: 'https://api.spaces.skype.com', oid: 'me-home', tid: HOME, exp: 5000 }))
+  assert.equal(t.me.tid, HOME)
+  // Ein weiteres fremdes ändert es nicht mehr
+  t.capture('https://teams.microsoft.com/api/mt/emea/beta/users/z', 'GET', auth({ aud: 'https://api.spaces.skype.com', oid: 'me-guest', tid: GUEST, idp: `https://sts.windows.net/${HOME}/`, exp: 9900 }))
+  assert.equal(t.me.tid, HOME)
 })

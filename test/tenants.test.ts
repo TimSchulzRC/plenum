@@ -44,4 +44,5 @@ test('Heimatmandant: Mitglied ohne idp, Gast mit dem Aussteller des Heimatmandan
   assert.equal(guestSession({ tid: home }), false)
   assert.equal(guestSession({ tid: home, idp: `https://sts.windows.net/${home.toUpperCase()}/` }), false)
   assert.equal(guestSession({}), false)
+  assert.equal(guestSession({ idp: 'live.com' }), true)
 })
