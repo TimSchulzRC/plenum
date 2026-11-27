@@ -1,6 +1,6 @@
 import DOMPurify from 'dompurify'
 import type { MailFile, MailMessage } from '@shared/types'
-import { darkColor, darkCss } from './mail-dark'
+import { darkColor, darkCss, lightColor, lightCss } from './mail-dark'
 import { bodyStart, findHeaders, findSignatures, isMe, parseMailDate, partStarts, shortDate, threadParts, type OpenPart, type Person, type SigLine, type SigRange, type ThreadPart } from './mail-signature'
 
 export interface MailDoc {
@@ -364,11 +364,11 @@ function chatBody(root: Element, lines: DomLine[], parts: ThreadPart[], chat: Ch
 // Chat-Ansicht: Hintergrund, Blasen, Name und Uhrzeit mit Pop-up beim Überfahren (ohne Skript)
 const chatCss = (dark: boolean) => {
   const c = dark
-    ? { bg: '#1f1f1f', other: '#292929', mine: '#2b2b40', fg: '#dbdbdb', meta: '#adadad', card: '#2e2e2e', line: '#3d3d3d', shadow: 'rgba(0,0,0,.5)' }
-    : { bg: '#f5f5f5', other: '#ffffff', mine: '#e8ebfa', fg: '#242424', meta: '#616161', card: '#ffffff', line: '#e0e0e0', shadow: 'rgba(0,0,0,.16)' }
+    ? { bg: '#1f1f1f', other: '#292929', mine: '#2b2b40', fg: '#dbdbdb', name: '#d6d6d6', meta: '#999999', card: '#2e2e2e', line: '#3d3d3d', shadow: 'rgba(0,0,0,.5)' }
+    : { bg: '#f5f5f5', other: '#ffffff', mine: '#e8ebfa', fg: '#242424', name: '#424242', meta: '#707070', card: '#ffffff', line: '#e0e0e0', shadow: 'rgba(0,0,0,.16)' }
   // html ohne overflow gäbe das overflow von body ans Fenster weiter. Dann wüchse der Verlauf nach
   // oben aus dem Bild (umgekehrte Spalte), und dorthin scrollt kein Fenster.
-  return `html{height:100%;overflow:hidden;background:${c.bg}}body.chat{height:100%;margin:0;display:flex;flex-direction:column-reverse;overflow-y:auto;overflow-x:hidden}.thread{margin-bottom:auto;padding:18px 24px 22px;display:flex;flex-direction:column;gap:18px}.msg{display:flex;flex-direction:column;align-items:flex-start;max-width:min(86%,780px);min-width:0}.msg.mine{align-self:flex-end;align-items:flex-end}.meta{position:relative;display:flex;gap:10px;align-items:baseline;margin:0 6px 4px;font-size:12px;color:${c.meta};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.who{font-weight:600;font-size:12.5px;color:${c.fg}}.has-pop{cursor:default;outline:none}.has-pop:hover,.has-pop:focus{text-decoration:underline dotted;text-underline-offset:3px}.pop{display:none;position:fixed;z-index:10;position-area:block-end span-inline-end;position-try:most-height flip-block,flip-inline,flip-block flip-inline;max-height:100%;max-width:100%;padding:6px 0;box-sizing:border-box;flex-direction:column;font-weight:400;cursor:auto}.mine .pop{position-area:block-end span-inline-start}.has-pop:hover>.pop,.has-pop:focus-within>.pop{display:flex}.card{box-sizing:border-box;max-width:440px;max-height:380px;min-height:0;flex:0 1 auto;overflow:auto;overflow-wrap:anywhere;padding:10px 12px;border-radius:10px;background:${c.card};color:${c.fg};border:1px solid ${c.line};box-shadow:0 8px 24px ${c.shadow};font-size:12.5px;line-height:1.45;text-decoration:none}.card .addr{color:${c.meta};margin-bottom:6px}.card .addr:last-child{margin-bottom:0}.card .sig{border-top:1px solid ${c.line};padding-top:8px}.card .addr+.sig{margin-top:2px}.card .sig:first-child{border-top:0;padding-top:0}.card .hl{margin:1px 0}.bubble{min-width:0;max-width:100%;overflow-x:auto;padding:10px 14px;border-radius:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;background:${c.other};color:${c.fg};box-shadow:0 1px 2px rgba(0,0,0,${dark ? '.4' : '.08'})}.mine .bubble{background:${c.mine}}.card{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.bubble :not(pre,code,pre *,code *,tt,kbd,samp),.card :not(pre,code,pre *,code *,tt,kbd,samp){font-family:inherit!important}.bubble>:first-child,.bubble>:first-child>:first-child{margin-top:0}.bubble>:last-child,.bubble>:last-child>:last-child{margin-bottom:0}.bubble .files{margin-top:6px;font-size:12px;color:${c.meta}}.bubble .empty{color:${c.meta};font-style:italic}.bubble blockquote[type=cite],.bubble .gmail_quote,.bubble blockquote.gmail_quote{margin:0!important;padding:0!important;border:0!important}`
+  return `html{height:100%;overflow:hidden;background:${c.bg}}body.chat{height:100%;margin:0;display:flex;flex-direction:column-reverse;overflow-y:auto;overflow-x:hidden}.thread{margin-bottom:auto;padding:18px 24px 22px;display:flex;flex-direction:column;gap:18px}.msg{display:flex;flex-direction:column;align-items:flex-start;max-width:min(86%,780px);min-width:0}.msg.mine{align-self:flex-end;align-items:flex-end}.meta{position:relative;display:flex;gap:8px;align-items:baseline;margin:0 4px 4px;font-size:11.5px;color:${c.meta};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.who{font-weight:600;font-size:12.5px;color:${c.name}}.has-pop{cursor:default;outline:none}.has-pop:hover,.has-pop:focus{text-decoration:underline dotted;text-underline-offset:3px}.pop{display:none;position:fixed;z-index:10;position-area:block-end span-inline-end;position-try:most-height flip-block,flip-inline,flip-block flip-inline;max-height:100%;max-width:100%;padding:6px 0;box-sizing:border-box;flex-direction:column;font-weight:400;cursor:auto}.mine .pop{position-area:block-end span-inline-start}.has-pop:hover>.pop,.has-pop:focus-within>.pop{display:flex}.card{box-sizing:border-box;max-width:440px;max-height:380px;min-height:0;flex:0 1 auto;overflow:auto;overflow-wrap:anywhere;padding:10px 12px;border-radius:10px;background:${c.card};color:${c.fg};border:1px solid ${c.line};box-shadow:0 8px 24px ${c.shadow};font-size:12.5px;line-height:1.45;text-decoration:none}.card .addr{color:${c.meta};margin-bottom:6px}.card .addr:last-child{margin-bottom:0}.card .sig{border-top:1px solid ${c.line};padding-top:8px}.card .addr+.sig{margin-top:2px}.card .sig:first-child{border-top:0;padding-top:0}.card .hl{margin:1px 0}.bubble{min-width:0;max-width:100%;overflow-x:auto;padding:8px 13px 9px;border-radius:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:14px;line-height:20px;background:${c.other};color:${c.fg}}.mine .bubble{background:${c.mine}}.card{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif}.bubble :not(pre,code,pre *,code *,tt,kbd,samp),.card :not(pre,code,pre *,code *,tt,kbd,samp){font-family:inherit!important}.bubble>:first-child,.bubble>:first-child>:first-child{margin-top:0}.bubble>:last-child,.bubble>:last-child>:last-child{margin-bottom:0}.bubble .files{margin-top:6px;font-size:12px;color:${c.meta}}.bubble .empty{color:${c.meta};font-style:italic}.bubble blockquote[type=cite],.bubble .gmail_quote,.bubble blockquote.gmail_quote{margin:0!important;padding:0!important;border:0!important}`
 }
 
 // „Signatur anzeigen“ und die Kurzform der Kopfzeilen im Dokument, hell oder dunkel
@@ -492,8 +492,11 @@ export function mailDocument(
   const top: Person | undefined = m.from ? { name: m.from.name, address: m.from.address } : undefined
   const parts = threadParts(lines, all, top)
   let body: string
-  if (sig.chat) body = chatBody(root, lines, parts, sig.chat)
-  else {
+  if (sig.chat) {
+    // Eigene Signatur gesendeter Antworten: im dunklen Theme umgerechnet wie die Mail selbst
+    const sent = dark ? sig.chat.sent?.map((x) => (x.signature ? { ...x, signature: darkSignature(x.signature) } : x)) : sig.chat.sent
+    body = chatBody(root, lines, parts, { ...sig.chat, sent })
+  } else {
     const folds: Fold[] = [
       ...(sig.hide ? all.map((r): Fold => ({ start: r.start, end: r.end, label: 'Signatur', cls: 'te-sig' })) : []),
       ...(sig.hideHeaders ? headers.map((r): Fold => ({ ...r, cls: 'te-head' })) : [])
@@ -542,6 +545,52 @@ export function cleanSignature(sig: { html: string; text: string }): string {
   for (const el of div.querySelectorAll('[background]')) if (!allowed(el.getAttribute('background') ?? '')) el.removeAttribute('background')
   trimBlank(div)
   return div.innerHTML.trim()
+}
+
+// Signatur im dunklen Theme: Farben wie im Lesebereich umgerechnet (siehe mail-dark.ts), Bilder bleiben.
+// Die Originale stehen in data-te-*, lightSignature() macht daraus wieder die Fassung, die rausgeht.
+const COLOR_ATTRS = ['color', 'bgcolor']
+export function darkSignature(html: string): string {
+  const div = document.implementation.createHTMLDocument('').createElement('div')
+  div.innerHTML = html
+  for (const el of div.querySelectorAll('*')) {
+    const style = el.getAttribute('style')
+    if (style && darkCss(style) !== style) {
+      el.setAttribute('data-te-style', style)
+      el.setAttribute('style', darkCss(style))
+    }
+    for (const a of COLOR_ATTRS) {
+      const v = el.getAttribute(a)
+      const d = v ? darkColor(v) : undefined
+      if (v && d && d !== v) {
+        el.setAttribute(`data-te-${a}`, v)
+        el.setAttribute(a, d)
+      }
+    }
+  }
+  return div.innerHTML
+}
+
+// Aus dem dunklen Entwurf die helle Fassung: Originale zurück. Farben ohne Original hat der Browser beim
+// Bearbeiten aus den dunklen Werten gesetzt (Zeilen zusammengeführt o. Ä.), die rechnet die App zurück.
+export function lightSignature(html: string): string {
+  const div = document.implementation.createHTMLDocument('').createElement('div')
+  div.innerHTML = html
+  for (const el of div.querySelectorAll('*')) {
+    for (const a of ['style', ...COLOR_ATTRS]) {
+      const orig = el.getAttribute(`data-te-${a}`)
+      if (orig !== null) {
+        el.setAttribute(a, orig)
+        el.removeAttribute(`data-te-${a}`)
+        continue
+      }
+      const v = el.getAttribute(a)
+      if (!v) continue
+      const light = a === 'style' ? lightCss(v) : (lightColor(v) ?? v)
+      if (light !== v) el.setAttribute(a, light)
+    }
+  }
+  return div.innerHTML
 }
 
 // Signatur zum Senden: Bilder als data: werden eingebettete Anhänge (cid:), wie Outlook es macht.

@@ -2249,7 +2249,7 @@ button {
 .sig-default {
   color: var(--fg-3);
 }
-/* Weiß wie beim Empfänger. contain: Stile der Signatur bleiben im Kasten. */
+/* Hell wie beim Empfänger, im dunklen Theme umgerechnet (siehe unten). contain: Stile der Signatur bleiben im Kasten. */
 .sig-edit {
   flex: 0 1 auto;
   min-height: 40px;
@@ -2280,6 +2280,17 @@ button {
 }
 .sig-edit p {
   margin: 0;
+}
+/* Dunkles Theme: Hintergrund und Grundfarben wie der Lesebereich, die Farben der Signatur rechnet
+   darkSignature() um */
+[data-theme='dark'] .sig-edit,
+.signature-preview.dark {
+  background: #292929;
+  color: #dbdbdb;
+  color-scheme: dark;
+}
+[data-theme='dark'] .sig-edit a {
+  color: #8ab4f8;
 }
 .signature-preview {
   display: block;

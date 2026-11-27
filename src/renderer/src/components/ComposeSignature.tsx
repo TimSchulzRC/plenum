@@ -2,7 +2,8 @@ import { Button, Menu, MenuButton, MenuDivider, MenuItemRadio, MenuList, MenuPop
 import { Dismiss16Regular } from '@fluentui/react-icons'
 import { useLayoutEffect, useRef } from 'react'
 import type { MailSignatures } from '@shared/types'
-import { cleanSignature } from '../lib/mail-html'
+import { cleanSignature, darkSignature, lightSignature } from '../lib/mail-html'
+import { useDarkMode } from '../theme'
 import { findSignature, type SignatureStatus } from '../lib/mail-signatures'
 
 // Signatur dieser einen Mail. name null: ohne Signatur. html ist der Stand im Entwurf, edited: von Hand
@@ -122,16 +123,18 @@ export function ComposeSignature({
 }
 
 // Bearbeitbare Signatur. Was man tippt, bleibt im Feld stehen. Neu gesetzt wird der Inhalt nur, wenn html
-// von außen kommt (andere Signatur, Zurücksetzen, neue Fassung aus Outlook).
+// von außen kommt (andere Signatur, Zurücksetzen, neue Fassung aus Outlook) oder das Theme wechselt. Im
+// dunklen Theme zeigt das Feld die umgerechneten Farben, html bleibt die helle Fassung, die rausgeht.
 function SignatureEditor({ html, onInput }: { html: string; onInput: (html: string) => void }): JSX.Element {
+  const dark = useDarkMode()
   const ref = useRef<HTMLDivElement>(null)
-  const shown = useRef<string | undefined>(undefined)
+  const shown = useRef<{ html: string; dark: boolean }>(undefined)
   useLayoutEffect(() => {
     const el = ref.current
-    if (!el || html === shown.current) return
-    el.innerHTML = html
-    shown.current = html
-  }, [html])
+    if (!el || (html === shown.current?.html && dark === shown.current.dark)) return
+    el.innerHTML = dark ? darkSignature(html) : html
+    shown.current = { html, dark }
+  }, [html, dark])
   return (
     <div
       ref={ref}
@@ -143,8 +146,9 @@ function SignatureEditor({ html, onInput }: { html: string; onInput: (html: stri
       contentEditable
       suppressContentEditableWarning
       onInput={() => {
-        const now = ref.current?.innerHTML ?? ''
-        shown.current = now
+        const raw = ref.current?.innerHTML ?? ''
+        const now = dark ? lightSignature(raw) : raw
+        shown.current = { html: now, dark }
         onInput(now)
       }}
     />

@@ -65,7 +65,9 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   return [r + l - c / 2, g + l - c / 2, b + l - c / 2]
 }
 
-export function darkColor(c: string): string | undefined {
+// Farbe mit gleichem Farbton und gleicher Sättigung, aber der wahrgenommenen Helligkeit, die target aus der
+// alten macht (L* 0 bis 100)
+function remap(c: string, target: (l: number) => number): string | undefined {
   const rgba = parse(c)
   if (!rgba) return undefined
   const [r, g, b] = rgba.slice(0, 3).map((x) => Math.min(255, Math.max(0, x)) / 255)
@@ -74,14 +76,12 @@ export function darkColor(c: string): string | undefined {
   const d = max - min
   const s = d === 0 ? 0 : d / (1 - Math.abs(max + min - 1))
   const h = d === 0 ? 0 : max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4
-  // Wahrgenommene Helligkeit umkehren, nicht die HSL-Helligkeit: Reines Blau ist für das Auge
-  // dunkel und muss hell werden, sonst ist ein blauer Link auf dunklem Grund kaum lesbar.
-  const target = DARKEST + (LIGHTEST - DARKEST) * (1 - lstar(luminance(r, g, b)) / 100)
+  const want = target(lstar(luminance(r, g, b)))
   let lo = 0
   let hi = 1
   for (let i = 0; i < 24; i++) {
     const mid = (lo + hi) / 2
-    if (lstar(luminance(...hslToRgb(h, s, mid))) < target) lo = mid
+    if (lstar(luminance(...hslToRgb(h, s, mid))) < want) lo = mid
     else hi = mid
   }
   const out = hslToRgb(h, s, (lo + hi) / 2).map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255))
@@ -89,9 +89,22 @@ export function darkColor(c: string): string | undefined {
   return a < 1 ? `rgba(${out.join(', ')}, ${a})` : '#' + out.map((v) => v.toString(16).padStart(2, '0')).join('')
 }
 
+// Wahrgenommene Helligkeit umkehren, nicht die HSL-Helligkeit: Reines Blau ist für das Auge
+// dunkel und muss hell werden, sonst ist ein blauer Link auf dunklem Grund kaum lesbar.
+export function darkColor(c: string): string | undefined {
+  return remap(c, (l) => DARKEST + (LIGHTEST - DARKEST) * (1 - l / 100))
+}
+
+// Umkehrung von darkColor, für die eigene Signatur: Was im dunklen Entwurf entsteht, geht hell raus
+export function lightColor(c: string): string | undefined {
+  return remap(c, (l) => 100 * (1 - Math.min(1, Math.max(0, (l - DARKEST) / (LIGHTEST - DARKEST)))))
+}
+
 // Nur Werte nach einem Doppelpunkt, damit Selektoren wie .red oder Klassennamen heil bleiben
-export function darkCss(css: string): string {
+export function darkCss(css: string, color: (c: string) => string | undefined = darkColor): string {
   // URLs und Zeichenketten bleiben, sonst würde aus url(white.png) eine kaputte Adresse
-  const value = (v: string) => v.replace(SKIP, (t) => (/^url\(/i.test(t) || t[0] === '"' || t[0] === "'" ? t : (darkColor(t) ?? t)))
+  const value = (v: string) => v.replace(SKIP, (t) => (/^url\(/i.test(t) || t[0] === '"' || t[0] === "'" ? t : (color(t) ?? t)))
   return css.replace(/:((?:url\([^)]*\)|[^;{}])*)/gi, (_, v: string) => ':' + value(v))
 }
+
+export const lightCss = (css: string): string => darkCss(css, lightColor)
