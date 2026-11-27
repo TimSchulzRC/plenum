@@ -192,3 +192,37 @@ test('Bildspeicher: zwischen zwei Durchgängen meldet der Leser kein fehlendes B
   store.remember('d1', [{ id: 'a', size: 1 }, { id: 'b', size: 1 }])
   assert.equal((await store.image('d1', 'b@x'))?.cid, 'b@x')
 })
+
+test('Bildspeicher: viele andere Mails während des Ladens verdrängen die Anhangsliste nicht', async () => {
+  const store = new MailImageStore({
+    list: async () => [],
+    fetch: async (m, id) => {
+      if (m === 'm0') await wait(20)
+      return entry(`${id}@x`)
+    }
+  })
+  store.remember('m0', [{ id: 'a', size: 1 }])
+  const p = store.image('m0', 'a@x')
+  for (let i = 1; i <= 210; i++) store.remember(`m${i}`, [])
+  assert.equal((await p)?.cid, 'a@x')
+})
+
+test('Bildspeicher: ein früh fertiger Leser räumt die Warteliste eines späteren nicht ab', async () => {
+  const slow: Record<string, number> = { a: 1, z: 30, b: 1, c: 80 }
+  const store = new MailImageStore({
+    list: async () => [],
+    fetch: async (_m, id) => {
+      await wait(slow[id])
+      return entry(`${id}@x`)
+    }
+  })
+  store.remember('m1', [{ id: 'a', size: 1 }, { id: 'z', size: 1 }])
+  // Leser A bekommt a früh, der Vorgang läuft wegen z weiter
+  assert.equal((await store.image('m1', 'a@x'))?.cid, 'a@x')
+  // Liste ändert sich, Leser B fragt nach b und hängt sich an
+  store.remember('m1', [{ id: 'a', size: 1 }, { id: 'z', size: 1 }, { id: 'b', size: 1 }, { id: 'c', size: 1 }])
+  const t0 = Date.now()
+  assert.equal((await store.image('m1', 'b@x'))?.cid, 'b@x')
+  // b kommt im zweiten Durchgang nach etwa 30 + 1 ms, nicht erst nach c (80 ms)
+  assert.ok(Date.now() - t0 < 70, `b nach ${Date.now() - t0} ms`)
+})

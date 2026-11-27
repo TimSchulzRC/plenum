@@ -113,7 +113,12 @@ export class MailImageStore {
         this.bytes -= e.data.byteLength
       }
     }
-    while (this.refs.size > 200) this.refs.delete(this.refs.keys().next().value as string)
+    // Älteste zuerst, aber keine Mail, die gerade lädt: Ihre Bilder gälten sonst als entfernt
+    while (this.refs.size > 200) {
+      const old = [...this.refs.keys()].find((id) => !this.running.has(id))
+      if (old === undefined) break
+      this.refs.delete(old)
+    }
   }
 
   // Alle noch fehlenden Bilder einer Mail laden
@@ -197,8 +202,9 @@ export class MailImageStore {
       // Gefunden: sofort. Nicht gefunden erst, wenn der ganze Ladevorgang durch ist, auch ein
       // zweiter Durchgang nach einer geänderten Anhangsliste
       const finish = (e: ImageEntry | undefined) => {
-        set.delete(check)
-        if (!set.size) this.waiters.delete(messageId)
+        // Schon erledigt: nichts anfassen, die Liste kann inzwischen einem anderen Leser gehören
+        if (!set.delete(check)) return
+        if (!set.size && this.waiters.get(messageId) === set) this.waiters.delete(messageId)
         resolve(e)
       }
       const check = () => {
