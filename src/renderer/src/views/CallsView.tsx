@@ -65,7 +65,8 @@ export function CallsView(): JSX.Element {
   const entries = useMemo(() => mergeByTime(accounts.map((a) => ({ accountId: a.id, items: lists[a.id]?.items ?? [] }))), [accounts, lists])
   const tagFor = (accountId: string) => <AccountTag account={byId(accountId)} color={color(accountId)} />
   const loading = !!readyKey && !accounts.some((a) => lists[a.id]?.items || lists[a.id]?.error)
-  const missing = accounts.filter((a) => !lists[a.id]?.items && (a.status !== 'ready' || lists[a.id]?.error))
+  // Konten ohne aktuelle Liste: noch nicht verbunden oder Abruf gescheitert (die alte Liste bleibt dann stehen)
+  const missing = accounts.filter((a) => lists[a.id]?.error || (!lists[a.id]?.items && a.status !== 'ready'))
 
   return (
     <>
@@ -114,11 +115,15 @@ export function CallsView(): JSX.Element {
               {(a) => {
                 const l = lists[a.id]
                 const items = entries.filter((e) => e.accountId === a.id)
-                if (items.length) return items.map((e) => <CallRow key={`${e.accountId}|${e.item.id}`} entry={e} />)
-                if (l?.error) return <div className="group-note">Anrufverlauf nicht verfügbar: {l.error}</div>
-                if (a.status !== 'ready') return null
-                if (!l) return <div className="group-note">Wird geladen …</div>
-                return <div className="group-note">Noch keine Anrufe.</div>
+                return (
+                  <>
+                    {l?.error && <div className="group-note">Anrufverlauf nicht verfügbar: {l.error}</div>}
+                    {items.map((e) => (
+                      <CallRow key={`${e.accountId}|${e.item.id}`} entry={e} />
+                    ))}
+                    {!l?.error && !items.length && a.status === 'ready' && <div className="group-note">{l ? 'Noch keine Anrufe.' : 'Wird geladen …'}</div>}
+                  </>
+                )
               }}
             </AccountGroups>
           ) : (

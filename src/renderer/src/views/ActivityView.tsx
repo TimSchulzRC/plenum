@@ -41,21 +41,26 @@ export function ActivityView(): JSX.Element {
   useEffect(() => {
     const ids = readyKey.split(',').filter(Boolean)
     let alive = true
+    const seen = new Set<string>()
+    const timers: ReturnType<typeof setTimeout>[] = []
     const load = (id: string) =>
       api
         .getActivity(id)
-        .then((items) => alive && setLists((l) => ({ ...l, [id]: { items } })))
+        .then((items) => {
+          if (!alive) return
+          setLists((l) => ({ ...l, [id]: { items } }))
+          // Angesehen heißt gelesen, wie in Teams: kurz nachdem die erste Liste des Kontos da ist
+          if (seen.has(id)) return
+          seen.add(id)
+          if (items.some((i) => !i.read)) timers.push(setTimeout(() => void api.markActivityRead(id).catch(() => undefined), 2500))
+        })
         .catch((e: unknown) => alive && setLists((l) => ({ ...l, [id]: { ...l[id], error: ipcErrorText(e) } })))
     for (const id of ids) void load(id)
     const off = onEvent('activity-updated', (e) => ids.includes(e.accountId) && void load(e.accountId))
-    // Angesehen heißt gelesen, wie in Teams. Nur Konten mit ungelesenen Einträgen.
-    const t = setTimeout(() => {
-      for (const a of useStore.getState().accounts) if (ids.includes(a.id) && a.activityUnread > 0) void api.markActivityRead(a.id).catch(() => undefined)
-    }, 2500)
     return () => {
       alive = false
       off()
-      clearTimeout(t)
+      timers.forEach(clearTimeout)
     }
   }, [readyKey])
 
@@ -86,8 +91,9 @@ export function ActivityView(): JSX.Element {
   )
 
   const loading = !!readyKey && !accounts.some((a) => lists[a.id]?.items || lists[a.id]?.error)
-  // Konten ohne Liste: noch nicht verbunden oder Abruf gescheitert. Gruppiert steht das im Kopf bzw. im Block.
-  const missing = accounts.filter((a) => !lists[a.id]?.items && (a.status !== 'ready' || lists[a.id]?.error))
+  // Konten ohne aktuelle Liste: noch nicht verbunden oder Abruf gescheitert (die alte Liste bleibt dann stehen).
+  // Gruppiert steht das im Kopf bzw. im Block.
+  const missing = accounts.filter((a) => lists[a.id]?.error || (!lists[a.id]?.items && a.status !== 'ready'))
 
   return (
     <>
@@ -102,11 +108,13 @@ export function ActivityView(): JSX.Element {
               {(a) => {
                 const l = lists[a.id]
                 const items = entries.filter((e) => e.accountId === a.id)
-                if (items.length) return items.map((e) => row(e, false))
-                if (l?.error) return <div className="group-note">Nicht geladen: {l.error}</div>
-                if (a.status !== 'ready') return null
-                if (!l) return <div className="group-note">Wird geladen …</div>
-                return <div className="group-note">Keine neuen Aktivitäten.</div>
+                return (
+                  <>
+                    {l?.error && <div className="group-note">Nicht geladen: {l.error}</div>}
+                    {items.map((e) => row(e, false))}
+                    {!l?.error && !items.length && a.status === 'ready' && <div className="group-note">{l ? 'Keine neuen Aktivitäten.' : 'Wird geladen …'}</div>}
+                  </>
+                )
               }}
             </AccountGroups>
           ) : (
