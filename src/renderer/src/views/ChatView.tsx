@@ -1,4 +1,4 @@
-import { Avatar, Input, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Tooltip } from '@fluentui/react-components'
+import { Input, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Tooltip } from '@fluentui/react-components'
 import {
   ChevronDown16Regular,
   ChevronRight16Regular,
@@ -9,17 +9,17 @@ import {
   LockClosed12Regular,
   Video16Filled
 } from '@fluentui/react-icons'
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { accountTitle, orderAccounts } from '@shared/accounts'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { orderAccounts } from '@shared/accounts'
 import type { AccountInfo, Channel, ChatFolder, ChatSummary, Person, Team } from '@shared/types'
 import { api } from '../api'
+import { AccountHead, HEAD_HEIGHT, HEAD_STEP } from '../components/AccountGroups'
 import { ChatAvatar, PersonAvatar, TeamAvatar } from '../components/Avatars'
 import { Composer } from '../components/Composer'
 import { ConversationView } from '../components/ConversationView'
 import { listTime } from '../lib/format'
 import { prefetchChannel, prefetchChat, useHoverPrefetch } from '../lib/prefetch'
 import { AccountScope, useActive, useScopedAccountId, useStore, type Selection } from '../store'
-import { statusText } from '../components/TitleBar'
 import { ChannelView } from './TeamsView'
 
 type Filter = 'all' | 'unread' | 'meetings' | 'chats'
@@ -133,10 +133,6 @@ function ChatList(): JSX.Element {
   )
 }
 
-const HEAD_HEIGHT = 36
-// Abstand zwischen den Köpfen, auch wenn sie oben oder unten kleben (passt zu .acct-head in styles.css)
-const HEAD_GAP = 6
-const HEAD_STEP = HEAD_HEIGHT + HEAD_GAP
 const EXPANDED_KEY = 'chatlist.expanded'
 
 function loadExpanded(): Record<string, boolean> {
@@ -191,20 +187,6 @@ function AccountBlocks({ accounts, activeId, q, filter, limit }: { accounts: Acc
         )
       })}
     </>
-  )
-}
-
-function AccountHead({ account, unread: count, open, style, onToggle }: { account: AccountInfo; unread: number; open: boolean; style: CSSProperties; onToggle: () => void }): JSX.Element {
-  const { name, sub } = accountTitle(account)
-  return (
-    <button className="acct-head" style={style} onClick={onToggle} aria-expanded={open} title={[name, sub].filter(Boolean).join(' · ')}>
-      {account.parentId ? <Avatar shape="square" size={20} name={name} color="colorful" /> : <PersonAvatar mri={account.mri} name={account.label} size={20} accountId={account.id} showPresence={false} />}
-      <span className="acct-name">{name}</span>
-      <span className="acct-sub">{sub}</span>
-      {account.status !== 'ready' ? <span className="acct-state">{statusText(account.status)}</span> : count > 0 && <span className="acct-count">{count > 99 ? '99+' : count}</span>}
-      {/* Pfeil rechts, damit der Kontokopf nicht wie ein Abschnitt (Favoriten, Chats) aussieht */}
-      {open ? <ChevronDown16Regular /> : <ChevronRight16Regular />}
-    </button>
   )
 }
 

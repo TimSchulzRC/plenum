@@ -16,3 +16,19 @@ export function accountTitle(a: Named): { name: string; sub: string } {
   const domain = a.upn?.split('@')[1]
   return { name: a.tenantName || domain || a.label, sub: a.upn || '' }
 }
+
+// Reihenfolge für die Kontofarben: erst die Konten wie in Mail und Kalender (die zeigen keine
+// Gastmandanten), dann die Gastmandanten. So behält ein Konto überall dieselbe Farbe.
+export function colorOrder(accounts: Pick<AccountInfo, 'id' | 'parentId'>[]): string[] {
+  return [...accounts.filter((a) => !a.parentId), ...accounts.filter((a) => a.parentId)].map((a) => a.id)
+}
+
+export interface FromAccount<T> {
+  accountId: string
+  item: T
+}
+
+// Listen aller Konten zu einer, neueste zuerst. Gleich alte Einträge bleiben in der Kontenreihenfolge.
+export function mergeByTime<T extends { time: number }>(lists: { accountId: string; items: T[] }[]): FromAccount<T>[] {
+  return lists.flatMap(({ accountId, items }) => items.map((item) => ({ accountId, item }))).sort((a, b) => b.item.time - a.item.time)
+}

@@ -34,9 +34,9 @@ Aktionen aus der Oberfläche tragen zusätzlich `duration_ms`, die Dauer des Auf
 | `app_started` | Start | `launch_ms`, `first_launch`, `updated_from`, `notifications` |
 | `app_updated` | erster Start nach einem Update | `from_version` |
 | `app_focused` | ein Fenster der App bekommt den Fokus, höchstens alle 30 Minuten | `route` |
-| `$screen` | Ansicht gewechselt | `$screen_name`: `welcome`, `chat`, `teams`, `activity`, `mail`, `calendar`, `calls`, `settings`; bei `settings` zusätzlich `settings_page` (`accounts`, `appearance`, `notifications`, `devices`, `permissions`, `updates`, `mcp`, `privacy`, `feedback`, `diagnostics`) |
+| `$screen` | Ansicht gewechselt | `$screen_name`: `welcome`, `chat`, `teams`, `activity`, `mail`, `calendar`, `calls`, `settings`; bei `settings` zusätzlich `settings_page` (`accounts`, `appearance`, `notifications`, `devices`, `permissions`, `updates`, `mcp`, `privacy`, `feedback`, `diagnostics`); bei `activity` und `calls` mit mehreren Konten zusätzlich `grouped_by_account` (Liste nach Konto gruppiert) |
 | `keyboard_shortcut` | Tastenkürzel im Hauptfenster | `shortcut` |
-| `setting_changed` | Einstellung geändert | `setting`, `value` |
+| `setting_changed` | Einstellung geändert, auch der Schalter „Nach Konto gruppieren“ in Aktivität und Anrufen (`groupActivityByAccount`, `groupCallsByAccount`) | `setting`, `value` |
 | `feedback_sent` | Feedback abgeschickt | `kind`, `message`, `message_length` |
 
 ### Konten und Verbindung

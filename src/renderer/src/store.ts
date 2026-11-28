@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react'
 import { create } from 'zustand'
 import type { AccountInfo, AccountSnapshot, AppSettings, CallState, Presence, SettingsPage, UpdateState } from '@shared/types'
 import { api, onEvent } from './api'
+import { groupedByAccount } from '@shared/analytics'
 import { track } from './analytics'
 
 export type View = 'activity' | 'chat' | 'teams' | 'mail' | 'calendar' | 'calls'
@@ -181,7 +182,12 @@ function trackNavigation(): void {
     const screen = s.settingsPage ? `settings:${s.settingsPage}` : s.accounts.length === 0 ? 'welcome' : s.view
     if (screen !== lastScreen) {
       lastScreen = screen
-      track('$screen', s.settingsPage ? { $screen_name: 'settings', settings_page: s.settingsPage } : { $screen_name: screen })
+      track(
+        '$screen',
+        s.settingsPage
+          ? { $screen_name: 'settings', settings_page: s.settingsPage }
+          : { $screen_name: screen, grouped_by_account: groupedByAccount(screen, s.settings, s.accounts.length) }
+      )
     }
     const id = s.activeAccountId
     const sel = id ? s.selection[id] : undefined
