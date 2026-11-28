@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Engine } from './engine'
 import { OUTLOOK_AUDIENCES, type Family } from './tokens'
+import { guestSession } from '../tenants'
 import { log } from '../log'
 import { uploadAmsImage } from './ams'
 import { firstWriter, graphEventBody, mayTryNextWriter, outlookEventBody } from './events'
@@ -43,6 +44,8 @@ export class ApiError extends Error {
 const CONV_VIEW = 'msnp24Equivalent|supportsMessageProperties'
 
 // Dünne Schicht über die internen Teams-APIs, die die Web-App selbst nutzt.
+const FOREIGN_MAIL = 'Teams läuft für dieses Konto gerade in einem anderen Mandanten. Die Mails sind gleich wieder da.'
+
 export class TeamsApi {
   constructor(private readonly engine: Engine) {}
 
@@ -326,7 +329,8 @@ export class TeamsApi {
   // ---------- E-Mail: Graph, sonst Outlook (siehe mail.ts) ----------
   private mailApis(order: MailApi[]): MailApi[] {
     const t = this.engine.tokens
-    return order.filter((a) => (a === 'graph' ? t.has('graph') || !!t.findBearer('graph.microsoft.com') : !!t.bearerFor(OUTLOOK_AUDIENCES)))
+    // Nur mit einem Token des eigenen Mandanten (siehe TokenStore.pick), eine Vorlage allein reicht nicht
+    return order.filter((a) => (a === 'graph' ? !!t.graphBearer() : !!t.bearerFor(OUTLOOK_AUDIENCES)))
   }
 
   hasMailToken(): boolean {
@@ -335,17 +339,28 @@ export class TeamsApi {
 
   // Outlook mit dem Mail-Token (nicht dem Such-Token), Anfrage in PascalCase, Antwort in camelCase.
   // Bei 401 noch einmal mit dem Token, den die Web-App inzwischen erneuert hat.
+  // Mit genau dem geprüften Token des eigenen Mandanten (Graph: Adresse oder App-ID als Audience). Vor
+  // jedem Versuch prüfen, ob die Sitzung inzwischen als Gast läuft: dann kein fremdes Postfach. Bei 401
+  // noch einmal mit dem Token, den die Web-App inzwischen erneuert hat.
   private async mailRequest<T = any>(api: MailApi, url: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
-    if (api === 'graph') return this.json('graph', url, init)
-    const body = init.body === undefined ? undefined : pascalize(init.body)
-    const send = (token: string) => this.json('outlook', url, { ...init, body, headers: { authorization: `Bearer ${token}` } }).then(camelize)
-    const token = this.engine.tokens.bearerFor(OUTLOOK_AUDIENCES)
+    const t = this.engine.tokens
+    const current = () => {
+      if (guestSession(t.me)) throw new ApiError(0, FOREIGN_MAIL)
+      return api === 'graph' ? t.graphBearer() : t.bearerFor(OUTLOOK_AUDIENCES)
+    }
+    const body = api === 'outlook' && init.body !== undefined ? pascalize(init.body) : init.body
+    const send = (token: string): Promise<T> =>
+      api === 'graph'
+        ? this.json<T>('graph', url, { ...init, headers: { authorization: `Bearer ${token}` } })
+        : this.json('outlook', url, { ...init, body, headers: { authorization: `Bearer ${token}` } }).then(camelize)
+    const token = current()
     if (!token) throw new ApiError(0, NO_MAIL_TOKEN)
     try {
       return await send(token)
     } catch (e) {
-      const fresh = this.engine.tokens.bearerFor(OUTLOOK_AUDIENCES)
-      if (!(e instanceof ApiError && e.status === 401) || !fresh || fresh === token) throw e
+      if (!(e instanceof ApiError && e.status === 401)) throw e
+      const fresh = current()
+      if (!fresh || fresh === token) throw e
       return send(fresh)
     }
   }

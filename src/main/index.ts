@@ -119,14 +119,25 @@ function saveRecords(): void {
   store.saveAccounts([...accounts.values()].map((a) => a.record))
 }
 
+// Gastmandanten mit dem Mandanten ihres Hauptkontos: Sie entstanden, solange das Hauptkonto fälschlich
+// einen Gastmandanten als eigenen gespeichert hatte, und zeigten dessen Chats doppelt
+function markDuplicates(): void {
+  for (const a of accounts.values()) {
+    // Nur gegen den bestätigten Heimatmandanten: Ein alter Eintrag kann noch einen Gastmandanten tragen
+    const home = a.record.parentId ? accounts.get(a.record.parentId)?.record.homeTenantId : undefined
+    a.setDuplicate(!!home && a.record.tenantId?.toLowerCase() === home.toLowerCase())
+  }
+}
+
 function addAccountService(rec: AccountRecord, autoShowLogin: boolean): AccountService {
-  const acct = new AccountService(rec, { autoShowLogin })
+  const acct = new AccountService(rec, { autoShowLogin, inCall: () => !!calls?.busy(rec.id) })
   accounts.set(rec.id, acct)
   calls?.setupSession(acct)
   watchAccount(acct)
   acct.on('changed', emitAccounts)
   acct.on('record-updated', () => {
     saveRecords()
+    markDuplicates()
     emitAccounts()
   })
   acct.on('snapshot', (s) => broadcast('snapshot', s))
@@ -273,6 +284,8 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
     addTenant: async (id, tenantId, tenantName) => {
       const parent = get(id)
       if (parent.record.parentId) throw new Error('Mandanten gehören zum Hauptkonto')
+      const own = () => tenantId.toLowerCase() === (parent.record.homeTenantId ?? parent.record.tenantId)?.toLowerCase()
+      if (own()) throw new Error('Das ist der eigene Mandant des Kontos')
       const existing = [...accounts.values()].find((a) => a.record.parentId === id && a.record.tenantId === tenantId)
       if (existing) return existing.id
       const rec: AccountRecord = {
@@ -288,13 +301,15 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
       const copied = await copyLoginCookies(parent.engine.ses, ses)
       // Konto während des Kopierens entfernt: keinen verwaisten Mandanten anlegen
       // und keine Anmelde-Cookies in einer Sitzung ohne Konto liegen lassen
-      if (accounts.get(id) !== parent) {
+      // Während des Kopierens kann das Hauptkonto seinen Heimatmandanten bestätigt haben
+      if (accounts.get(id) !== parent || own()) {
         await ses.clearStorageData().catch(() => undefined)
-        throw new Error('Konto nicht gefunden')
+        throw new Error(own() ? 'Das ist der eigene Mandant des Kontos' : 'Konto nicht gefunden')
       }
       log.info(`Gastmandant angelegt, ${copied} Anmelde-Cookies übernommen`)
       analytics.track('tenant_added', { cookies: copied > 0 }, { active: true })
       addAccountService(rec, true)
+      markDuplicates()
       saveRecords()
       emitAccounts()
       return rec.id
@@ -309,7 +324,7 @@ function createHandlers(sender: () => BrowserWindow | null): { [K in keyof ApiMe
       return {
         accountId: id,
         endpoints,
-        tokens: [...a.engine.tokens.bearers.entries()].map(([aud, t]) => ({ family: aud, audience: aud, expires: t.exp })),
+        tokens: [...a.engine.tokens.bearers.values()].map((t) => ({ family: t.aud, audience: t.aud, expires: t.exp })),
         url: a.engine.currentUrl,
         seen: [...[...a.engine.lastBodies.entries()].map(([k, v]) => ['BODY ' + k + ' ' + v, { at: Date.now(), count: 0, method: '' }] as const), ...a.engine.tokens.seen.entries()].sort((x, y) => y[1].at - x[1].at).slice(0, 200).map(([k, v]) => `${k} (${v.count})`)
       }
@@ -678,6 +693,7 @@ void app.whenReady().then(() => {
     const isActive = r.id === settings.activeAccountId || records.length === 1
     addAccountService(r, isActive)
   }
+  markDuplicates()
   startMcp()
   showMain()
 

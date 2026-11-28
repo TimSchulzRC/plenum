@@ -31,6 +31,8 @@ interface JwtInfo {
   name?: string
   upn?: string
   scp?: string
+  // Aussteller des Heimatmandanten, nur bei Gästen (siehe homeTenantOf)
+  idp?: string
 }
 
 const SKIP_HEADERS = new Set([
@@ -77,7 +79,9 @@ export function decodeJwt(token: string): JwtInfo | null {
       tid: c.tid,
       name: c.name,
       upn: c.upn || c.unique_name || c.preferred_username || c.email,
-      scp: c.scp
+      scp: c.scp,
+      // Immer gesetzt (auch undefined), sonst bliebe beim Zusammenführen in me ein alter Wert stehen
+      idp: typeof c.idp === 'string' ? c.idp : undefined
     }
   } catch {
     return null
@@ -119,12 +123,26 @@ export class TokenStore {
   // Letzte erfasste Anfrage pro Familie (mit Auth-Header).
   templates = new Map<Family, CapturedRequest>()
   // Neuester Bearer-Token pro Audience.
-  bearers = new Map<string, { token: string; exp?: number; at: number }>()
+  // Neueste Bearer-Tokens je Audience und Mandant. Die Web-App holt Tokens auch für andere Mandanten
+  // (Mitteilungen von dort, Mandantenwechsel). Eigene Anfragen nehmen das des Mandanten der Sitzung.
+  bearers = new Map<string, { token: string; exp?: number; at: number; aud: string; tid?: string }>()
   skypeToken?: { token: string; at: number }
   me: JwtInfo = {}
+  // me stammt aus einem Token des Chat-Dienstes (gilt nur für den Mandanten der Sitzung)
+  private meFromChat = false
   // Alle gesehenen Endpunkte für die Diagnose.
   seen = new Map<string, { method: string; count: number; at: number }>()
   onChange?: (family: Family) => void
+
+  // Alles Erfasste verwerfen (Neuladen in einem anderen Mandanten oder nach abgelaufener Sitzung):
+  // Bereit ist die Engine erst wieder mit frischen Tokens der Web-App
+  reset(): void {
+    this.templates.clear()
+    this.bearers.clear()
+    this.skypeToken = undefined
+    this.me = {}
+    this.meFromChat = false
+  }
 
   capture(url: string, method: string, headers: Record<string, string | string[]>): void {
     const lower: Record<string, string> = {}
@@ -135,10 +153,19 @@ export class TokenStore {
       const tok = auth.replace(/^bearer\s+/i, '')
       const info = decodeJwt(tok)
       if (info?.aud) {
-        const prev = this.bearers.get(info.aud)
-        if (!prev || (info.exp ?? 0) >= (prev.exp ?? 0)) this.bearers.set(info.aud, { token: tok, exp: info.exp, at: Date.now() })
-        if (info.oid && (!this.me.oid || info.aud.includes('api.spaces.skype.com') || info.aud.includes('chatsvcagg'))) {
-          this.me = { ...this.me, ...info }
+        const key = `${info.aud}|${info.tid ?? ''}`
+        const prev = this.bearers.get(key)
+        if (!prev || (info.exp ?? 0) >= (prev.exp ?? 0)) this.bearers.set(key, { token: tok, exp: info.exp, at: Date.now(), aud: info.aud, tid: info.tid })
+        // Wer man in dieser Sitzung ist, sagt das Token des Chat-Dienstes (chatsvcagg): Das gilt nur für den
+        // Mandanten der Sitzung. Spaces-Tokens holt die Web-App auch für andere Mandanten, und übernähme die
+        // App eins davon, hielte sie sich für den Gast dort (falsche Namen, falscher Mandant, kein Postfach).
+        // Ohne Token des Chat-Dienstes ist me vorläufig: Ein Token ohne idp (eigener Mandant) ersetzt dann ein
+        // vorläufiges eines Gastmandanten.
+        if (info.oid) {
+          if (info.aud.includes('chatsvcagg')) {
+            this.me = { ...info }
+            this.meFromChat = true
+          } else if (!this.meFromChat && (!this.me.oid || (this.me.idp && !info.idp))) this.me = { ...info }
         }
       }
     }
@@ -183,8 +210,10 @@ export class TokenStore {
     if (auth && /^bearer\s/i.test(auth)) {
       const info = decodeJwt(auth.replace(/^bearer\s+/i, ''))
       if (info?.aud) {
-        const newest = this.bearers.get(info.aud)
+        const newest = this.pick((a) => a === info.aud)
         if (newest) h['authorization'] = `Bearer ${newest.token}`
+        // Vorlage nur mit dem Token eines fremden Mandanten: lieber ohne als dorthin
+        else if (this.me.tid && info.tid && info.tid.toLowerCase() !== this.me.tid.toLowerCase()) delete h['authorization']
       }
     } else if (!auth) {
       const aud = FAMILY_AUDIENCE[family]
@@ -200,23 +229,32 @@ export class TokenStore {
     return h
   }
 
-  findBearer(audPart: string): string | undefined {
+  // Neuestes Token der passenden Audiences. Ist der Mandant der Sitzung bekannt (me.tid), nur Tokens aus
+  // ihm (oder ohne Mandant): Mit dem eines fremden Mandanten gingen eigene Anfragen dorthin, Mail an ein
+  // fremdes oder gar kein Postfach.
+  private pick(match: (aud: string) => boolean): { token: string; exp?: number } | undefined {
     let best: { token: string; exp?: number } | undefined
-    for (const [aud, t] of this.bearers) {
-      if (!aud.includes(audPart)) continue
+    const tid = this.me.tid?.toLowerCase()
+    for (const t of this.bearers.values()) {
+      if (!match(t.aud)) continue
+      if (tid && t.tid && t.tid.toLowerCase() !== tid) continue
       if (!best || (t.exp ?? 0) > (best.exp ?? 0)) best = t
     }
-    return best?.token
+    return best
+  }
+
+  // Graph-Token: Audience als Adresse oder als App-ID von Microsoft Graph
+  graphBearer(): string | undefined {
+    return this.pick((a) => a.includes('graph.microsoft.com') || a === '00000003-0000-0000-c000-000000000000')?.token
+  }
+
+  findBearer(audPart: string): string | undefined {
+    return this.pick((a) => a.includes(audPart))?.token
   }
 
   // Neuester Token für genau diese Audiences (ohne Teilstring-Treffer wie bei findBearer)
   bearerFor(auds: string[]): string | undefined {
-    let best: { token: string; exp?: number } | undefined
-    for (const aud of auds) {
-      const t = this.bearers.get(aud)
-      if (t && (!best || (t.exp ?? 0) > (best.exp ?? 0))) best = t
-    }
-    return best?.token
+    return this.pick((a) => auds.includes(a))?.token
   }
 
   expiry(family: Family): number | undefined {

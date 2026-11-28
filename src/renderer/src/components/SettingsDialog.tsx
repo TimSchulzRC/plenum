@@ -546,10 +546,12 @@ function Tenants({ account }: { account: AccountInfo }): JSX.Element | null {
   }, [account.id, ready])
 
   const children = accounts.filter((c) => c.parentId === account.id)
+  const sameTenant = (a?: string, b?: string) => !!a && !!b && a.toLowerCase() === b.toLowerCase()
   // Eingeschaltete Mandanten bleiben sichtbar, auch wenn die Liste gerade nicht ladbar ist
   const rows: TenantInfo[] = [
-    ...(tenants ?? []).filter((t) => !t.current),
-    ...children.filter((c) => !tenants?.some((t) => t.tenantId === c.tenantId)).map((c) => ({ tenantId: c.tenantId ?? c.id, tenantName: c.tenantName, guest: true, current: false, hidden: false }))
+    // Der eigene Mandant nur, wenn er fälschlich als Gastmandant angelegt ist: zum Entfernen
+    ...(tenants ?? []).filter((t) => !t.current || children.some((c) => sameTenant(c.tenantId, t.tenantId))),
+    ...children.filter((c) => !tenants?.some((t) => sameTenant(t.tenantId, c.tenantId))).map((c) => ({ tenantId: c.tenantId ?? c.id, tenantName: c.tenantName, guest: true, current: false, hidden: false }))
   ]
   if (rows.length === 0 && !error) return null
   return (
@@ -558,7 +560,7 @@ function Tenants({ account }: { account: AccountInfo }): JSX.Element | null {
         {error ? `Mandanten konnten nicht geladen werden (${error}).` : 'Weitere Mandanten, in denen du Gast bist. Eingeschaltete erscheinen als eigener Block in der Chatliste.'}
       </div>
       {rows.map((t) => {
-        const child = children.find((c) => c.tenantId === t.tenantId)
+        const child = children.find((c) => sameTenant(c.tenantId, t.tenantId) || c.id === t.tenantId)
         const name = t.tenantName || t.tenantId
         return (
           <div className="row" key={t.tenantId}>
