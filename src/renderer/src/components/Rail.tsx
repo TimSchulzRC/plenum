@@ -15,7 +15,7 @@ import {
 import { Tooltip } from '@fluentui/react-components'
 import type { ComponentType } from 'react'
 import { chatBadge } from '@shared/badge'
-import { useActive, useStore, type View } from '../store'
+import { useStore, type View } from '../store'
 import { UpdateButton } from './UpdateButton'
 import { useMailUnread, useMailUnreadPolling } from '../lib/mail-unread'
 
@@ -39,13 +39,12 @@ export function Rail(): JSX.Element {
   const view = useStore((s) => s.view)
   const settingsOpen = useStore((s) => s.settingsPage !== null)
   const accounts = useStore((s) => s.accounts)
-  const { account } = useActive()
   useMailUnreadPolling()
   const mail = useMailUnread((s) => Object.values(s.counts).reduce((n, c) => n + c, 0))
+  // Chatliste und Aktivität zeigen alle Konten, also zählen ihre Knöpfe auch alle
   const badges: Partial<Record<View, number>> = {
     mail,
-    activity: account?.activityUnread ?? 0,
-    // Die Chatliste zeigt alle Konten, also zählt der Chat-Knopf auch alle
+    activity: accounts.reduce((n, a) => n + a.activityUnread, 0),
     chat: accounts.reduce((n, a) => n + chatBadge(a), 0)
   }
   return (

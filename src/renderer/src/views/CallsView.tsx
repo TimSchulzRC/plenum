@@ -1,46 +1,71 @@
 import { Input, Spinner, Tooltip } from '@fluentui/react-components'
 import { Call20Regular, Video20Regular, CallInbound16Regular, CallOutbound16Regular, CallMissed16Regular, Search20Regular } from '@fluentui/react-icons'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { mergeByTime, type FromAccount } from '@shared/accounts'
 import type { CallLogEntry, Person } from '@shared/types'
 import { api } from '../api'
+import { AccountGroups, AccountTag, GroupToggle, NotLoaded, useAccounts, useGrouped } from '../components/AccountGroups'
 import { PersonAvatar } from '../components/Avatars'
+import { ipcErrorText } from '../lib/calendar'
 import { duration, listTime, clock } from '../lib/format'
-import { useActive } from '../store'
 
+type Loaded = { items?: CallLogEntry[]; error?: string }
+type Entry = FromAccount<CallLogEntry>
+
+const call = (accountId: string, mri: string, video: boolean) => void api.startCall(accountId, { mris: [mri] }, video)
+
+// Anrufverlauf aller Konten und Gastmandanten, neueste zuerst. Zurückrufen geht über das Konto des
+// Eintrags. Die Personensuche fragt alle verbundenen Konten, jeder Treffer ruft über sein Konto an.
 export function CallsView(): JSX.Element {
-  const { account } = useActive()
-  const [history, setHistory] = useState<CallLogEntry[] | null>(null)
-  const [error, setError] = useState<string>()
+  const { accounts, multi, color, byId } = useAccounts()
+  const grouped = useGrouped('groupCallsByAccount')
+  const [lists, setLists] = useState<Record<string, Loaded>>({})
   const [q, setQ] = useState('')
-  const [people, setPeople] = useState<Person[]>([])
+  const [people, setPeople] = useState<FromAccount<Person>[]>([])
+  const readyKey = accounts
+    .filter((a) => a.status === 'ready')
+    .map((a) => a.id)
+    .join(',')
 
   useEffect(() => {
-    if (!account) return
-    setHistory(null)
-    api
-      .getCallHistory(account.id)
-      .then(setHistory)
-      .catch((e: Error) => setError(e.message))
-  }, [account?.id])
+    let alive = true
+    for (const id of readyKey.split(',').filter(Boolean)) {
+      api
+        .getCallHistory(id)
+        .then((items) => alive && setLists((l) => ({ ...l, [id]: { items } })))
+        .catch((e: unknown) => alive && setLists((l) => ({ ...l, [id]: { ...l[id], error: ipcErrorText(e) } })))
+    }
+    return () => {
+      alive = false
+    }
+  }, [readyKey])
 
   useEffect(() => {
-    if (!account || q.trim().length < 2) return setPeople([])
+    const ids = readyKey.split(',').filter(Boolean)
+    if (q.trim().length < 2 || !ids.length) return setPeople([])
     let alive = true
     const t = setTimeout(
       () =>
-        void api
-          .searchPeople(account.id, q)
-          .then((r) => alive && setPeople(r))
-          .catch(() => undefined),
+        void Promise.all(
+          ids.map((id) =>
+            api
+              .searchPeople(id, q)
+              .then((r) => r.map((item) => ({ accountId: id, item })))
+              .catch(() => [] as FromAccount<Person>[])
+          )
+        ).then((r) => alive && setPeople(r.flat())),
       220
     )
     return () => {
       alive = false
       clearTimeout(t)
     }
-  }, [q, account])
+  }, [q, readyKey])
 
-  const call = (mri: string, video: boolean) => account && void api.startCall(account.id, { mris: [mri] }, video)
+  const entries = useMemo(() => mergeByTime(accounts.map((a) => ({ accountId: a.id, items: lists[a.id]?.items ?? [] }))), [accounts, lists])
+  const tagFor = (accountId: string) => <AccountTag account={byId(accountId)} color={color(accountId)} />
+  const loading = !!readyKey && !accounts.some((a) => lists[a.id]?.items || lists[a.id]?.error)
+  const missing = accounts.filter((a) => !lists[a.id]?.items && (a.status !== 'ready' || lists[a.id]?.error))
 
   return (
     <>
@@ -52,20 +77,24 @@ export function CallsView(): JSX.Element {
           <Input contentBefore={<Search20Regular />} placeholder="Name eingeben" value={q} onChange={(_e, d) => setQ(d.value)} style={{ width: '100%' }} />
         </div>
         <div className="list-scroll">
-          {people.map((p) => (
-            <div key={p.mri} className="person-row">
-              <PersonAvatar mri={p.mri} name={p.displayName} size={32} />
+          {people.map(({ accountId, item: p }) => (
+            <div key={`${accountId}|${p.mri}`} className="person-row">
+              <PersonAvatar mri={p.mri} name={p.displayName} size={32} accountId={accountId} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="p-name">{p.displayName}</div>
-                <div className="p-sub">{p.jobTitle}</div>
+                <div className="p-sub">
+                  {multi && tagFor(accountId)}
+                  {multi && p.jobTitle && <span className="a-sep">·</span>}
+                  {p.jobTitle}
+                </div>
               </div>
               <Tooltip content="Videoanruf" relationship="label">
-                <button className="icon-btn" onClick={() => call(p.mri, true)}>
+                <button className="icon-btn" onClick={() => call(accountId, p.mri, true)}>
                   <Video20Regular />
                 </button>
               </Tooltip>
               <Tooltip content="Audioanruf" relationship="label">
-                <button className="icon-btn" onClick={() => call(p.mri, false)}>
+                <button className="icon-btn" onClick={() => call(accountId, p.mri, false)}>
                   <Call20Regular />
                 </button>
               </Tooltip>
@@ -77,46 +106,71 @@ export function CallsView(): JSX.Element {
       <div className="main-pane">
         <div className="pane-header">
           <div className="title grow">Verlauf</div>
+          <GroupToggle setting="groupCallsByAccount" />
         </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 16px' }}>
-          {!history && !error && (
-            <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}>
-              <Spinner size="small" />
-            </div>
-          )}
-          {error && <div className="empty-state">Anrufverlauf nicht verfügbar: {error}</div>}
-          {history?.length === 0 && <div className="empty-state">Noch keine Anrufe.</div>}
-          {history?.map((h) => {
-            const missed = h.state === 'missed' || h.state === 'declined'
-            return (
-              <div key={h.id} className="person-row" style={{ padding: '8px 12px' }}>
-                <PersonAvatar mri={h.peerMri} name={h.peerName || 'Unbekannt'} size={32} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="p-name" style={{ color: missed ? 'var(--danger-fg)' : undefined }}>{h.peerName || 'Unbekannt'}</div>
-                  <div className="p-sub" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {missed ? <CallMissed16Regular /> : h.direction === 'incoming' ? <CallInbound16Regular /> : <CallOutbound16Regular />}
-                    {missed ? 'Verpasst' : h.direction === 'incoming' ? 'Eingehend' : 'Ausgehend'}
-                    {h.durationSec ? ` · ${duration(h.durationSec)}` : ''}
-                  </div>
+        <div className={`calls-scroll ${grouped ? 'multi' : ''}`}>
+          {grouped ? (
+            <AccountGroups accounts={accounts} storageKey="calls.closed">
+              {(a) => {
+                const l = lists[a.id]
+                const items = entries.filter((e) => e.accountId === a.id)
+                if (items.length) return items.map((e) => <CallRow key={`${e.accountId}|${e.item.id}`} entry={e} />)
+                if (l?.error) return <div className="group-note">Anrufverlauf nicht verfügbar: {l.error}</div>
+                if (a.status !== 'ready') return null
+                if (!l) return <div className="group-note">Wird geladen …</div>
+                return <div className="group-note">Noch keine Anrufe.</div>
+              }}
+            </AccountGroups>
+          ) : (
+            <>
+              {missing.length > 0 && !loading && <NotLoaded accounts={missing} lists={lists} what="Anrufverlauf nicht verfügbar" />}
+              {loading && (
+                <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}>
+                  <Spinner size="small" />
                 </div>
-                <span style={{ fontSize: 12, color: 'var(--fg-3)', width: 90, textAlign: 'right' }}>
-                  {listTime(h.time)} {listTime(h.time).includes(':') ? '' : clock(h.time)}
-                </span>
-                {h.peerMri && (
-                  <>
-                    <button className="icon-btn" title="Videoanruf" onClick={() => call(h.peerMri!, true)}>
-                      <Video20Regular />
-                    </button>
-                    <button className="icon-btn" title="Audioanruf" onClick={() => call(h.peerMri!, false)}>
-                      <Call20Regular />
-                    </button>
-                  </>
-                )}
-              </div>
-            )
-          })}
+              )}
+              {!loading && entries.length === 0 && missing.length < accounts.length && <div className="empty-state">Noch keine Anrufe.</div>}
+              {entries.map((e) => (
+                <CallRow key={`${e.accountId}|${e.item.id}`} entry={e} tag={multi ? tagFor(e.accountId) : undefined} />
+              ))}
+            </>
+          )}
         </div>
       </div>
     </>
+  )
+}
+
+function CallRow({ entry, tag }: { entry: Entry; tag?: JSX.Element }): JSX.Element {
+  const { accountId, item: h } = entry
+  const missed = h.state === 'missed' || h.state === 'declined'
+  return (
+    <div className="person-row" style={{ padding: '8px 12px' }}>
+      <PersonAvatar mri={h.peerMri} name={h.peerName || 'Unbekannt'} size={32} accountId={accountId} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="p-name" style={{ color: missed ? 'var(--danger-fg)' : undefined }}>
+          {h.peerName || 'Unbekannt'}
+        </div>
+        <div className="p-sub" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {missed ? <CallMissed16Regular /> : h.direction === 'incoming' ? <CallInbound16Regular /> : <CallOutbound16Regular />}
+          {missed ? 'Verpasst' : h.direction === 'incoming' ? 'Eingehend' : 'Ausgehend'}
+          {h.durationSec ? ` · ${duration(h.durationSec)}` : ''}
+        </div>
+      </div>
+      {tag && <span className="call-acct">{tag}</span>}
+      <span style={{ fontSize: 12, color: 'var(--fg-3)', width: 90, textAlign: 'right' }}>
+        {listTime(h.time)} {listTime(h.time).includes(':') ? '' : clock(h.time)}
+      </span>
+      {h.peerMri && (
+        <>
+          <button className="icon-btn" title="Videoanruf" onClick={() => call(accountId, h.peerMri!, true)}>
+            <Video20Regular />
+          </button>
+          <button className="icon-btn" title="Audioanruf" onClick={() => call(accountId, h.peerMri!, false)}>
+            <Call20Regular />
+          </button>
+        </>
+      )}
+    </div>
   )
 }

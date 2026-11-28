@@ -464,6 +464,9 @@ export interface AppSettings {
   preferredSpeaker?: string
   // Videos im Anruf: ganzes Bild zeigen (contain) oder die Kachel füllen (cover)
   callVideoFit?: 'contain' | 'cover'
+  // Aktivität und Anrufe zeigen alle Konten in einer Liste, auf Wunsch je Konto eine
+  groupActivityByAccount?: boolean
+  groupCallsByAccount?: boolean
 }
 
 // Bereiche im Einstellungsfenster

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFile } from 'node:fs/promises'
-import { SessionClock, Throttle, sanitizeProps, scrubError, scrubText, settingsChanges, updateEvents, uuidv7 } from '../src/shared/analytics.ts'
+import { SessionClock, Throttle, groupedByAccount, sanitizeProps, scrubError, scrubText, settingsChanges, updateEvents, uuidv7 } from '../src/shared/analytics.ts'
 import type { AppSettings, UpdateState } from '../src/shared/types.ts'
 
 test('Fehlertexte verlieren Mailadressen, Personen, Unterhaltungen und Tokens', () => {
@@ -123,6 +123,23 @@ test('Einstellungen: Gerätenamen gehen nicht mit', () => {
     { event: 'setting_changed', props: { setting: 'preferredMic', value: 'chosen' } }
   ])
   assert.doesNotMatch(JSON.stringify(events), /AirPods|abc/)
+})
+
+test('Einstellungen: Gruppieren nach Konto in Aktivität und Anrufen zählt je Ansicht', () => {
+  const on = { ...settings, groupActivityByAccount: true }
+  assert.deepEqual(settingsChanges(settings, on), [{ event: 'setting_changed', props: { setting: 'groupActivityByAccount', value: true } }])
+  assert.deepEqual(settingsChanges(on, { ...on, groupActivityByAccount: false, groupCallsByAccount: true }), [
+    { event: 'setting_changed', props: { setting: 'groupActivityByAccount', value: false } },
+    { event: 'setting_changed', props: { setting: 'groupCallsByAccount', value: true } }
+  ])
+})
+
+test('Ansicht gruppiert: nur Aktivität und Anrufe, nur mit mehreren Konten', () => {
+  const s = { groupActivityByAccount: true }
+  assert.equal(groupedByAccount('activity', s, 2), true)
+  assert.equal(groupedByAccount('calls', s, 2), false)
+  assert.equal(groupedByAccount('activity', s, 1), undefined)
+  assert.equal(groupedByAccount('chat', s, 3), undefined)
 })
 
 const update: UpdateState = {

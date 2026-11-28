@@ -191,6 +191,20 @@ const DASHBOARDS = [
         query: trends([ev('setting_changed')], { breakdown: 'setting', display: 'ActionsBarValue', from: '-90d' })
       },
       {
+        name: 'Aktivität und Anrufe nach Konto gruppiert',
+        description:
+          'Nur Installationen mit mehreren Konten, nur dort gibt es den Schalter. Zählt, wie viele die Ansicht gruppiert oder als eine Liste geöffnet haben. Bleibt „gruppiert“ bei null, kann der Schalter weg.',
+        query: trends(
+          [
+            ev('$screen', { math: 'dau', custom_name: 'Aktivität gruppiert', properties: [prop('$screen_name', ['activity']), prop('grouped_by_account', ['true'])] }),
+            ev('$screen', { math: 'dau', custom_name: 'Aktivität als eine Liste', properties: [prop('$screen_name', ['activity']), prop('grouped_by_account', ['false'])] }),
+            ev('$screen', { math: 'dau', custom_name: 'Anrufe gruppiert', properties: [prop('$screen_name', ['calls']), prop('grouped_by_account', ['true'])] }),
+            ev('$screen', { math: 'dau', custom_name: 'Anrufe als eine Liste', properties: [prop('$screen_name', ['calls']), prop('grouped_by_account', ['false'])] })
+          ],
+          { display: 'ActionsBarValue', from: '-30d' }
+        )
+      },
+      {
         name: 'Konten pro Installation',
         query: trends([ev('app_started', { math: 'dau' })], { breakdown: 'account_count', display: 'ActionsPie', from: '-30d' })
       }

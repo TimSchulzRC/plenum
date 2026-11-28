@@ -56,9 +56,12 @@ export default function MainApp(): JSX.Element {
 
   if (accounts.length === 0) return <Welcome />
 
+  // Mail, Aktivität und Anrufe zeigen alle Konten und warten nicht auf das ausgewählte.
+  // Mit nur einem Konto bleibt die Ladeanzeige mit Anmeldeknopf wie bisher.
+  const allAccounts = view === 'mail' || (accounts.length > 1 && (view === 'activity' || view === 'calls'))
   let content: JSX.Element
   if (view === 'mail') content = <MailView />
-  else if (!snapshot) content = <Loading />
+  else if (!snapshot && !allAccounts) content = <Loading />
   else if (view === 'chat') content = <ChatView />
   else if (view === 'teams') content = <TeamsView />
   else if (view === 'activity') content = <ActivityView />

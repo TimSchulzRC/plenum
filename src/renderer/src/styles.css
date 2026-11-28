@@ -2550,6 +2550,69 @@ button {
   box-shadow: 0 0 0 2px var(--pane);
 }
 
+/* Aktivität und Anrufe über alle Konten: Marke je Eintrag, Hinweise in der Liste */
+.acct-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: bottom;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.acct-tag .acct-tag-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.a-sep {
+  margin: 0 5px;
+  color: var(--fg-4);
+}
+.group-note {
+  padding: 8px 12px 12px;
+  font-size: 13px;
+  color: var(--fg-3);
+}
+.list-banner {
+  margin: 0 8px 8px 0;
+  font-size: 12px;
+}
+.list-banner .grow {
+  flex: 1;
+}
+.calls-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 16px;
+}
+.calls-scroll.multi {
+  position: relative;
+  padding-top: 0;
+}
+.calls-scroll .list-banner {
+  margin: 0 0 8px;
+}
+/* Spalte, damit die Konten im Verlauf untereinander stehen */
+.call-acct {
+  flex: 0 0 150px;
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+/* Kontoköpfe im Inhaltsbereich: auf dessen Hintergrund abgestimmt */
+.main-pane .acct-head {
+  background: color-mix(in srgb, var(--content), var(--fg) 6%);
+}
+.main-pane .acct-head:hover {
+  background: color-mix(in srgb, var(--content), var(--fg) 10%);
+}
+.main-pane .acct-head:not(:first-child)::before {
+  background: var(--content);
+}
+
 /* ---------- Personen, Suche ---------- */
 .people-results {
   max-height: 280px;

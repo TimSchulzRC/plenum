@@ -168,7 +168,16 @@ export class Throttle {
 
 // ---------- Ereignisse aus Zustandsänderungen ----------
 
-const BOOLEAN_SETTINGS = ['notifications', 'notificationSound', 'showMessagePreview', 'runAllAccounts', 'compactChatList', 'chatPreviews'] as const
+const BOOLEAN_SETTINGS = [
+  'notifications',
+  'notificationSound',
+  'showMessagePreview',
+  'runAllAccounts',
+  'compactChatList',
+  'chatPreviews',
+  'groupActivityByAccount',
+  'groupCallsByAccount'
+] as const
 const DEVICE_SETTINGS = ['preferredCamera', 'preferredMic', 'preferredSpeaker'] as const
 
 // Geänderte Einstellungen. Gerätenamen („AirPods von …“) gehen nicht mit, nur ob eins gewählt ist.
@@ -180,6 +189,15 @@ export function settingsChanges(prev: AppSettings, next: AppSettings): TrackedEv
   for (const k of BOOLEAN_SETTINGS) if (!!prev[k] !== !!next[k]) add(k, !!next[k])
   for (const k of DEVICE_SETTINGS) if ((prev[k] ?? '') !== (next[k] ?? '')) add(k, next[k] ? 'chosen' : 'default')
   return out
+}
+
+// Aktivität und Anrufe: ob die Liste nach Konto gruppiert ist. Zählt nur mit mehreren Konten,
+// mit einem gibt es den Schalter nicht.
+export function groupedByAccount(screen: string, settings: Pick<AppSettings, 'groupActivityByAccount' | 'groupCallsByAccount'>, accounts: number): boolean | undefined {
+  if (accounts < 2) return undefined
+  if (screen === 'activity') return !!settings.groupActivityByAccount
+  if (screen === 'calls') return !!settings.groupCallsByAccount
+  return undefined
 }
 
 // Update-Ablauf aus zwei Zuständen des Updaters
