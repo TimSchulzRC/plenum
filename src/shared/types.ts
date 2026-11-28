@@ -293,6 +293,12 @@ export interface MailDraft {
 
 export type MailReplyKind = 'reply' | 'replyAll' | 'forward'
 
+// Teil einer Mail für das Sprachmodell: Zeilen ab Nummer first (1-basiert)
+export interface MailSignaturePart {
+  first: number
+  lines: string[]
+}
+
 export type ActivityType = 'mention' | 'reply' | 'reaction' | 'call' | 'meeting' | 'membership' | 'like' | 'other'
 
 export interface ActivityItem {
@@ -464,10 +470,12 @@ export interface AppSettings {
   preferredSpeaker?: string
   // Videos im Anruf: ganzes Bild zeigen (contain) oder die Kachel füllen (cover)
   callVideoFit?: 'contain' | 'cover'
+  // Signaturen in Mails zusätzlich mit Apple Intelligence (auf dem Gerät) suchen. Fehlt: an.
+  mailSignatureModel?: boolean
 }
 
 // Bereiche im Einstellungsfenster
-export type SettingsPage = 'accounts' | 'appearance' | 'notifications' | 'devices' | 'permissions' | 'updates' | 'mcp' | 'privacy' | 'feedback' | 'diagnostics'
+export type SettingsPage = 'accounts' | 'appearance' | 'mail' | 'notifications' | 'devices' | 'permissions' | 'updates' | 'mcp' | 'privacy' | 'feedback' | 'diagnostics'
 
 // Freigaben des Systems, die Anrufe brauchen (macOS: Datenschutz & Sicherheit)
 export type MediaPermission = 'microphone' | 'camera' | 'screen'

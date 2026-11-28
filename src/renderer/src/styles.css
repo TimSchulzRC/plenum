@@ -1981,6 +1981,11 @@ button {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
+.mail-actions .fui-Button {
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 0;
+}
 .mail-head {
   padding: 14px 20px 10px;
   flex-shrink: 0;

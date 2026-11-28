@@ -5,6 +5,7 @@ import {
   ArrowSync20Regular,
   Headset20Regular,
   LockClosed20Regular,
+  Mail20Regular,
   PaintBrush20Regular,
   PersonCircle20Regular,
   PersonFeedback20Regular,
@@ -38,6 +39,7 @@ const GROUPS: { label: string; pages: PageInfo[] }[] = [
     pages: [
       { id: 'accounts', label: 'Konten', icon: PersonCircle20Regular, intro: 'Jedes Konto und jeder Gastmandant läuft in einer eigenen, getrennten Sitzung der Teams-Web-App.' },
       { id: 'appearance', label: 'Darstellung', icon: PaintBrush20Regular },
+      { id: 'mail', label: 'E-Mail', icon: Mail20Regular },
       { id: 'notifications', label: 'Benachrichtigungen', icon: Alert20Regular }
     ]
   },
@@ -151,6 +153,7 @@ export function SettingsDialog(): JSX.Element | null {
           {current.intro && <p className="settings-intro">{current.intro}</p>}
           {current.id === 'accounts' && <AccountsPage />}
           {current.id === 'appearance' && <AppearancePage />}
+          {current.id === 'mail' && <MailPage />}
           {current.id === 'notifications' && <NotificationsPage />}
           {current.id === 'devices' && <DevicesPage />}
           {current.id === 'permissions' && <PermissionSettings perms={perms} onChange={setPerms} />}
@@ -216,6 +219,39 @@ function AppearancePage(): JSX.Element | null {
       <div className="row">
         <div className="grow">Nachrichtenvorschau in der Chatliste</div>
         <Switch checked={!!settings.chatPreviews} onChange={(_e, d) => set({ chatPreviews: d.checked })} />
+      </div>
+    </section>
+  )
+}
+
+function MailPage(): JSX.Element | null {
+  const settings = useStore((s) => s.settings)
+  const set = useSet()
+  // Apple Intelligence für Signaturen: null, solange die App noch nachsieht
+  const [sigModel, setSigModel] = useState<boolean | null>(null)
+  useEffect(() => {
+    void api
+      .signatureModelAvailable()
+      .then(setSigModel)
+      .catch(() => setSigModel(false))
+  }, [])
+  if (!settings) return null
+  return (
+    <section>
+      <div className="row">
+        <div className="grow">
+          Signaturen auch mit Apple Intelligence erkennen
+          <div className="hint">
+            {sigModel === false
+              ? 'Auf diesem Mac nicht verfügbar (macOS 26 oder neuer mit eingeschaltetem Apple Intelligence). Signaturen erkennt die App dann nur mit festen Regeln.'
+              : 'Findet Signaturen, die die festen Regeln nicht erkennen. Das Modell läuft auf dem Mac, die Mail verlässt das Gerät nicht. Ausblenden lassen sich Signaturen im Lesebereich.'}
+          </div>
+        </div>
+        <Switch
+          checked={sigModel === true && settings.mailSignatureModel !== false}
+          disabled={sigModel !== true}
+          onChange={(_e, d) => set({ mailSignatureModel: d.checked })}
+        />
       </div>
     </section>
   )

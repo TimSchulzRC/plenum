@@ -177,6 +177,8 @@ export function settingsChanges(prev: AppSettings, next: AppSettings): TrackedEv
   const add = (setting: string, value: AnalyticsValue) => out.push({ event: 'setting_changed', props: { setting, value } })
   if (prev.theme !== next.theme) add('theme', next.theme)
   if (prev.callVideoFit !== next.callVideoFit) add('callVideoFit', next.callVideoFit ?? 'contain')
+  // Fehlt der Wert, ist die Signatursuche mit Apple Intelligence an
+  if ((prev.mailSignatureModel !== false) !== (next.mailSignatureModel !== false)) add('mailSignatureModel', next.mailSignatureModel !== false)
   for (const k of BOOLEAN_SETTINGS) if (!!prev[k] !== !!next[k]) add(k, !!next[k])
   for (const k of DEVICE_SETTINGS) if ((prev[k] ?? '') !== (next[k] ?? '')) add(k, next[k] ? 'chosen' : 'default')
   return out
